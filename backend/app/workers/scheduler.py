@@ -88,6 +88,38 @@ async def startup_recovery() -> None:
         db.close()
 
 
+async def run_research_loop() -> None:
+    """Continuous strategy research: evolve a generation and alert on promotions.
+
+    Runs in a thread to avoid blocking the event loop (backtests are CPU-bound).
+    """
+    from app.strategy_research.engine import StrategyResearchEngine
+
+    settings = get_settings()
+    symbol = settings.symbols[0] if settings.symbols else "BTC_USDT"
+
+    def _generation() -> dict:
+        db = SessionLocal()
+        try:
+            return StrategyResearchEngine(db).run_experiments(symbol, settings.market_data_interval)
+        finally:
+            db.close()
+
+    summary = await asyncio.to_thread(_generation)
+    if summary.get("evaluated"):
+        notifier = TelegramNotifier()
+        if summary.get("promoted"):
+            await notifier.send(
+                f"🧪 Strateji Araştırma: {summary['promoted']} strateji production'a terfi etti "
+                f"(en iyi fitness={summary.get('best_fitness')}, sharpe={summary.get('best_sharpe')})"
+            )
+        elif summary.get("best_fitness", 0) > 0:
+            await notifier.send(
+                f"🧪 Strateji Araştırma turu tamamlandı: {summary['evaluated']} strateji denendi, "
+                f"en iyi fitness={summary.get('best_fitness')}"
+            )
+
+
 async def daily_report() -> None:
     await TelegramNotifier().send("Daily report: check dashboard for PnL, drawdown and open risk.")
 
@@ -103,6 +135,7 @@ async def main() -> None:
     scheduler = AsyncIOScheduler()
     scheduler.add_job(run_cycle, "interval", minutes=15, max_instances=1)
     scheduler.add_job(ingest_market_data, "interval", minutes=15, max_instances=1)
+    scheduler.add_job(run_research_loop, "interval", hours=6, max_instances=1)
     scheduler.add_job(daily_report, "cron", hour=21, minute=0)
     scheduler.start()
     try:

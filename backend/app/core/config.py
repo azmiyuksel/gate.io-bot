@@ -53,6 +53,19 @@ class Settings(BaseSettings):
     # Enable the optional Isolation Forest ML anomaly layer.
     mdq_enable_ml: bool = True
 
+    # --- Strategy Research Lab ---
+    # Production promotion gate.
+    research_min_sharpe: float = 1.0
+    research_max_drawdown: float = 0.20        # positive magnitude
+    research_min_stability: float = 0.5
+    research_min_consistency: float = 0.5
+    research_min_trades: int = 20
+    # Walk-forward windows used during evaluation.
+    research_wf_windows: int = 4
+    # Population size per research-loop generation.
+    research_population: int = 12
+    research_survivors: int = 4
+
     @property
     def symbols(self) -> list[str]:
         return [symbol.strip() for symbol in self.trading_symbols.split(",") if symbol.strip()]

@@ -14,6 +14,7 @@ from app.api.v1.health import router as health_router
 from app.api.v1.walkforward import router as walkforward_router
 from app.api.v1.execution_quality import router as execution_quality_router
 from app.api.v1.data_quality import router as data_quality_router
+from app.api.v1.strategy_research import router as strategy_research_router
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth_router)
@@ -30,4 +31,5 @@ api_router.include_router(circuit_breaker_router)
 api_router.include_router(market_data_router)
 api_router.include_router(execution_quality_router)
 api_router.include_router(data_quality_router)
+api_router.include_router(strategy_research_router)
 

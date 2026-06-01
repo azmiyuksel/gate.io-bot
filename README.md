@@ -224,6 +224,51 @@ API (`/api/v1/data-quality`):
 Dashboard page: `http://localhost:3000/data-quality` — health score, score breakdown,
 health timeline, missing-data/anomaly trend, anomaly-type distribution and a live anomaly table.
 
+## Strategy Research Lab (`backend/app/strategy_research`)
+
+An R&D laboratory that discovers, evaluates and promotes trading strategies. A
+*genome* is a parameter vector over a registered strategy template; the lab runs
+an evolutionary loop and only lets robust strategies reach production.
+
+Modules:
+
+- `models.py`: templates, search space, genome, fitness function
+- `generator.py`: indicator-combination, rule mutation, crossover, feature-driven generation
+- `feature_store.py`: price/volume/volatility/trend/order-flow features scored by correlation-with-profit, importance and stability
+- `hypothesis_builder.py`: generates and statistically tests market hypotheses (Welch t-test)
+- `backtest_runner.py`: backtest + walk-forward + Monte Carlo + in/out-of-sample overfit check (reuses the production backtest engine)
+- `evaluator.py`: fitness scoring, ranking and the production-promotion gate
+- `ab_testing.py`: head-to-head comparison of two strategies on identical data
+- `clustering.py`: K-Means family grouping and near-duplicate detection
+- `repository.py`: signature-deduplicated persistence and versioning
+- `engine.py`: the research-loop orchestrator
+
+Fitness: `0.4*sharpe + 0.3*stability + 0.2*profit_factor - 0.1*drawdown`.
+
+Promotion gate (all must pass, else `REJECTED`): Sharpe ≥ `RESEARCH_MIN_SHARPE`,
+drawdown ≤ `RESEARCH_MAX_DRAWDOWN`, stability ≥ `RESEARCH_MIN_STABILITY`,
+consistency ≥ `RESEARCH_MIN_CONSISTENCY`, trades ≥ `RESEARCH_MIN_TRADES`,
+overfit = false.
+
+The scheduler runs a research generation every 6 hours (in a worker thread) and
+alerts on Telegram when strategies are promoted.
+
+Tables: `research_strategies`, `strategy_versions`, `research_experiments`,
+`hypothesis_tests`, `feature_store`, `ab_test_results`.
+
+API (`/api/v1/research`):
+
+- `POST /research/generate` (admin) — generate (and optionally evaluate) a strategy
+- `POST /research/run` (admin) — run one evolutionary generation
+- `GET /research/strategies` · `GET /research/leaderboard` · `GET /research/experiments`
+- `GET /research/features` · `POST /research/features/recompute` (admin)
+- `GET /research/hypotheses` · `POST /research/hypotheses/test` (admin)
+- `GET /research/ab-tests`
+- `POST /research/promote/{strategy_id}` (admin)
+
+Dashboard page: `http://localhost:3000/strategy-research` — leaderboard, feature
+importance, hypothesis results, experiment feed and one-click promotion.
+
 ## Important Notes
 
 This is an engineering scaffold, not financial advice. Start in read-only or tiny-size mode, verify Gate.io order minimums per symbol, and review every live permission before enabling the strategy.

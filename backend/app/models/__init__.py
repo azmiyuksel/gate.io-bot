@@ -47,6 +47,12 @@ from app.models.entities import (
     MarketDataAnomaly,
     MarketDataHealthLog,
     DataQualityReport,
+    ResearchStrategy,
+    StrategyVersion,
+    ResearchExperiment,
+    HypothesisTest,
+    FeatureRecord,
+    ABTestResult,
 )
 
 __all__ = [
@@ -98,6 +104,12 @@ __all__ = [
     "MarketDataAnomaly",
     "MarketDataHealthLog",
     "DataQualityReport",
+    "ResearchStrategy",
+    "StrategyVersion",
+    "ResearchExperiment",
+    "HypothesisTest",
+    "FeatureRecord",
+    "ABTestResult",
 ]
 
 
