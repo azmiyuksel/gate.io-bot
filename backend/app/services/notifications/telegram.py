@@ -162,5 +162,31 @@ class TelegramNotifier:
         )
         await self.send(msg)
 
+    async def send_execution_slippage_warning(self, strategy_name: str, slippage_pct: float, category: str) -> None:
+        msg = (
+            f"⚠️ *Yüksek Fiyat Kayması (Slippage) Uyarısı*\n"
+            f"Strateji: `{strategy_name}`\n"
+            f"Fiyat Kayması: `%{slippage_pct * 100:.3f}`\n"
+            f"Kategori: *{category}*"
+        )
+        await self.send(msg)
+
+    async def send_execution_latency_spike(self, strategy_name: str, latency_ms: float) -> None:
+        msg = (
+            f"⚡ *Gecikme (Latency) Artışı Tespit Edildi*\n"
+            f"Strateji: `{strategy_name}`\n"
+            f"Gecikme Süresi: `{latency_ms:.1f} ms`"
+        )
+        await self.send(msg)
+
+    async def send_execution_fill_rate_drop(self, strategy_name: str, fill_rate: float) -> None:
+        msg = (
+            f"📉 *Emir Gerçekleşme Oranı (Fill Rate) Düştü*\n"
+            f"Strateji: `{strategy_name}`\n"
+            f"Gerçekleşme Oranı: `%{fill_rate * 100:.1f}`"
+        )
+        await self.send(msg)
+
+
 
 

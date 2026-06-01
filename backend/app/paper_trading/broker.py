@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -16,6 +16,8 @@ class PaperBroker:
         self.simulator = simulator or ExecutionSimulator()
 
     def submit_signal(self, signal: TradingSignal, quantity: Decimal, data: MarketData) -> PaperOrder:
+        signal_time = signal.timestamp
+        submission_time = datetime.now(UTC)
         order = PaperOrder(
             account_id=self.account.id,
             symbol=signal.symbol,
@@ -37,6 +39,37 @@ class PaperBroker:
         self.db.refresh(order)
         execution = self.simulator.execute_market(order.id, signal.side, float(quantity), data)
         self.apply_execution(order, execution)
+
+        # Record Execution Quality metrics
+        try:
+            from app.execution_quality.engine import ExecutionQualityEngine
+            eq_engine = ExecutionQualityEngine(self.db)
+            
+            exec_order = eq_engine.record_order(
+                strategy_name=signal.strategy,
+                symbol=signal.symbol,
+                side=signal.side.value,
+                expected_price=Decimal(str(data.price)),
+                expected_quantity=quantity,
+                signal_time=signal_time,
+                submission_time=submission_time,
+                paper_order_id=order.id,
+            )
+            
+            ack_time = submission_time + timedelta(milliseconds=5)
+            fill_time = datetime.now(UTC)
+            
+            eq_engine.record_fill(
+                execution_order_id=exec_order.id,
+                fill_price=Decimal(str(execution.average_price)),
+                fill_quantity=Decimal(str(execution.filled_quantity)),
+                fee=Decimal(str(execution.fee)),
+                fill_time=fill_time,
+                ack_time=ack_time
+            )
+        except Exception:
+            pass
+
         return order
 
     def apply_execution(self, order: PaperOrder, execution: PaperExecution) -> None:
@@ -66,6 +99,8 @@ class PaperBroker:
         self.db.commit()
 
     def close_position(self, position: PaperPosition, data: MarketData, reason: str) -> None:
+        signal_time = datetime.now(UTC)
+        submission_time = datetime.now(UTC)
         execution = self.simulator.execute_market(
             order_id=0,
             side=PaperSide.sell,
@@ -93,6 +128,35 @@ class PaperBroker:
         )
         self._log("trade_closed", f"{position.symbol} closed: {reason}", {"pnl": str(pnl)})
         self.db.commit()
+
+        # Record Execution Quality metrics
+        try:
+            from app.execution_quality.engine import ExecutionQualityEngine
+            eq_engine = ExecutionQualityEngine(self.db)
+            
+            exec_order = eq_engine.record_order(
+                strategy_name="capital_preservation_v1",
+                symbol=position.symbol,
+                side="sell",
+                expected_price=exit_price,
+                expected_quantity=position.quantity,
+                signal_time=signal_time,
+                submission_time=submission_time,
+            )
+            
+            ack_time = submission_time + timedelta(milliseconds=5)
+            fill_time = datetime.now(UTC)
+            
+            eq_engine.record_fill(
+                execution_order_id=exec_order.id,
+                fill_price=exit_price,
+                fill_quantity=position.quantity,
+                fee=Decimal(str(execution.fee)),
+                fill_time=fill_time,
+                ack_time=ack_time
+            )
+        except Exception:
+            pass
 
     def _apply_buy(self, order: PaperOrder, execution: PaperExecution) -> None:
         quantity = Decimal(str(execution.filled_quantity))

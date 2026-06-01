@@ -26,6 +26,7 @@ class TradingEngine:
         self.notifier = TelegramNotifier()
 
     async def scan_symbol(self, symbol: str, equity: Decimal) -> None:
+        signal_time = datetime.now(UTC)
         # Global kill-switch: no new entries while tripped.
         if self.breaker.is_tripped():
             self._log("circuit_breaker", f"{symbol}: skipped, circuit breaker tripped")
@@ -83,8 +84,9 @@ class TradingEngine:
             self._log("risk_filter", f"{symbol} trade quantity scaled to zero by risk filters (regime: {risk_mult}x, health: {health_mult}x)")
             return
 
-
+        submission_time = datetime.now(UTC)
         response = await self.client.place_market_order(symbol, "buy", final_quantity)
+        ack_time = datetime.now(UTC)
         position = Position(
             symbol=symbol,
             entry_price=signal.entry_price,
@@ -101,12 +103,44 @@ class TradingEngine:
             side=OrderSide.buy,
             status=OrderStatus.open,
             price=signal.entry_price,
-            quantity=decision.quantity,
+            quantity=final_quantity,
             raw_response=json.dumps(response),
         )
         self.db.add(order)
         self.db.commit()
-        await self.notifier.send(f"Opened {symbol}: qty={decision.quantity} entry={signal.entry_price}")
+        self.db.refresh(order)
+
+        # Record Execution Quality metrics
+        try:
+            from app.execution_quality.engine import ExecutionQualityEngine
+            eq_engine = ExecutionQualityEngine(self.db)
+            exec_order = eq_engine.record_order(
+                strategy_name=strategy_name,
+                symbol=symbol,
+                side="buy",
+                expected_price=signal.entry_price,
+                expected_quantity=final_quantity,
+                signal_time=signal_time,
+                submission_time=submission_time,
+                order_id=order.id,
+            )
+            fill_price = Decimal(str(response.get("avg_deal_price") or signal.entry_price))
+            fill_qty = Decimal(str(response.get("filled_total") or final_quantity))
+            fee = Decimal(str(response.get("fee") or 0.0))
+            
+            eq_engine.record_fill(
+                execution_order_id=exec_order.id,
+                fill_price=fill_price,
+                fill_quantity=fill_qty,
+                fee=fee,
+                fill_time=datetime.now(UTC),
+                ack_time=ack_time
+            )
+        except Exception as e:
+            self._log("execution_quality_error", f"Failed to record execution quality: {e}")
+
+        await self.notifier.send(f"Opened {symbol}: qty={final_quantity} entry={signal.entry_price}")
+
 
     async def manage_open_positions(self) -> None:
         for position in self.positions.open_positions():
@@ -120,7 +154,14 @@ class TradingEngine:
                 self._update_trailing_stop(position, price)
 
     async def close_position(self, position: Position, reason: str) -> Order:
+        signal_time = datetime.now(UTC)
+        from app.execution_quality.engine import ExecutionQualityEngine
+        eq_engine = ExecutionQualityEngine(self.db)
+        
+        submission_time = datetime.now(UTC)
         response = await self.client.place_market_order(position.symbol, "sell", position.quantity)
+        ack_time = datetime.now(UTC)
+        
         exit_price = Decimal(str(response.get("avg_deal_price") or position.entry_price))
         pnl = (exit_price - position.entry_price) * position.quantity
         position.status = PositionStatus.closed
@@ -147,6 +188,34 @@ class TradingEngine:
         self.db.add_all([order, trade])
         self.db.commit()
         self.db.refresh(order)
+
+        # Record Execution Quality metrics
+        try:
+            strategy_name = self.strategy.__class__.__name__
+            exec_order = eq_engine.record_order(
+                strategy_name=strategy_name,
+                symbol=position.symbol,
+                side="sell",
+                expected_price=exit_price,
+                expected_quantity=position.quantity,
+                signal_time=signal_time,
+                submission_time=submission_time,
+                order_id=order.id,
+            )
+            fill_qty = Decimal(str(response.get("filled_total") or position.quantity))
+            fee = Decimal(str(response.get("fee") or 0.0))
+            
+            eq_engine.record_fill(
+                execution_order_id=exec_order.id,
+                fill_price=exit_price,
+                fill_quantity=fill_qty,
+                fee=fee,
+                fill_time=datetime.now(UTC),
+                ack_time=ack_time
+            )
+        except Exception as e:
+            self._log("execution_quality_error", f"Failed to record execution quality on close: {e}")
+
         await self.notifier.send(f"Closed {position.symbol}: {reason}, pnl={pnl}")
         return order
 
@@ -155,10 +224,10 @@ class TradingEngine:
             return
         new_stop = price * Decimal("0.99")
         if new_stop > position.stop_loss:
-            position.trailing_stop = new_stop
             position.stop_loss = new_stop
             self.db.commit()
 
     def _log(self, source: str, message: str, level: LogLevel = LogLevel.info) -> None:
         self.db.add(SystemLog(level=level, source=source, message=message))
         self.db.commit()
+

@@ -36,6 +36,12 @@ from app.models.entities import (
     AccountSnapshot,
     ReconciliationLog,
     CircuitBreakerEvent,
+    ExecutionOrder,
+    ExecutionFill,
+    ExecutionMetric,
+    SlippageLog,
+    LatencyLog,
+    ExecutionReport,
 )
 
 __all__ = [
@@ -76,7 +82,14 @@ __all__ = [
     "AccountSnapshot",
     "ReconciliationLog",
     "CircuitBreakerEvent",
+    "ExecutionOrder",
+    "ExecutionFill",
+    "ExecutionMetric",
+    "SlippageLog",
+    "LatencyLog",
+    "ExecutionReport",
 ]
+
 
 
 

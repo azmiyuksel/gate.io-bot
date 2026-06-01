@@ -12,6 +12,7 @@ from app.api.v1.reconciliation import router as reconciliation_router
 from app.api.v1.regime import router as regime_router
 from app.api.v1.health import router as health_router
 from app.api.v1.walkforward import router as walkforward_router
+from app.api.v1.execution_quality import router as execution_quality_router
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth_router)
@@ -26,3 +27,5 @@ api_router.include_router(account_router)
 api_router.include_router(reconciliation_router)
 api_router.include_router(circuit_breaker_router)
 api_router.include_router(market_data_router)
+api_router.include_router(execution_quality_router)
+
