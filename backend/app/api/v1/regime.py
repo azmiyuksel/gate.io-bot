@@ -52,10 +52,10 @@ def get_regime_performance(db: DbSession = None) -> List[RegimePerformance]:
         # Populate defaults
         from app.models.enums import MarketRegimeType
         defaults = [
-            RegimePerformance(regime_type=MarketRegimeType.trending_bull.value, strategy_name="CapitalPreservationStrategy", total_trades=24, winning_trades=18, profit_factor=2.45, total_pnl=450.00, drawdown=0.015),
-            RegimePerformance(regime_type=MarketRegimeType.sideways.value, strategy_name="CapitalPreservationStrategy", total_trades=15, winning_trades=8, profit_factor=1.12, total_pnl=42.00, drawdown=0.035),
-            RegimePerformance(regime_type=MarketRegimeType.trending_bear.value, strategy_name="CapitalPreservationStrategy", total_trades=10, winning_trades=2, profit_factor=0.32, total_pnl=-180.00, drawdown=0.064),
-            RegimePerformance(regime_type=MarketRegimeType.high_volatility.value, strategy_name="CapitalPreservationStrategy", total_trades=8, winning_trades=3, profit_factor=0.85, total_pnl=-45.00, drawdown=0.045),
+            RegimePerformance(regime_type=MarketRegimeType.trending_bull.value, strategy_name="capital_preservation_v1", total_trades=24, winning_trades=18, profit_factor=2.45, total_pnl=450.00, drawdown=0.015),
+            RegimePerformance(regime_type=MarketRegimeType.sideways.value, strategy_name="capital_preservation_v1", total_trades=15, winning_trades=8, profit_factor=1.12, total_pnl=42.00, drawdown=0.035),
+            RegimePerformance(regime_type=MarketRegimeType.trending_bear.value, strategy_name="capital_preservation_v1", total_trades=10, winning_trades=2, profit_factor=0.32, total_pnl=-180.00, drawdown=0.064),
+            RegimePerformance(regime_type=MarketRegimeType.high_volatility.value, strategy_name="capital_preservation_v1", total_trades=8, winning_trades=3, profit_factor=0.85, total_pnl=-45.00, drawdown=0.045),
         ]
         db.add_all(defaults)
         db.commit()

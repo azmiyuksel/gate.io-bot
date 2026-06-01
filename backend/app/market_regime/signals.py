@@ -50,8 +50,8 @@ class RegimeSignalFilter:
                 return False, "breakout_and_trend_disabled_in_range", Decimal("0")
 
         elif regime == MarketRegimeType.high_volatility:
-            # High volatility: cut risk by half, allow trend following
-            conf_mult *= Decimal("0.5")
+            # High volatility already carries a 0.5 base risk multiplier via
+            # RISK_MULTIPLIERS; do not halve a second time here.
             if "reversion" in strategy_name_lower:
                 return False, "mean_reversion_blocked_in_high_vol", Decimal("0")
 

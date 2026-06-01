@@ -1,6 +1,22 @@
 import math
-from decimal import Decimal
 from typing import List, Any
+
+
+def _trade_pnl(trade: Any) -> float:
+    """Extract realized PnL from an ORM object or a dict.
+
+    The previous implementation chained ``getattr(...) or t.get(...)`` which both
+    short-circuited on a legitimate 0.0 PnL and crashed on objects lacking
+    ``.get``. This resolves the value explicitly without truthiness chaining.
+    """
+    for attr in ("realized_pnl", "pnl"):
+        if hasattr(trade, attr):
+            value = getattr(trade, attr)
+            return float(value) if value is not None else 0.0
+    if isinstance(trade, dict):
+        value = trade.get("realized_pnl", trade.get("pnl", 0.0))
+        return float(value) if value is not None else 0.0
+    return 0.0
 
 
 class PerformanceCalculator:
@@ -8,16 +24,16 @@ class PerformanceCalculator:
     def calculate_win_rate(trades: List[Any]) -> float:
         if not trades:
             return 0.0
-        wins = sum(1 for t in trades if float(getattr(t, "realized_pnl", 0.0) or getattr(t, "pnl", 0.0) or t.get("realized_pnl", 0.0) or t.get("pnl", 0.0)) > 0)
+        wins = sum(1 for t in trades if _trade_pnl(t) > 0)
         return wins / len(trades)
 
     @staticmethod
     def calculate_profit_factor(trades: List[Any]) -> float:
         gross_profit = 0.0
         gross_loss = 0.0
-        
+
         for t in trades:
-            pnl = float(getattr(t, "realized_pnl", 0.0) or getattr(t, "pnl", 0.0) or t.get("realized_pnl", 0.0) or t.get("pnl", 0.0))
+            pnl = _trade_pnl(t)
             if pnl > 0:
                 gross_profit += pnl
             else:

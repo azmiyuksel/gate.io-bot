@@ -3,6 +3,10 @@ from decimal import Decimal
 
 from app.services.strategy.indicators import atr, ema, rsi
 
+# Canonical strategy identifier. Must match StrategySettings.name and the name
+# used by the paper-trading adapter so health/regime records key consistently.
+STRATEGY_NAME = "capital_preservation_v1"
+
 
 @dataclass(frozen=True)
 class Signal:
@@ -13,6 +17,8 @@ class Signal:
 
 
 class CapitalPreservationStrategy:
+    name: str = STRATEGY_NAME
+
     def evaluate(self, candles: list[dict]) -> Signal:
         if len(candles) < 210:
             return Signal(False, "not_enough_history")

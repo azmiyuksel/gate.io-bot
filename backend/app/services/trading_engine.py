@@ -72,8 +72,8 @@ class TradingEngine:
             for c in candles
         ]
         
-        regime_record = regime_engine.update_regime(symbol, "1h", candles_list)
-        strategy_name = self.strategy.__class__.__name__
+        regime_engine.update_regime(symbol, "1h", candles_list)
+        strategy_name = self.strategy.name
         allowed, reason, risk_mult = regime_engine.should_trade(strategy_name, symbol)
         
         if not allowed:
@@ -180,7 +180,10 @@ class TradingEngine:
         ack_time = datetime.now(UTC)
         
         exit_price = Decimal(str(response.get("avg_deal_price") or position.entry_price))
-        pnl = (exit_price - position.entry_price) * position.quantity
+        # Exit fee is reported by the exchange (quote currency for a spot sell).
+        fee = Decimal(str(response.get("fee") or 0))
+        # Realized PnL must be net of fees, otherwise reported PnL is systematically optimistic.
+        pnl = (exit_price - position.entry_price) * position.quantity - fee
         position.status = PositionStatus.closed
         position.closed_at = datetime.now(UTC)
         position.realized_pnl = pnl
@@ -194,21 +197,24 @@ class TradingEngine:
             quantity=position.quantity,
             raw_response=json.dumps(response),
         )
+        self.db.add(order)
+        self.db.flush()  # assign order.id so the trade can reference it
         trade = Trade(
-            order_id=None,
+            order_id=order.id,
             symbol=position.symbol,
             side=OrderSide.sell,
             price=exit_price,
             quantity=position.quantity,
+            fee=fee,
             realized_pnl=pnl,
         )
-        self.db.add_all([order, trade])
+        self.db.add(trade)
         self.db.commit()
         self.db.refresh(order)
 
         # Record Execution Quality metrics
         try:
-            strategy_name = self.strategy.__class__.__name__
+            strategy_name = self.strategy.name
             exec_order = eq_engine.record_order(
                 strategy_name=strategy_name,
                 symbol=position.symbol,
@@ -220,8 +226,7 @@ class TradingEngine:
                 order_id=order.id,
             )
             fill_qty = Decimal(str(response.get("filled_total") or position.quantity))
-            fee = Decimal(str(response.get("fee") or 0.0))
-            
+
             eq_engine.record_fill(
                 execution_order_id=exec_order.id,
                 fill_price=exit_price,
