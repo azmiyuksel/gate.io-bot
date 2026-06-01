@@ -11,6 +11,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.market_data_quality.engine import MarketDataQualityEngine
 from app.models.entities import HistoricalCandle
 from app.services.exchange.gateio import GateIOClient
 
@@ -20,16 +21,24 @@ def _to_datetime(timestamp) -> datetime:
 
 
 class MarketDataIngestion:
-    def __init__(self, db: Session, client: GateIOClient) -> None:
+    def __init__(self, db: Session, client: GateIOClient, quality_check: bool = True) -> None:
         self.db = db
         self.client = client
         self.settings = get_settings()
+        self.quality_check = quality_check
 
     async def ingest(self, symbol: str, interval: str | None = None, limit: int = 240) -> int:
         interval = interval or self.settings.market_data_interval
         candles = await self.client.candles(symbol, interval=interval, limit=limit)
         if not candles:
             return 0
+
+        # Run the raw feed through the quality pipeline; only clean candles are
+        # promoted to the historical store used by backtests/regime/strategies.
+        if self.quality_check:
+            candles = self._clean_through_quality(symbol, interval, candles)
+            if not candles:
+                return 0
 
         timestamps = [_to_datetime(c["timestamp"]) for c in candles]
         existing = {
@@ -62,6 +71,23 @@ class MarketDataIngestion:
 
         self.db.commit()
         return inserted
+
+    def _clean_through_quality(self, symbol: str, interval: str, candles: list[dict]) -> list[dict]:
+        """Validate/clean raw candles via the quality engine, returning clean dicts."""
+        engine = MarketDataQualityEngine(self.db)
+        result = engine.ingest(candles, symbol, interval, source="gateio")
+        clean = engine.emit_clean_data(result)
+        return [
+            {
+                "timestamp": int(c.timestamp.timestamp()),
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "volume": c.volume,
+            }
+            for c in clean
+        ]
 
     async def ingest_all(self, symbols: list[str], interval: str | None = None) -> dict[str, int]:
         return {symbol: await self.ingest(symbol, interval) for symbol in symbols}

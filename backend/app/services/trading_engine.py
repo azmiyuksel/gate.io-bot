@@ -33,6 +33,23 @@ class TradingEngine:
             return
 
         candles = await self.client.candles(symbol)
+
+        # Market Data Quality gate: run the feed through the quality pipeline and
+        # block trading on unreliable data, de-risk on degraded data.
+        from app.core.config import get_settings
+        from app.market_data_quality.engine import MarketDataQualityEngine
+        from app.market_data_quality.models import DataTradeStatus
+
+        mdq_result = MarketDataQualityEngine(self.db).ingest(candles, symbol, "1h", source="gateio")
+        data_status = mdq_result.trade_status
+        if data_status == DataTradeStatus.invalid and get_settings().mdq_pause_on_invalid:
+            self._log(
+                "data_quality",
+                f"{symbol}: trading paused, data INVALID (health={mdq_result.health.score})",
+            )
+            return
+        data_risk_mult = Decimal("0.5") if data_status == DataTradeStatus.degraded else Decimal("1")
+
         signal = self.strategy.evaluate(candles)
         if not signal.should_buy or signal.entry_price is None or signal.atr_value is None:
             self._log("strategy", f"{symbol}: {signal.reason}")
@@ -77,11 +94,11 @@ class TradingEngine:
             self._log("risk", f"{symbol}: {decision.reason}")
             return
 
-        # Scale position quantity by both regime and health risk multipliers
+        # Scale position quantity by regime, health and data-quality risk multipliers
         health_mult = health_status["risk_multiplier"]
-        final_quantity = decision.quantity * risk_mult * health_mult
+        final_quantity = decision.quantity * risk_mult * health_mult * data_risk_mult
         if final_quantity <= 0:
-            self._log("risk_filter", f"{symbol} trade quantity scaled to zero by risk filters (regime: {risk_mult}x, health: {health_mult}x)")
+            self._log("risk_filter", f"{symbol} trade quantity scaled to zero by risk filters (regime: {risk_mult}x, health: {health_mult}x, data: {data_risk_mult}x)")
             return
 
         submission_time = datetime.now(UTC)

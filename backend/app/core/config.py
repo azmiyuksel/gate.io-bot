@@ -35,6 +35,24 @@ class Settings(BaseSettings):
     gateio_ws_url: str = "wss://api.gateio.ws/ws/v4/"
     market_data_interval: str = "1h"
 
+    # --- Market Data Quality ---
+    # Single-candle move beyond this fraction is flagged as a spike (0.01-0.10 typical).
+    mdq_spike_threshold_pct: float = 0.10
+    # Z-score above which a price/volume move is treated as anomalous.
+    mdq_zscore_threshold: float = 5.0
+    # Volume spike multiple over rolling mean.
+    mdq_volume_spike_multiple: float = 8.0
+    # Liquidity drop: volume below this fraction of rolling mean.
+    mdq_liquidity_drop_pct: float = 0.10
+    # Cross-exchange price divergence tolerance.
+    mdq_cross_exchange_threshold_pct: float = 0.01
+    # Spike handling mode: flag | smooth | ignore
+    mdq_spike_mode: str = "flag"
+    # Block trading when feed health score falls below INVALID threshold.
+    mdq_pause_on_invalid: bool = True
+    # Enable the optional Isolation Forest ML anomaly layer.
+    mdq_enable_ml: bool = True
+
     @property
     def symbols(self) -> list[str]:
         return [symbol.strip() for symbol in self.trading_symbols.split(",") if symbol.strip()]

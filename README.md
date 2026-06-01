@@ -180,6 +180,50 @@ stay fed.
 - `GET /market-data/candles?symbol=&interval=&limit=` — stored candles
 - `POST /market-data/ingest` (admin) — ingest candles now
 
+## Market Data Quality Engine (`backend/app/market_data_quality`)
+
+Institutional data-integrity layer that every candle passes through before any
+backtest, paper or live decision trusts it. Pipeline:
+
+    raw -> normalize -> validate -> anomaly detection -> repair/flag -> emit clean
+
+Modules:
+
+- `validator.py`: OHLC consistency, zero/negative values, duplicate timestamps, excessive moves
+- `normalization.py`: UTC timestamps, `BASE_QUOTE` symbol form, precision rounding, volume scaling
+- `gap_detector.py`: missing candles, feed delay, websocket-disconnect gaps, interpolation
+- `spike_detector.py`: configurable single-candle spike filter (`flag` / `smooth` / `ignore`)
+- `volume_analyzer.py`: volume-spike and sudden-liquidity-drop detection
+- `anomaly_detector.py`: z-score on returns + optional Isolation Forest (ML, corroborated)
+- `cross_exchange_validator.py`: pluggable cross-exchange price divergence checks
+- `data_health_score.py`: weighted 0-100 score (0.3 consistency + 0.3 completeness + 0.2 anomaly⁻¹ + 0.2 latency)
+- `engine.py`: real-time orchestration, persistence and the trading gate
+
+Health categories: Excellent (90-100), Good (75-89), Risky (50-74), Unreliable (<50).
+Trading gate: `CLEAN` (normal), `DEGRADED` (50% risk), `INVALID` (pause, if `MDQ_PAUSE_ON_INVALID`).
+
+Integration:
+
+- **Ingestion**: `MarketDataIngestion` only promotes clean candles to `historical_candles`.
+- **Live**: `TradingEngine.scan_symbol` runs the gate — invalid data pauses entries, degraded data halves size.
+- **Backtest**: `backtest_support.BacktestDataQuality` applies the same rules and can inject spikes/gaps for robustness testing.
+- **Alerts**: the scheduler notifies via Telegram when a feed turns degraded/invalid.
+
+Tables: `market_data_raw`, `market_data_clean`, `market_data_anomalies`,
+`market_data_health_logs`, `data_quality_reports`.
+
+API (`/api/v1/data-quality`):
+
+- `GET /data-quality/status?symbol=&timeframe=`
+- `GET /data-quality/score?symbol=&timeframe=`
+- `GET /data-quality/anomalies?symbol=&timeframe=&limit=`
+- `GET /data-quality/health-logs?symbol=&timeframe=&limit=`
+- `GET /data-quality/report?symbol=&timeframe=&hours=`
+- `POST /data-quality/revalidate` (admin)
+
+Dashboard page: `http://localhost:3000/data-quality` — health score, score breakdown,
+health timeline, missing-data/anomaly trend, anomaly-type distribution and a live anomaly table.
+
 ## Important Notes
 
 This is an engineering scaffold, not financial advice. Start in read-only or tiny-size mode, verify Gate.io order minimums per symbol, and review every live permission before enabling the strategy.

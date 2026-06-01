@@ -42,6 +42,11 @@ from app.models.entities import (
     SlippageLog,
     LatencyLog,
     ExecutionReport,
+    MarketDataRaw,
+    MarketDataClean,
+    MarketDataAnomaly,
+    MarketDataHealthLog,
+    DataQualityReport,
 )
 
 __all__ = [
@@ -88,6 +93,11 @@ __all__ = [
     "SlippageLog",
     "LatencyLog",
     "ExecutionReport",
+    "MarketDataRaw",
+    "MarketDataClean",
+    "MarketDataAnomaly",
+    "MarketDataHealthLog",
+    "DataQualityReport",
 ]
 
 

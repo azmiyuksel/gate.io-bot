@@ -52,9 +52,29 @@ async def ingest_market_data() -> None:
     client = GateIOClient()
     try:
         await MarketDataIngestion(db, client).ingest_all(settings.symbols)
+        await _alert_on_degraded_feeds(db, settings.symbols)
     finally:
         await client.close()
         db.close()
+
+
+async def _alert_on_degraded_feeds(db, symbols: list[str]) -> None:
+    """Notify when any symbol's data feed health is degraded or invalid."""
+    from app.market_data_quality.engine import MarketDataQualityEngine
+    from app.market_data_quality.models import DataTradeStatus
+
+    engine = MarketDataQualityEngine(db)
+    notifier = TelegramNotifier()
+    for symbol in symbols:
+        log = engine.latest_health(symbol, get_settings().market_data_interval)
+        if log is None:
+            continue
+        status = log.trade_status
+        if status in (DataTradeStatus.degraded, DataTradeStatus.invalid):
+            await notifier.send(
+                f"⚠️ Veri Kalite Uyarisi: {symbol} feed {status} "
+                f"(health={log.health_score}, anomalies={log.anomalies_found})"
+            )
 
 
 async def startup_recovery() -> None:
