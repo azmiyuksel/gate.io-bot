@@ -114,6 +114,10 @@ are automated via Dependabot (`.github/dependabot.yml`).
 - **Error handling**: unhandled exceptions return `{"detail": "Internal server
   error", "request_id": ...}` and are logged with the correlation id, without
   leaking internals.
+- **Trade economics**: `GET /api/v1/dashboard/economics` reports per-trade
+  expected value, payoff ratio, the break-even win rate and the realized
+  **edge** (win rate − break-even), plus the strategy's return vs simply
+  buying and holding the primary asset (excess return / alpha).
 
 ## Backtest Engine
 

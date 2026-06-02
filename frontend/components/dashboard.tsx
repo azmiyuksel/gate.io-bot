@@ -53,6 +53,23 @@ interface ChartsData {
   win_rate: number;
   max_drawdown: number;
 }
+interface EconomicsData {
+  edge: {
+    trades: number;
+    expectancy: number;
+    payoff_ratio: number;
+    break_even_win_rate: number;
+    edge: number;
+    has_edge: boolean;
+  };
+  benchmark: {
+    strategy_return: number;
+    benchmark_return: number;
+    excess_return: number;
+    outperforms: boolean;
+    benchmark_symbol: string;
+  };
+}
 
 export function Dashboard() {
   const [summary, setSummary] = useState<DashboardSummary>(fallback);
@@ -62,6 +79,7 @@ export function Dashboard() {
     win_rate: 0,
     max_drawdown: 0,
   });
+  const [economics, setEconomics] = useState<EconomicsData | null>(null);
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -81,6 +99,8 @@ export function Dashboard() {
       }
       const chartsResponse = await authFetch(`/dashboard/charts`);
       if (chartsResponse.ok) setCharts(await chartsResponse.json());
+      const econResponse = await authFetch(`/dashboard/economics`);
+      if (econResponse.ok) setEconomics(await econResponse.json());
     } finally {
       setLoading(false);
     }
@@ -227,6 +247,31 @@ export function Dashboard() {
           </div>
         </Card>
       </section>
+
+      {economics && economics.edge.trades > 0 && (
+        <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-4">
+          <Metric
+            label="İşlem başı beklenen değer (EV)"
+            value={`$${economics.edge.expectancy.toFixed(2)}`}
+            icon={<Activity size={18} />}
+          />
+          <Metric
+            label={`Edge (win-rate − başabaş)`}
+            value={`${(economics.edge.edge * 100).toFixed(1)}%`}
+            icon={economics.edge.has_edge ? <ShieldCheck size={18} /> : <XCircle size={18} />}
+          />
+          <Metric
+            label="Payoff oranı"
+            value={`${economics.edge.payoff_ratio.toFixed(2)}x`}
+            icon={<Activity size={18} />}
+          />
+          <Metric
+            label={`Al-tut'a göre (${economics.benchmark.benchmark_symbol})`}
+            value={`${(economics.benchmark.excess_return * 100).toFixed(1)}%`}
+            icon={economics.benchmark.outperforms ? <ShieldCheck size={18} /> : <XCircle size={18} />}
+          />
+        </section>
+      )}
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-10 lg:grid-cols-[2fr_1fr]">
         <Card>

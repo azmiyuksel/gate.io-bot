@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.account.engine import AccountManager
 from app.api.deps import CurrentUser, DbSession, current_user_role, require_admin
 from app.core.audit import record_audit
-from app.models.entities import AuditLog, Position, Trade
+from app.core.config import get_settings
+from app.models.entities import AuditLog, HistoricalCandle, Position, Trade
 from app.models.enums import PositionStatus
 from app.repositories.trading import (
     PositionRepository,
@@ -14,6 +15,7 @@ from app.repositories.trading import (
     TradeRepository,
 )
 from app.schemas.dashboard import DashboardSummary, StrategySettingsUpdate
+from app.services.analytics.economics import benchmark_comparison, trade_economics
 from app.services.exchange.gateio import GateIOClient
 from app.services.trading_engine import TradingEngine
 
@@ -78,6 +80,47 @@ def audit_log(db: DbSession, limit: int = 100) -> list[dict]:
         }
         for row in rows
     ]
+
+
+@router.get("/economics")
+def economics(db: DbSession) -> dict:
+    """Trade-economics edge report + buy-and-hold (BTC) benchmark.
+
+    Answers: is expected value per trade positive, does the realized win rate
+    clear break-even, and does the strategy beat simply holding the asset?
+    """
+    trades = db.query(Trade).order_by(Trade.traded_at.asc()).all()
+    pnls = [float(t.realized_pnl) for t in trades]
+    edge = trade_economics(pnls)
+
+    # Strategy return over the window, relative to the capital it started from.
+    total_pnl = sum(pnls)
+    equity = float(AccountManager(db).latest_equity())
+    starting_capital = equity - total_pnl
+    strategy_return = total_pnl / starting_capital if starting_capital > 0 else 0.0
+
+    # Benchmark: buy-and-hold the primary symbol over the same trade window.
+    settings = get_settings()
+    symbol = settings.symbols[0] if settings.symbols else "BTC_USDT"
+    benchmark = {"strategy_return": strategy_return, "benchmark_return": 0.0,
+                 "excess_return": strategy_return, "outperforms": strategy_return > 0}
+    if trades:
+        candles = (
+            db.query(HistoricalCandle)
+            .filter(
+                HistoricalCandle.symbol == symbol,
+                HistoricalCandle.timeframe == settings.market_data_interval,
+                HistoricalCandle.timestamp >= trades[0].traded_at,
+                HistoricalCandle.timestamp <= trades[-1].traded_at,
+            )
+            .order_by(HistoricalCandle.timestamp.asc())
+            .all()
+        )
+        closes = [float(c.close) for c in candles]
+        if len(closes) >= 2:
+            benchmark = benchmark_comparison(strategy_return, closes)
+    benchmark["benchmark_symbol"] = symbol
+    return {"edge": edge, "benchmark": benchmark}
 
 
 @router.patch("/strategy", dependencies=[Depends(require_admin)])
