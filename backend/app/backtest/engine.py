@@ -123,33 +123,44 @@ class BacktestEngine:
             slippage_rate=config.slippage_rate,
             spread_rate=config.spread_rate,
             order_latency_candles=config.order_latency_candles,
+            maker_fee_rate=config.maker_fee_rate,
         )
         trailing_pct = float(config.parameters.get("trailing_stop_pct", 0.01))
-        pending_entry = False
+        use_limit = config.execution_mode == "limit"
+        # Holds the SIGNAL bar's close once a signal fires, else None. The entry
+        # is executed on the NEXT bar (no same-bar lookahead): `strategy.current`
+        # is still the signal bar here, so ATR stop/target use signal-time data.
+        pending_signal_close: float | None = None
         for _, candle in prepared.iterrows():
             broker.process_orders(candle)
             broker.manage_exits(candle, trailing_pct)
-            # Execute an entry that was SIGNALLED on the previous bar's close at
-            # THIS bar's open. The signal therefore only uses information that was
-            # available before the fill — eliminating same-bar lookahead bias.
-            # `strategy.current` is still the prior (signal) bar here, so the
-            # ATR-based stop/target are computed from data available at signal time.
-            if pending_entry and portfolio.can_open(config.max_open_positions):
+            if pending_signal_close is not None and portfolio.can_open(config.max_open_positions):
                 equity = (
                     portfolio.equity_curve[-1]["equity"]
                     if portfolio.equity_curve
                     else config.initial_cash
                 )
-                entry = float(candle["open"])
-                quantity = strategy.position_size(equity, entry)
-                stop_loss, take_profit = strategy.risk_levels(entry)
-                if stop_loss > 0 and quantity > 0:
-                    broker.market_buy(candle, config.symbol, quantity, stop_loss, take_profit)
-            pending_entry = False
+                if use_limit:
+                    # Post a maker buy at the signal close; fills only if price
+                    # trades down to it this bar, otherwise the signal is missed.
+                    limit_price = pending_signal_close * (1 - config.limit_offset)
+                    quantity = strategy.position_size(equity, limit_price)
+                    stop_loss, take_profit = strategy.risk_levels(limit_price)
+                    if stop_loss > 0 and quantity > 0:
+                        broker.limit_buy(
+                            candle, config.symbol, quantity, limit_price, stop_loss, take_profit
+                        )
+                else:
+                    entry = float(candle["open"])
+                    quantity = strategy.position_size(equity, entry)
+                    stop_loss, take_profit = strategy.risk_levels(entry)
+                    if stop_loss > 0 and quantity > 0:
+                        broker.market_buy(candle, config.symbol, quantity, stop_loss, take_profit)
+            pending_signal_close = None
 
             strategy.on_candle(candle)
             if portfolio.can_open(config.max_open_positions) and strategy.should_buy():
-                pending_entry = True
+                pending_signal_close = float(candle["close"])
             portfolio.mark_to_market(candle.name, float(candle["close"]))
 
         for position in list(portfolio.positions):

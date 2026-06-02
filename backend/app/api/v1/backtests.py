@@ -185,15 +185,20 @@ def _get_run(db: DbSession, run_id: int) -> BacktestRun:
 
 
 def _config_from_run(run: BacktestRun) -> BacktestConfig:
+    params = run.parameters or {}
     return BacktestConfig(
         symbol=run.symbol,
         timeframe=run.timeframe,
         start_at=run.start_at,
         end_at=run.end_at,
         initial_cash=float(run.initial_cash),
-        max_open_positions=int((run.parameters or {}).get("max_open_positions", 3)),
-        max_capital_per_trade_pct=float((run.parameters or {}).get("max_capital_per_trade_pct", 0.01)),
-        parameters=run.parameters or {},
+        commission_rate=float(params.get("commission_rate", 0.001)),
+        maker_fee_rate=float(params.get("maker_fee_rate", 0.0008)),
+        execution_mode=str(params.get("execution_mode", "market")),
+        limit_offset=float(params.get("limit_offset", 0.0)),
+        max_open_positions=int(params.get("max_open_positions", 3)),
+        max_capital_per_trade_pct=float(params.get("max_capital_per_trade_pct", 0.01)),
+        parameters=params,
     )
 
 

@@ -120,7 +120,8 @@ are automated via Dependabot (`.github/dependabot.yml`).
 The backtest module lives in `backend/app/backtest`:
 
 - `engine.py`: historical data loader and orchestration
-- `broker.py`: virtual broker with market, limit, stop and stop-limit trigger simulation primitives
+- `broker.py`: virtual broker with market, limit, stop and stop-limit primitives and a **maker/taker cost model** — market entries and stop-loss exits pay the taker fee plus spread/slippage; resting limit entries and take-profit exits pay the lower maker fee with no slippage
+- **Execution mode** (`execution_mode` parameter): `market` (taker, always fills next open) or `limit` (maker — posts a buy at the signal close and fills only if price trades to it, otherwise the signal is missed), so you can measure whether the edge survives net of realistic costs
 - `portfolio.py`: cash, equity, realized/unrealized PnL and positions
 - `strategy_runner.py`: `BaseStrategy` interface and EMA/RSI/ATR example strategy
 - `engine.py`: signals are evaluated on a bar's close and **filled on the next bar's open** (no same-bar lookahead bias)

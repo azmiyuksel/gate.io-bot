@@ -12,9 +12,14 @@ class VirtualBroker:
         slippage_rate: float = 0.0005,
         spread_rate: float = 0.0002,
         order_latency_candles: int = 1,
+        maker_fee_rate: float | None = None,
     ) -> None:
         self.portfolio = portfolio
+        # Taker fee applies to market orders and stop-loss exits that cross the
+        # spread; maker fee applies to resting limit entries and take-profit exits.
         self.commission_rate = commission_rate
+        self.taker_fee_rate = commission_rate
+        self.maker_fee_rate = maker_fee_rate if maker_fee_rate is not None else commission_rate
         self.slippage_rate = slippage_rate
         self.spread_rate = spread_rate
         self.order_latency_candles = order_latency_candles
@@ -28,8 +33,38 @@ class VirtualBroker:
         self, candle: pd.Series, symbol: str, quantity: float, stop_loss: float, take_profit: float
     ) -> BacktestPosition | None:
         fill_price = self._buy_fill_price(float(candle["open"]))
+        return self._open(candle, symbol, quantity, fill_price, stop_loss, take_profit, self.taker_fee_rate)
+
+    def limit_buy(
+        self,
+        candle: pd.Series,
+        symbol: str,
+        quantity: float,
+        limit_price: float,
+        stop_loss: float,
+        take_profit: float,
+    ) -> BacktestPosition | None:
+        """Maker entry: fills only if this bar trades down to the limit price.
+
+        Models a resting post-only buy — you save the taker fee and spread/slippage
+        but miss the trade entirely when price never comes back to your limit.
+        """
+        if float(candle["low"]) > limit_price:
+            return None  # not filled this bar -> signal missed
+        return self._open(candle, symbol, quantity, limit_price, stop_loss, take_profit, self.maker_fee_rate)
+
+    def _open(
+        self,
+        candle: pd.Series,
+        symbol: str,
+        quantity: float,
+        fill_price: float,
+        stop_loss: float,
+        take_profit: float,
+        fee_rate: float,
+    ) -> BacktestPosition | None:
         gross_cost = fill_price * quantity
-        fee = gross_cost * self.commission_rate
+        fee = gross_cost * fee_rate
         if self.portfolio.cash < gross_cost + fee:
             return None
         position = BacktestPosition(
@@ -66,13 +101,27 @@ class VirtualBroker:
             if trailing_stop > position.stop_loss:
                 position.stop_loss = trailing_stop
             if low <= position.stop_loss:
-                self._close(position, candle, position.stop_loss, "stop_loss")
+                # Stop-loss is a market (taker) exit that crosses the spread.
+                self._close(position, candle, position.stop_loss, "stop_loss", maker=False)
             elif high >= position.take_profit:
-                self._close(position, candle, position.take_profit, "take_profit")
+                # Take-profit is a resting limit (maker) exit — no spread/slippage.
+                self._close(position, candle, position.take_profit, "take_profit", maker=True)
 
-    def _close(self, position: BacktestPosition, candle: pd.Series, price: float, reason: str) -> None:
-        fill_price = self._sell_fill_price(price)
-        fee = fill_price * position.quantity * self.commission_rate
+    def _close(
+        self,
+        position: BacktestPosition,
+        candle: pd.Series,
+        price: float,
+        reason: str,
+        maker: bool = False,
+    ) -> None:
+        if maker:
+            fill_price = price  # resting limit fills at the target, no slippage
+            fee_rate = self.maker_fee_rate
+        else:
+            fill_price = self._sell_fill_price(price)  # market exit crosses the spread
+            fee_rate = self.taker_fee_rate
+        fee = fill_price * position.quantity * fee_rate
         self.portfolio.close_position(position, candle.name, fill_price, fee, reason)
 
     def _is_triggered(self, order: SimulatedOrder, candle: pd.Series) -> bool:

@@ -35,10 +35,16 @@ class BacktestConfig:
     start_at: datetime
     end_at: datetime
     initial_cash: float = 10_000
-    commission_rate: float = 0.001
+    commission_rate: float = 0.001  # taker fee (market orders / stop-loss exits)
+    maker_fee_rate: float = 0.0008  # maker fee (resting limit entries / take-profit exits)
     slippage_rate: float = 0.0005
     spread_rate: float = 0.0002
     order_latency_candles: int = 1
+    # Entry execution: "market" (taker, always fills next open) or
+    # "limit" (maker, fills next bar only if price trades down to the signal price).
+    execution_mode: str = "market"
+    # For limit entries, post the buy this fraction below the signal close.
+    limit_offset: float = 0.0
     max_open_positions: int = 3
     max_capital_per_trade_pct: float = 0.01
     parameters: dict = field(default_factory=dict)
