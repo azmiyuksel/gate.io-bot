@@ -88,18 +88,33 @@ def buy_and_hold_benchmark(closes: list[float], timeframe: str = "1h") -> dict:
     return {"buy_hold_return": bh_return, "buy_hold_sharpe": bh_sharpe}
 
 
+def _equity_fraction_returns(pnls: np.ndarray, initial_cash: float) -> np.ndarray:
+    """Reconstruct each trade's return as a fraction of equity-before-trade.
+
+    Bootstrapping these returns and compounding them models a %-of-equity sizing
+    strategy honestly, instead of assuming a fixed absolute stake (additive PnL).
+    """
+    equity = initial_cash
+    returns = np.empty(pnls.size)
+    for i, pnl in enumerate(pnls):
+        returns[i] = pnl / equity if equity > 0 else 0.0
+        equity += pnl
+    return returns
+
+
 def monte_carlo(trades: list[BacktestTradeResult], initial_cash: float, scenarios: int = 1000) -> dict:
     pnls = np.array([trade.pnl for trade in trades], dtype="float64")
     if pnls.size == 0:
         return {"scenarios": scenarios, "worst_case": 0, "best_case": 0, "median_return": 0, "ruin_probability": 0}
+    returns = _equity_fraction_returns(pnls, initial_cash)
     final_returns = []
     ruin_count = 0
-    ruin_level = initial_cash * 0.5
+    ruin_level = 0.5  # equity falling to 50% of the starting balance
     rng = np.random.default_rng(42)
     for _ in range(scenarios):
-        sampled = rng.choice(pnls, size=pnls.size, replace=True)
-        path = initial_cash + sampled.cumsum()
-        final_returns.append((path[-1] / initial_cash) - 1)
+        sampled = rng.choice(returns, size=returns.size, replace=True)
+        path = np.cumprod(1.0 + sampled)  # equity relative to start (starts at 1)
+        final_returns.append(float(path[-1] - 1.0))
         ruin_count += int(path.min() <= ruin_level)
     return {
         "scenarios": scenarios,

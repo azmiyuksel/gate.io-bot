@@ -75,21 +75,25 @@ def robustness_score(consistency: float, wfe: float, sharpe: float, drawdown: fl
 
 
 def monte_carlo_wfa(trades: list[dict], initial_cash: float, scenarios: int = 1000) -> dict:
+    from app.backtest.metrics import _equity_fraction_returns
+
     pnls = np.array([trade.get("pnl", 0) for trade in trades], dtype="float64")
     if pnls.size == 0:
         return {"var_95": 0, "expected_shortfall": 0, "worst_drawdown": 0, "ruin_probability": 0}
+    # Compound resampled equity-fraction returns (matches %-of-equity sizing).
+    returns = _equity_fraction_returns(pnls, initial_cash)
     rng = np.random.default_rng(1337)
     final_returns = []
     worst_drawdowns = []
     ruin_count = 0
     for _ in range(scenarios):
-        sampled = rng.choice(pnls, size=pnls.size, replace=True)
-        equity = initial_cash + sampled.cumsum()
+        sampled = rng.choice(returns, size=returns.size, replace=True)
+        equity = np.cumprod(1.0 + sampled)  # equity relative to start (starts at 1)
         running_max = np.maximum.accumulate(equity)
-        drawdown = (equity - running_max) / np.maximum(running_max, 1)
-        final_returns.append((equity[-1] / initial_cash) - 1)
-        worst_drawdowns.append(drawdown.min())
-        ruin_count += int(equity.min() <= initial_cash * 0.5)
+        drawdown = (equity - running_max) / running_max
+        final_returns.append(float(equity[-1] - 1.0))
+        worst_drawdowns.append(float(drawdown.min()))
+        ruin_count += int(equity.min() <= 0.5)
     var_95 = float(np.percentile(final_returns, 5))
     tail = [value for value in final_returns if value <= var_95]
     return {

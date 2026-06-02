@@ -14,6 +14,7 @@ class TimeSeriesSplitter:
         train_delta = timedelta(days=config.train_period_days)
         test_delta = timedelta(days=config.test_period_days)
         step_delta = timedelta(days=config.step_days)
+        embargo_delta = timedelta(days=max(config.embargo_days, 0))
         windows: list[WalkForwardWindowSpec] = []
         cursor = start
         window_id = 1
@@ -24,7 +25,8 @@ class TimeSeriesSplitter:
             else:
                 train_start = cursor
                 train_end = cursor + train_delta
-            test_start = train_end
+            # Embargo gap: training ends, then a buffer, then out-of-sample test.
+            test_start = train_end + embargo_delta
             test_end = test_start + test_delta
             if test_end > end:
                 break

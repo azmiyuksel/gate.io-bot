@@ -18,6 +18,9 @@ class WalkForwardConfig:
     train_period_days: int = 365
     test_period_days: int = 90
     step_days: int = 90
+    # Purge/embargo gap between train and test (López de Prado): prevents the
+    # first test bars from leaking adjacency/autocorrelation from training.
+    embargo_days: int = 1
     n_trials: int = 30
     initial_cash: float = 10_000
     base_parameters: dict = field(default_factory=dict)

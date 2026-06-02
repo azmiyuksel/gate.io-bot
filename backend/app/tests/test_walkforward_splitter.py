@@ -27,6 +27,30 @@ def test_rolling_splitter_uses_time_ordered_windows() -> None:
     assert windows[1].train_start > windows[0].train_start
 
 
+def test_embargo_gap_separates_train_and_test() -> None:
+    from datetime import timedelta
+
+    data = pd.DataFrame(
+        {"close": [1] * 500},
+        index=pd.date_range("2022-01-01", periods=500, freq="1D", tz="UTC"),
+    )
+    config = WalkForwardConfig(
+        symbol="BTC_USDT",
+        timeframe="1d",
+        start_at=datetime.fromisoformat("2022-01-01T00:00:00+00:00"),
+        end_at=datetime.fromisoformat("2023-05-01T00:00:00+00:00"),
+        mode=SplitMode.rolling,
+        train_period_days=120,
+        test_period_days=30,
+        step_days=30,
+        embargo_days=5,
+    )
+    windows = TimeSeriesSplitter().split(data, config)
+    assert windows
+    # Test set starts exactly the embargo gap after training ends.
+    assert windows[0].test_start - windows[0].train_end == timedelta(days=5)
+
+
 def test_expanding_splitter_keeps_initial_train_start() -> None:
     data = pd.DataFrame(
         {"close": [1] * 500},

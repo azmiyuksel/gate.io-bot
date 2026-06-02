@@ -177,6 +177,7 @@ def _config_from_payload(payload: WalkForwardStart) -> WalkForwardConfig:
         train_period_days=payload.train_period_days,
         test_period_days=payload.test_period_days,
         step_days=payload.step_days,
+        embargo_days=int((payload.parameters or {}).get("embargo_days", 1)),
         n_trials=payload.n_trials,
         initial_cash=float(payload.initial_cash),
         base_parameters=payload.parameters,

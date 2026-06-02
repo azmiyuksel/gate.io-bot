@@ -125,7 +125,7 @@ The backtest module lives in `backend/app/backtest`:
 - `portfolio.py`: cash, equity, realized/unrealized PnL and positions
 - `strategy_runner.py`: `BaseStrategy` interface and EMA/RSI/ATR example strategy
 - `engine.py`: signals are evaluated on a bar's close and **filled on the next bar's open** (no same-bar lookahead bias)
-- `metrics.py`: total return, CAGR, drawdowns, Sharpe, Sortino, Calmar, win rate, profit factor, Monte Carlo, **timeframe-aware annualization**, optional risk-free rate, and a **buy-and-hold benchmark** (`buy_hold_return`, `excess_return_vs_buy_hold`)
+- `metrics.py`: total return, CAGR, drawdowns, Sharpe, Sortino, Calmar, win rate, profit factor, **compounding** Monte Carlo (bootstraps per-trade equity-fraction returns), **timeframe-aware annualization**, optional risk-free rate, and a **buy-and-hold benchmark** (`buy_hold_return`, `excess_return_vs_buy_hold`)
 - `optimizer.py`: grid search and walk-forward analysis
 - `reports.py`: Plotly JSON reports and PDF download adapter
 - `models.py`: backtest dataclasses and supported timeframe metadata
@@ -150,7 +150,7 @@ Dashboard pages:
 The institutional WFA module lives in `backend/app/walkforward`:
 
 - `engine.py`: training, Optuna optimization, out-of-sample test and result aggregation
-- `splitter.py`: rolling and expanding time-series windows
+- `splitter.py`: rolling and expanding time-series windows with a configurable **purge/embargo gap** between train and test (`embargo_days`, default 1) to prevent boundary leakage
 - `optimizer.py`: Optuna search over EMA fast/slow, RSI period/entry, ATR multiplier and risk percent
 - `validator.py`: overfit warnings and deployment gate checks
 - `metrics.py`: WFE, consistency, robustness, aggregation and Monte Carlo on OOS trades
