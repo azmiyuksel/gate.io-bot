@@ -1,4 +1,3 @@
-import pytest
 from decimal import Decimal
 from typing import NamedTuple
 

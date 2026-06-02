@@ -17,9 +17,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { money } from "@/lib/utils";
+import { authFetch, getAccessToken, login, logout } from "@/lib/auth-api";
 import type { DashboardSummary } from "@/types/dashboard";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
 const fallback: DashboardSummary = {
   total_balance: "0",
@@ -51,40 +50,62 @@ const chartData = [
 export function Dashboard() {
   const [summary, setSummary] = useState<DashboardSummary>(fallback);
   const [token, setToken] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function refresh() {
     if (!token) return;
     setLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/dashboard/summary`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await authFetch(`/dashboard/summary`);
       if (response.ok) setSummary(await response.json());
+      else if (response.status === 401) {
+        setToken("");
+        setAuthError("Oturum süresi doldu, tekrar giriş yapın.");
+      }
     } finally {
       setLoading(false);
     }
   }
 
   async function saveRisk() {
-    await fetch(`${apiUrl}/dashboard/strategy`, {
+    await authFetch(`/dashboard/strategy`, {
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(summary.strategy),
     });
     await refresh();
   }
 
   async function closePosition(id: number) {
-    await fetch(`${apiUrl}/dashboard/positions/${id}/close`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    await authFetch(`/dashboard/positions/${id}/close`, { method: "POST" });
     await refresh();
   }
+
+  async function handleLogin() {
+    setAuthError("");
+    try {
+      const tokens = await login(email, password);
+      setToken(tokens.access_token);
+      setPassword("");
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Giriş başarısız");
+    }
+  }
+
+  async function handleLogout() {
+    await logout();
+    setToken("");
+    setSummary(fallback);
+  }
+
+  // Restore an existing session from storage on first mount.
+  useEffect(() => {
+    const stored = getAccessToken();
+    if (stored) setToken(stored);
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -99,19 +120,48 @@ export function Dashboard() {
             <p className="text-sm text-muted">Düşük riskli spot strateji kontrol paneli</p>
           </div>
           <div className="flex items-center gap-3">
-            <Input
-              className="w-80"
-              placeholder="JWT token"
-              type="password"
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-            />
-            <Button onClick={refresh} disabled={loading}>
-              <Activity size={16} /> Yenile
-            </Button>
+            {token ? (
+              <>
+                <Button onClick={refresh} disabled={loading}>
+                  <Activity size={16} /> Yenile
+                </Button>
+                <Button onClick={handleLogout}>
+                  <Lock size={16} /> Çıkış
+                </Button>
+              </>
+            ) : (
+              <>
+                <Input
+                  className="w-48"
+                  placeholder="E-posta"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+                <Input
+                  className="w-48"
+                  placeholder="Parola"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  onKeyDown={(event) => event.key === "Enter" && handleLogin()}
+                />
+                <Button onClick={handleLogin}>
+                  <Lock size={16} /> Giriş
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </header>
+
+      {authError && (
+        <div className="mx-auto max-w-7xl px-6 pt-4">
+          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+            {authError}
+          </div>
+        </div>
+      )}
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 lg:grid-cols-4">
         <Metric label="Toplam bakiye" value={`$${money(summary.total_balance)}`} icon={<ShieldCheck size={18} />} />

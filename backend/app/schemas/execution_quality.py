@@ -1,7 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
 from pydantic import BaseModel
-from typing import Dict, List, Optional
 
 
 class ExecutionQualityStatusOut(BaseModel):

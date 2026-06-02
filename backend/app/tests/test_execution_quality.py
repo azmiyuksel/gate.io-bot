@@ -1,15 +1,13 @@
 from datetime import datetime, timedelta, UTC
-from decimal import Decimal
 import pytest
 
-from app.execution_quality.models import SlippageCategory, ExecutionQualityCategory
+from app.execution_quality.models import SlippageCategory
 from app.execution_quality.slippage_analyzer import SlippageAnalyzer
 from app.execution_quality.fill_analyzer import FillAnalyzer
 from app.execution_quality.latency_tracker import LatencyTracker
 from app.execution_quality.order_book_simulator import OrderBookSimulator
 from app.execution_quality.metrics import ExecutionMetricsCalculator
 from app.execution_quality.optimizer import AdaptiveExecutionOptimizer
-from app.execution_quality.benchmark import ExecutionBenchmarkSystem
 
 
 def test_slippage_calculation_and_categorization() -> None:

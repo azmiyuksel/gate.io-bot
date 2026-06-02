@@ -189,6 +189,14 @@ async def weekly_learning_report() -> None:
 
 
 async def daily_report() -> None:
+    # Housekeeping: drop refresh tokens that have already expired.
+    from app.api.v1.auth import purge_expired_refresh_tokens
+
+    db = SessionLocal()
+    try:
+        purge_expired_refresh_tokens(db)
+    finally:
+        db.close()
     await TelegramNotifier().send("Daily report: check dashboard for PnL, drawdown and open risk.")
 
 

@@ -1,5 +1,6 @@
 import { WalkForwardDetail } from "@/components/walkforward-detail";
 
-export default function Page({ params }: { params: { id: string } }) {
-  return <WalkForwardDetail id={params.id} />;
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return <WalkForwardDetail id={id} />;
 }

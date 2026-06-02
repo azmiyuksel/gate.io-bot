@@ -9,7 +9,6 @@ from app.portfolio.allocator import CapitalAllocator
 from app.portfolio.correlation import CorrelationEngine
 from app.portfolio.exposure import ExposureManager
 from app.portfolio.models import DEFAULT_STRATEGY_WEIGHTS
-from app.portfolio.performance import PerformanceCalculator
 from app.portfolio.rebalancer import PortfolioRebalancer
 from app.portfolio.risk_model import PortfolioRiskModel
 

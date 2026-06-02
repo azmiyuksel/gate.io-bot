@@ -1,5 +1,3 @@
-from decimal import Decimal
-from typing import Dict, List, Any
 
 from app.execution_quality.models import SlippageCategory
 

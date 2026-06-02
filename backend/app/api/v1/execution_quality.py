@@ -1,16 +1,14 @@
 from datetime import datetime, timedelta, UTC
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from typing import List
 
 from app.api.deps import DbSession, current_user_role, require_admin
 from app.models.entities import (
     ExecutionOrder,
-    ExecutionFill,
     ExecutionMetric,
     SlippageLog,
     LatencyLog,
     ExecutionReport,
-    Trade,
 )
 from app.execution_quality.engine import ExecutionQualityEngine
 from app.execution_quality.models import ExecutionQualityCategory

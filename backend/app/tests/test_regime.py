@@ -1,13 +1,10 @@
 from decimal import Decimal
-import pandas as pd
-import pytest
 
 from app.models.enums import MarketRegimeType
 from app.market_regime.features import FeatureEngineer
 from app.market_regime.trend import TrendClassifier
 from app.market_regime.volatility import VolatilityClassifier
 from app.market_regime.signals import RegimeSignalFilter
-from app.market_regime.detector import MarketRegimeDetector
 
 
 def test_feature_engineer_output() -> None:

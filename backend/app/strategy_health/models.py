@@ -1,4 +1,3 @@
-from decimal import Decimal
 
 # Thresholds for strategy drift (decay detection)
 DRIFT_WARNING_THRESHOLD = 0.5

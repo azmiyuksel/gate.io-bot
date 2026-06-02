@@ -31,7 +31,7 @@ Create an admin user:
 docker compose exec backend python app/scripts_create_admin.py --email admin@example.com --password strong-password
 ```
 
-Get a JWT token:
+Get a token pair (short-lived access token + revocable refresh token):
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/login \
@@ -39,7 +39,21 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
   -d '{"email":"admin@example.com","password":"strong-password"}'
 ```
 
-Open the dashboard at `http://localhost:3000` and paste the JWT token into the token field.
+Auth endpoints (all under `/api/v1/auth`):
+
+- `POST /auth/login` → `{access_token, refresh_token}` (rate-limited)
+- `POST /auth/refresh` → rotates and returns a fresh token pair
+- `POST /auth/logout` → revokes the supplied refresh token
+
+Access tokens are short-lived (`ACCESS_TOKEN_EXPIRE_MINUTES`, default 15) so role
+changes and revocation propagate quickly; refresh tokens are tracked server-side
+(`refresh_tokens` table) and can be individually revoked.
+
+Open the dashboard at `http://localhost:3000` and sign in with your email and
+password — the session is persisted and access tokens are auto-refreshed.
+
+> **API paths:** every endpoint is served under a single `/api/v1` prefix. The
+> previous duplicate `/api/...` and unversioned bare paths have been removed.
 
 ## Environment
 
@@ -56,15 +70,29 @@ Keep `BOT_ENABLED=false` until you have verified API permissions, symbols, order
 
 ## Database
 
-The SQL schema is in `backend/schema.sql`. The FastAPI app also creates SQLAlchemy tables on startup for local development.
+For local development the FastAPI app creates SQLAlchemy tables on startup. For
+any shared or production database, use the Alembic migrations instead:
 
-## Tests
+```bash
+cd backend
+alembic upgrade head            # apply migrations
+alembic revision --autogenerate -m "describe change"   # after editing models
+```
+
+The migration environment (`backend/migrations/env.py`) reads `DATABASE_URL`
+from your settings. A reference `backend/schema.sql` is also kept for inspection.
+
+## Tests & CI
 
 ```bash
 cd backend
 pip install -e '.[dev]'
+ruff check app
 pytest
 ```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the backend lint + tests and a
+frontend type-checking build on every push and pull request.
 
 ## Backtest Engine
 
@@ -79,14 +107,14 @@ The backtest module lives in `backend/app/backtest`:
 - `reports.py`: Plotly JSON reports and PDF download adapter
 - `models.py`: backtest dataclasses and supported timeframe metadata
 
-API endpoints are available under both `/api/v1/backtests` and `/api/backtests`:
+API endpoints (under `/api/v1/backtests`):
 
-- `POST /api/backtests`
-- `GET /api/backtests`
-- `GET /api/backtests/{id}`
-- `DELETE /api/backtests/{id}`
-- `POST /api/backtests/{id}/optimize`
-- `POST /api/backtests/{id}/walk-forward`
+- `POST /api/v1/backtests`
+- `GET /api/v1/backtests`
+- `GET /api/v1/backtests/{id}`
+- `DELETE /api/v1/backtests/{id}`
+- `POST /api/v1/backtests/{id}/optimize`
+- `POST /api/v1/backtests/{id}/walk-forward`
 
 Dashboard pages:
 
@@ -106,13 +134,13 @@ The institutional WFA module lives in `backend/app/walkforward`:
 - `report.py`: Plotly report payload and PDF adapter
 - `models.py`: WFA dataclasses
 
-WFA API endpoints are exposed under `/walkforward`, `/api/walkforward`, and `/api/v1/walkforward`:
+WFA API endpoints are exposed under `/api/v1/walkforward`:
 
-- `POST /walkforward/start`
-- `GET /walkforward`
-- `GET /walkforward/{id}`
-- `GET /walkforward/{id}/report`
-- `DELETE /walkforward/{id}`
+- `POST /api/v1/walkforward/start`
+- `GET /api/v1/walkforward`
+- `GET /api/v1/walkforward/{id}`
+- `GET /api/v1/walkforward/{id}/report`
+- `DELETE /api/v1/walkforward/{id}`
 
 Deployment gate:
 
@@ -134,7 +162,7 @@ Dashboard pages:
 
 These modules harden the bot for live operation. They run automatically from the
 scheduler (`backend/app/workers/scheduler.py`) and are exposed via the API under
-`/api/v1/...`, `/api/...` and bare paths.
+`/api/v1/...`.
 
 ### Account & Equity (`backend/app/account`)
 

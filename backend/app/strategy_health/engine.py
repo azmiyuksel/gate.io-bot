@@ -1,24 +1,21 @@
-from datetime import UTC, datetime
 from decimal import Decimal
-from typing import List, Tuple, Any
+from typing import List, Any
 from sqlalchemy.orm import Session
 
 from app.models.entities import (
-    StrategyAlert,
-    StrategyBaseline,
     StrategyDriftScore,
     StrategyHealthLog,
     StrategySettings,
     StrategyStateHistory,
     Trade,
 )
-from app.models.enums import StrategyAlertLevel, StrategyHealthState
+from app.models.enums import StrategyHealthState
 from app.strategy_health.alert_manager import StrategyAlertManager
 from app.strategy_health.anomaly_detector import StrategyAnomalyDetector
 from app.strategy_health.baseline import StrategyBaselineManager
 from app.strategy_health.drift_detector import StrategyDriftDetector
 from app.strategy_health.metrics_tracker import StrategyMetricsTracker
-from app.strategy_health.models import MIN_TRADE_WARMUP, StrategyFailureMode
+from app.strategy_health.models import MIN_TRADE_WARMUP
 from app.strategy_health.performance_analyzer import StrategyPerformanceAnalyzer
 from app.strategy_health.risk_adjuster import StrategyRiskAdjuster
 from app.services.notifications.telegram import TelegramNotifier

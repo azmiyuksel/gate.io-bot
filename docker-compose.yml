@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: gatebot
       POSTGRES_USER: gatebot
@@ -17,6 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -27,12 +29,19 @@ services:
 
   backend:
     build: ./backend
+    restart: unless-stopped
     env_file: .env
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,26 +50,29 @@ services:
 
   scheduler:
     build: ./backend
+    restart: unless-stopped
     env_file: .env
     command: python -m app.workers.scheduler
     volumes:
       - ./backend:/app
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
 
   paper-worker:
     build: ./backend
+    restart: unless-stopped
     env_file: .env
     command: python -m app.workers.paper_worker
     volumes:
       - ./backend:/app
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
 
   frontend:
     build: ./frontend
+    restart: unless-stopped
     command: npm run dev
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1

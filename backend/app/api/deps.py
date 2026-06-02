@@ -20,6 +20,8 @@ def current_user_role(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
     try:
         payload = decode_access_token(credentials.credentials)
+        if payload.get("type") not in (None, "access"):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
         return UserRole(payload.get("role", UserRole.viewer))
     except (InvalidTokenError, ValueError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from None

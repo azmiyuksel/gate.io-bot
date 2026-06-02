@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import List, Dict
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import DbSession, current_user_role, require_admin

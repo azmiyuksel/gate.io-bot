@@ -1,9 +1,8 @@
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta
 from decimal import Decimal
 import numpy as np
 from sqlalchemy.orm import Session
-from sqlalchemy import func
-from typing import List, Dict, Any, Tuple
+from typing import Tuple
 
 from app.models.entities import (
     ExecutionOrder,
@@ -12,8 +11,6 @@ from app.models.entities import (
     SlippageLog,
     LatencyLog,
     ExecutionReport,
-    Order,
-    PaperOrder,
 )
 from app.execution_quality.slippage_analyzer import SlippageAnalyzer
 from app.execution_quality.fill_analyzer import FillAnalyzer
@@ -173,10 +170,10 @@ class ExecutionQualityEngine:
         avg_slip = np.mean(slippages) if slippages else 0.0
         std_slip = np.std(slippages) if len(slippages) > 1 else 0.0
 
-        avg_sig_sub = np.mean([l.signal_to_submit_ms for l in latency_records]) if latency_records else 0.0
-        avg_sub_ack = np.mean([l.submit_to_ack_ms for l in latency_records]) if latency_records else 0.0
-        avg_ack_fill = np.mean([l.ack_to_fill_ms for l in latency_records]) if latency_records else 0.0
-        avg_total_lat = np.mean([l.total_execution_delay_ms for l in latency_records]) if latency_records else 0.0
+        avg_sig_sub = np.mean([rec.signal_to_submit_ms for rec in latency_records]) if latency_records else 0.0
+        avg_sub_ack = np.mean([rec.submit_to_ack_ms for rec in latency_records]) if latency_records else 0.0
+        avg_ack_fill = np.mean([rec.ack_to_fill_ms for rec in latency_records]) if latency_records else 0.0
+        avg_total_lat = np.mean([rec.total_execution_delay_ms for rec in latency_records]) if latency_records else 0.0
 
         # Completion rates
         completion_rates = [
@@ -246,7 +243,7 @@ class ExecutionQualityEngine:
 
         order_ids = [o.id for o in orders]
         latency_records = self.db.query(LatencyLog).filter(LatencyLog.execution_order_id.in_(order_ids)).all()
-        delays = [l.total_execution_delay_ms for l in latency_records]
+        delays = [rec.total_execution_delay_ms for rec in latency_records]
         
         # 1. Latency Spike check
         mean_delay = np.mean(delays)
@@ -311,7 +308,7 @@ class ExecutionQualityEngine:
         total_fills = len(fills)
 
         avg_slippage = np.mean([float(f.slippage) for f in fills]) if fills else 0.0
-        avg_latency = np.mean([l.total_execution_delay_ms for l in latency_records]) if latency_records else 0.0
+        avg_latency = np.mean([rec.total_execution_delay_ms for rec in latency_records]) if latency_records else 0.0
 
         # Quality Score mapping
         metrics_history = (

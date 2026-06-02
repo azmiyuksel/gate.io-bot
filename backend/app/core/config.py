@@ -10,10 +10,19 @@ class Settings(BaseSettings):
     app_name: str = "Gate.io Capital Preservation Bot"
     environment: str = "local"
     secret_key: str = Field(default="change-me")
-    access_token_expire_minutes: int = 60
+    # Access tokens are short-lived so role changes / revocation propagate quickly.
+    access_token_expire_minutes: int = 15
+    # Refresh tokens are long-lived but server-tracked and individually revocable.
+    refresh_token_expire_days: int = 7
+    # Failed logins allowed per client/email window before throttling kicks in.
+    login_rate_limit_attempts: int = 5
+    login_rate_limit_window_seconds: int = 300
 
     database_url: str = "postgresql+psycopg://gatebot:gatebot@localhost:5432/gatebot"
     redis_url: str = "redis://localhost:6379/0"
+
+    # Comma-separated list of allowed CORS origins for the browser dashboard.
+    cors_origins: str = "http://localhost:3000"
 
     gateio_api_key: str = ""
     gateio_api_secret: str = ""
@@ -84,6 +93,10 @@ class Settings(BaseSettings):
     @property
     def symbols(self) -> list[str]:
         return [symbol.strip() for symbol in self.trading_symbols.split(",") if symbol.strip()]
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
 @lru_cache

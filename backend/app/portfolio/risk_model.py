@@ -1,8 +1,8 @@
 from decimal import Decimal
-from typing import Tuple, Dict, Any
+from typing import Tuple
 from sqlalchemy.orm import Session
 
-from app.models.entities import Portfolio, PortfolioAsset
+from app.models.entities import Portfolio
 
 
 class PortfolioRiskModel:

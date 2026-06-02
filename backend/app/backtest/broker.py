@@ -60,7 +60,6 @@ class VirtualBroker:
     def manage_exits(self, candle: pd.Series, trailing_stop_pct: float = 0.01) -> None:
         high = float(candle["high"])
         low = float(candle["low"])
-        close = float(candle["close"])
         for position in list(self.portfolio.positions):
             position.highest_price = max(position.highest_price, high)
             trailing_stop = position.highest_price * (1 - trailing_stop_pct)

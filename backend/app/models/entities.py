@@ -1085,5 +1085,23 @@ class LearningReport(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
 
 
+class RefreshToken(Base):
+    """Server-side record of an issued refresh token, enabling revocation.
+
+    The refresh JWT carries a unique ``jti``; this row tracks its lifecycle so a
+    token can be revoked (logout, password change, role demotion) before it
+    naturally expires. Access tokens stay short-lived so revocation propagates.
+    """
+
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    jti: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 
 

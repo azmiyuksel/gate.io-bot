@@ -64,7 +64,7 @@ class StrategyAnomalyDetector:
                 
                 if pred == -1:
                     return True, "isolation_forest_anomaly_detected"
-            except Exception as e:
+            except Exception:
                 # Silently catch fit errors and skip IsolationForest
                 pass
 

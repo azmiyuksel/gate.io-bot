@@ -1,7 +1,4 @@
 from decimal import Decimal
-import numpy as np
-import pytest
-from typing import List
 
 from app.portfolio.allocator import CapitalAllocator
 from app.portfolio.performance import PerformanceCalculator

@@ -1,7 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Dict, List, Tuple
-import pandas as pd
+from typing import List, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.entities import MarketRegimeRecord, RegimeConfidence, RegimeFeatures, RegimeTransition

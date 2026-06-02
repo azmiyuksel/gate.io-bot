@@ -44,8 +44,6 @@ class KMeansRegimeClustering:
             adx = centroid[1]
             bb_width = centroid[2]
             vol = centroid[3]
-            rsi_val = centroid[4]
-            roc = centroid[5]
 
             # Heuristics to assign regime label to cluster id
             if vol > 1.2 or bb_width > 1.2:
