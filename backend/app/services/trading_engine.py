@@ -7,11 +7,26 @@ from sqlalchemy.orm import Session
 from app.models.entities import Order, Position, SystemLog, Trade
 from app.models.enums import LogLevel, OrderSide, OrderStatus, PositionStatus
 from app.repositories.trading import OrderRepository, PositionRepository
-from app.services.exchange.gateio import GateIOClient
+from app.services.exchange.gateio import GateIOClient, OrderBelowMinimum
 from app.services.notifications.telegram import TelegramNotifier
 from app.services.risk.circuit_breaker import CircuitBreaker
 from app.services.risk.manager import RiskManager
 from app.services.strategy.signals import CapitalPreservationStrategy
+
+
+def _fee_in_quote(response: dict, price: Decimal, symbol: str) -> Decimal:
+    """Normalize an exchange fee to the quote currency.
+
+    On a spot BUY, Gate.io often deducts the fee in the BASE currency (the coin
+    received); converting it to quote keeps PnL/equity consistent. Fees already
+    in the quote currency pass through unchanged.
+    """
+    fee = Decimal(str(response.get("fee") or 0))
+    fee_ccy = (response.get("fee_currency") or "").upper()
+    base_ccy = symbol.split("_")[0].upper()
+    if fee_ccy and fee_ccy == base_ccy:
+        return fee * price
+    return fee
 
 
 class TradingEngine:
@@ -104,11 +119,21 @@ class TradingEngine:
             return
 
         submission_time = datetime.now(UTC)
-        response = await self.client.place_market_order(symbol, "buy", final_quantity)
+        # Market BUY on Gate.io spot takes a QUOTE (USDT) amount to spend.
+        quote_amount = final_quantity * signal.entry_price
+        try:
+            response = await self.client.place_market_buy(symbol, quote_amount)
+        except OrderBelowMinimum as exc:
+            self._log("order_min", f"{symbol}: buy skipped, {exc}")
+            return
         ack_time = datetime.now(UTC)
+        # Use the ACTUAL fill price for the entry, not the signal price.
+        fill_price = Decimal(str(response.get("avg_deal_price") or signal.entry_price))
+        if fill_price <= 0:
+            fill_price = signal.entry_price
         position = Position(
             symbol=symbol,
-            entry_price=signal.entry_price,
+            entry_price=fill_price,
             quantity=final_quantity,
             stop_loss=decision.stop_loss,
             take_profit=decision.take_profit,
@@ -121,7 +146,7 @@ class TradingEngine:
             symbol=symbol,
             side=OrderSide.buy,
             status=OrderStatus.open,
-            price=signal.entry_price,
+            price=fill_price,
             quantity=final_quantity,
             raw_response=json.dumps(response),
         )
@@ -154,10 +179,9 @@ class TradingEngine:
                 submission_time=submission_time,
                 order_id=order.id,
             )
-            fill_price = Decimal(str(response.get("avg_deal_price") or signal.entry_price))
             fill_qty = Decimal(str(response.get("filled_total") or final_quantity))
-            fee = Decimal(str(response.get("fee") or 0.0))
-            
+            fee = _fee_in_quote(response, fill_price, symbol)
+
             eq_engine.record_fill(
                 execution_order_id=exec_order.id,
                 fill_price=fill_price,
@@ -192,12 +216,12 @@ class TradingEngine:
         eq_engine = ExecutionQualityEngine(self.db)
         
         submission_time = datetime.now(UTC)
-        response = await self.client.place_market_order(position.symbol, "sell", position.quantity)
+        response = await self.client.place_market_sell(position.symbol, position.quantity)
         ack_time = datetime.now(UTC)
-        
+
         exit_price = Decimal(str(response.get("avg_deal_price") or position.entry_price))
-        # Exit fee is reported by the exchange (quote currency for a spot sell).
-        fee = Decimal(str(response.get("fee") or 0))
+        # Normalize the fee to quote currency (a base-denominated fee is converted).
+        fee = _fee_in_quote(response, exit_price, position.symbol)
         # Realized PnL must be net of fees, otherwise reported PnL is systematically optimistic.
         pnl = (exit_price - position.entry_price) * position.quantity - fee
         position.status = PositionStatus.closed

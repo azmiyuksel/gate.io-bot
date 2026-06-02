@@ -3,12 +3,16 @@ import hashlib
 import hmac
 import json
 import time
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 import httpx
 
 from app.core.config import get_settings
+
+
+class OrderBelowMinimum(Exception):
+    """Order is below the exchange's minimum base/quote amount (would be rejected)."""
 
 
 class RateLimiter:
@@ -33,6 +37,7 @@ class GateIOClient:
         self.api_secret = settings.gateio_api_secret
         self.limiter = RateLimiter(settings.gateio_requests_per_second)
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=15)
+        self._pair_cache: dict[str, dict] = {}
 
     async def close(self) -> None:
         await self.client.aclose()
@@ -103,7 +108,23 @@ class GateIOClient:
     async def balances(self) -> list[dict]:
         return await self.request("GET", "/spot/accounts")
 
-    async def place_market_order(self, symbol: str, side: str, amount: Decimal) -> dict:
+    async def currency_pair_info(self, symbol: str) -> dict:
+        """Cached pair metadata: precision and min base/quote amounts."""
+        cached = self._pair_cache.get(symbol)
+        if cached is not None:
+            return cached
+        info = await self.request("GET", f"/spot/currency_pairs/{symbol}") or {}
+        self._pair_cache[symbol] = info
+        return info
+
+    @staticmethod
+    def _round_down(value: Decimal, precision: int) -> Decimal:
+        """Round DOWN to `precision` decimals (never over-spend / over-sell)."""
+        precision = max(int(precision), 0)
+        return value.quantize(Decimal(1).scaleb(-precision), rounding=ROUND_DOWN)
+
+    async def _submit_market(self, symbol: str, side: str, amount: Decimal) -> dict:
+        # Gate.io spot market orders require an IOC time-in-force.
         return await self.request(
             "POST",
             "/spot/orders",
@@ -113,8 +134,33 @@ class GateIOClient:
                 "side": side,
                 "amount": str(amount),
                 "account": "spot",
+                "time_in_force": "ioc",
             },
         )
+
+    async def place_market_buy(self, symbol: str, quote_amount: Decimal) -> dict:
+        """Market BUY. On Gate.io spot the `amount` is the QUOTE to spend (USDT),
+        rounded to the pair's price precision and checked against min_quote_amount."""
+        info = await self.currency_pair_info(symbol)
+        amount = self._round_down(quote_amount, int(info.get("precision", 8) or 8))
+        min_quote = Decimal(str(info.get("min_quote_amount", "0") or "0"))
+        if amount <= 0 or amount < min_quote:
+            raise OrderBelowMinimum(
+                f"{symbol} buy quote {amount} below minimum {min_quote}"
+            )
+        return await self._submit_market(symbol, "buy", amount)
+
+    async def place_market_sell(self, symbol: str, base_amount: Decimal) -> dict:
+        """Market SELL. `amount` is the BASE quantity, rounded to amount_precision
+        and checked against min_base_amount."""
+        info = await self.currency_pair_info(symbol)
+        amount = self._round_down(base_amount, int(info.get("amount_precision", 8) or 8))
+        min_base = Decimal(str(info.get("min_base_amount", "0") or "0"))
+        if amount <= 0 or amount < min_base:
+            raise OrderBelowMinimum(
+                f"{symbol} sell base {amount} below minimum {min_base}"
+            )
+        return await self._submit_market(symbol, "sell", amount)
 
     async def get_order(self, symbol: str, order_id: str) -> dict:
         return await self.request("GET", f"/spot/orders/{order_id}", params={"currency_pair": symbol})

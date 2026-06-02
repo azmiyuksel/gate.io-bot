@@ -5,7 +5,7 @@ Low-risk spot trading system scaffold for Gate.io. It is designed for slow, cont
 ## Stack
 
 - Backend: Python 3.12, FastAPI, SQLAlchemy, PostgreSQL, Redis, APScheduler
-- Exchange: Gate.io REST API with HMAC signing, rate limiting, retry/reconnect behavior
+- Exchange: Gate.io REST API with HMAC signing, rate limiting, retry/reconnect behavior, correct spot market-order semantics (BUY = quote amount, SELL = base amount, IOC), pair precision / min-notional rounding, and base/quote fee normalization
 - Frontend: Next.js, TypeScript, TailwindCSS, shadcn-style local components
 - Security: JWT auth, password hashing, optional Fernet API key encryption, RBAC
 - Notifications: Telegram for opens, closes, stop-loss events and daily report
