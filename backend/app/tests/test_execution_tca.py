@@ -1,8 +1,28 @@
 """Tests for implementation-shortfall transaction-cost analysis."""
 from app.execution_quality.tca import (
     aggregate_implementation_shortfall,
+    benchmark_slippage_bps,
     implementation_shortfall,
+    twap,
+    vwap,
 )
+
+
+def test_vwap_weights_by_volume():
+    # Most volume traded at 100; a high-volume print pulls VWAP toward it.
+    assert abs(vwap([100.0, 110.0], [9.0, 1.0]) - 101.0) < 1e-9
+    # No volume -> simple mean.
+    assert vwap([100.0, 110.0], [0.0, 0.0]) == 105.0
+
+
+def test_twap_simple_mean():
+    assert twap([100.0, 102.0, 104.0]) == 102.0
+
+
+def test_benchmark_slippage_direction():
+    # Buy above VWAP is a cost; sell above VWAP beats the benchmark.
+    assert benchmark_slippage_bps("buy", 101.0, 100.0) == 100.0
+    assert benchmark_slippage_bps("sell", 101.0, 100.0) == -100.0
 
 
 def test_buy_paying_above_decision_is_a_cost():

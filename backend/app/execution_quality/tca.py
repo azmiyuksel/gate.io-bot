@@ -43,6 +43,33 @@ def implementation_shortfall(
     }
 
 
+def vwap(prices: list[float], volumes: list[float]) -> float:
+    """Volume-weighted average price; falls back to a simple mean if no volume."""
+    if not prices:
+        return 0.0
+    total_vol = sum(volumes) if volumes else 0.0
+    if total_vol <= 0:
+        return sum(prices) / len(prices)
+    return sum(p * v for p, v in zip(prices, volumes)) / total_vol
+
+
+def twap(prices: list[float]) -> float:
+    """Time-weighted (simple) average price over the window."""
+    return sum(prices) / len(prices) if prices else 0.0
+
+
+def benchmark_slippage_bps(side: str, fill_price: float, benchmark_price: float) -> float:
+    """Execution cost vs a VWAP/TWAP benchmark in basis points.
+
+    Positive = worse than the benchmark (bought above / sold below it);
+    negative = beat the benchmark.
+    """
+    if benchmark_price <= 0:
+        return 0.0
+    direction = 1.0 if side.lower() == "buy" else -1.0
+    return (fill_price - benchmark_price) * direction / benchmark_price * 1e4
+
+
 def aggregate_implementation_shortfall(records: list[dict]) -> dict:
     """Average the per-order implementation-shortfall components."""
     if not records:

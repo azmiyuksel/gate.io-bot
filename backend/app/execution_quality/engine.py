@@ -4,10 +4,12 @@ import numpy as np
 from sqlalchemy.orm import Session
 from typing import Tuple
 
+from app.core.config import get_settings
 from app.models.entities import (
     ExecutionOrder,
     ExecutionFill,
     ExecutionMetric,
+    HistoricalCandle,
     SlippageLog,
     LatencyLog,
     ExecutionReport,
@@ -18,7 +20,13 @@ from app.execution_quality.latency_tracker import LatencyTracker
 from app.execution_quality.metrics import ExecutionMetricsCalculator
 from app.execution_quality.optimizer import AdaptiveExecutionOptimizer
 from app.execution_quality.benchmark import ExecutionBenchmarkSystem
-from app.execution_quality.tca import aggregate_implementation_shortfall, implementation_shortfall
+from app.execution_quality.tca import (
+    aggregate_implementation_shortfall,
+    benchmark_slippage_bps,
+    implementation_shortfall,
+    twap,
+    vwap,
+)
 
 
 class ExecutionQualityEngine:
@@ -271,6 +279,49 @@ class ExecutionQualityEngine:
 
         return False, "normal"
 
+    def _vwap_twap_benchmark(self, orders, fills, start_time, end_time) -> dict:
+        """Average fill execution vs the window VWAP/TWAP, per fill, in bps.
+
+        Compares each fill price against its symbol's volume-weighted (VWAP) and
+        time-weighted (TWAP) market price over the reporting window.
+        """
+        timeframe = get_settings().market_data_interval
+        symbols = {o.symbol for o in orders}
+        bench: dict[str, dict] = {}
+        for symbol in symbols:
+            candles = (
+                self.db.query(HistoricalCandle)
+                .filter(
+                    HistoricalCandle.symbol == symbol,
+                    HistoricalCandle.timeframe == timeframe,
+                    HistoricalCandle.timestamp >= start_time,
+                    HistoricalCandle.timestamp <= end_time,
+                )
+                .order_by(HistoricalCandle.timestamp.asc())
+                .all()
+            )
+            if candles:
+                closes = [float(c.close) for c in candles]
+                volumes = [float(c.volume) for c in candles]
+                bench[symbol] = {"vwap": vwap(closes, volumes), "twap": twap(closes)}
+
+        order_by_id = {o.id: o for o in orders}
+        vwap_bps, twap_bps = [], []
+        for f in fills:
+            order = order_by_id.get(f.execution_order_id)
+            if order is None or order.symbol not in bench:
+                continue
+            ref = bench[order.symbol]
+            if ref["vwap"] > 0:
+                vwap_bps.append(benchmark_slippage_bps(order.side, float(f.fill_price), ref["vwap"]))
+            if ref["twap"] > 0:
+                twap_bps.append(benchmark_slippage_bps(order.side, float(f.fill_price), ref["twap"]))
+        return {
+            "avg_vwap_slippage_bps": sum(vwap_bps) / len(vwap_bps) if vwap_bps else 0.0,
+            "avg_twap_slippage_bps": sum(twap_bps) / len(twap_bps) if twap_bps else 0.0,
+            "fills_benchmarked": len(vwap_bps),
+        }
+
     def generate_report(
         self,
         strategy_name: str,
@@ -365,6 +416,7 @@ class ExecutionQualityEngine:
                 "critical": sum(1 for f in fills if abs(f.slippage) > 0.0050),
             },
             "implementation_shortfall": aggregate_implementation_shortfall(is_records),
+            "execution_benchmark": self._vwap_twap_benchmark(orders, fills, start_time, end_time),
             "recommendations": recs
         }
 
