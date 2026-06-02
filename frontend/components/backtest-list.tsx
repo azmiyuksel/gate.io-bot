@@ -5,11 +5,9 @@ import { Activity, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { money } from "@/lib/utils";
+import { authFetch, getAccessToken } from "@/lib/auth-api";
 import type { BacktestListItem } from "@/types/backtest";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
 export function BacktestList() {
   const [token, setToken] = useState("");
@@ -17,19 +15,18 @@ export function BacktestList() {
 
   async function refresh() {
     if (!token) return;
-    const response = await fetch(`${apiUrl}/backtests`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const response = await authFetch(`/backtests`);
     if (response.ok) setRuns(await response.json());
   }
 
   async function remove(id: number) {
-    await fetch(`${apiUrl}/backtests/${id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    await authFetch(`/backtests/${id}`, { method: "DELETE" });
     await refresh();
   }
+
+  useEffect(() => {
+    setToken(getAccessToken());
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -44,7 +41,6 @@ export function BacktestList() {
             <p className="text-sm text-muted">Strateji performansını geçmiş veri üzerinde karşılaştır</p>
           </div>
           <div className="flex items-center gap-3">
-            <Input className="w-80" placeholder="JWT token" type="password" value={token} onChange={(event) => setToken(event.target.value)} />
             <Button onClick={refresh}><Activity size={16} /> Yenile</Button>
             <Link href="/backtests/create">
               <Button><Plus size={16} /> Yeni</Button>

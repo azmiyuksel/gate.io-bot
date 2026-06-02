@@ -5,8 +5,8 @@ import { Download } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { money } from "@/lib/utils";
+import { authFetch, getAccessToken } from "@/lib/auth-api";
 import type { WalkForwardDetail as WalkForwardDetailType } from "@/types/walkforward";
 
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
@@ -19,15 +19,17 @@ export function WalkForwardDetail({ id }: { id: string }) {
 
   async function refresh() {
     if (!token) return;
-    const response = await fetch(`${apiUrl}/walkforward/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const response = await authFetch(`/walkforward/${id}`);
     if (response.ok) {
       const data = await response.json();
       setRun(data);
       setSelectedWindow(data.windows[0]?.window_id ?? null);
     }
   }
+
+  useEffect(() => {
+    setToken(getAccessToken());
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -44,10 +46,9 @@ export function WalkForwardDetail({ id }: { id: string }) {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div>
             <h1 className="text-xl font-semibold">WFA Sonucu #{id}</h1>
-            <p className="text-sm text-muted">{run ? `${run.symbol} · ${run.mode} · ${run.deployment_decision.decision}` : "JWT token gir ve sonucu yükle"}</p>
+            <p className="text-sm text-muted">{run ? `${run.symbol} · ${run.mode} · ${run.deployment_decision.decision}` : "Panelden giriş yapın ve sonucu yükleyin"}</p>
           </div>
           <div className="flex items-center gap-3">
-            <Input className="w-80" placeholder="JWT token" type="password" value={token} onChange={(event) => setToken(event.target.value)} />
             <a href={`${apiUrl}/walkforward/${id}/report`}><Button><Download size={16} /> PDF</Button></a>
           </div>
         </div>

@@ -6,9 +6,8 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { authFetch, getAccessToken } from "@/lib/auth-api";
 import type { WalkForwardListItem } from "@/types/walkforward";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
 export function WalkForwardDashboard() {
   const [token, setToken] = useState("");
@@ -17,16 +16,14 @@ export function WalkForwardDashboard() {
 
   async function refresh() {
     if (!token) return;
-    const response = await fetch(`${apiUrl}/walkforward`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const response = await authFetch(`/walkforward`);
     if (response.ok) setRuns(await response.json());
   }
 
   async function start() {
-    const response = await fetch(`${apiUrl}/walkforward/start`, {
+    const response = await authFetch(`/walkforward/start`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         symbol,
         timeframe: "1h",
@@ -44,12 +41,13 @@ export function WalkForwardDashboard() {
   }
 
   async function remove(id: number) {
-    await fetch(`${apiUrl}/walkforward/${id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    await authFetch(`/walkforward/${id}`, { method: "DELETE" });
     await refresh();
   }
+
+  useEffect(() => {
+    setToken(getAccessToken());
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -66,7 +64,6 @@ export function WalkForwardDashboard() {
             <p className="text-sm text-muted">Out-of-sample dayanıklılık ve overfit kontrol paneli</p>
           </div>
           <div className="flex items-center gap-3">
-            <Input className="w-72" placeholder="JWT token" type="password" value={token} onChange={(event) => setToken(event.target.value)} />
             <Input className="w-32" value={symbol} onChange={(event) => setSymbol(event.target.value)} />
             <Button onClick={start}><Play size={16} /> Başlat</Button>
             <Button onClick={refresh}><Activity size={16} /> Yenile</Button>

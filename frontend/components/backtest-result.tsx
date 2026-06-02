@@ -5,8 +5,8 @@ import { Download, GitBranch, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { money } from "@/lib/utils";
+import { authFetch, getAccessToken } from "@/lib/auth-api";
 import type { BacktestDetail } from "@/types/backtest";
 
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
@@ -18,29 +18,31 @@ export function BacktestResult({ id }: { id: string }) {
 
   async function refresh() {
     if (!token) return;
-    const response = await fetch(`${apiUrl}/backtests/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const response = await authFetch(`/backtests/${id}`);
     if (response.ok) setRun(await response.json());
   }
 
   async function optimize() {
-    await fetch(`${apiUrl}/backtests/${id}/optimize`, {
+    await authFetch(`/backtests/${id}/optimize`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
     await refresh();
   }
 
   async function walkForward() {
-    await fetch(`${apiUrl}/backtests/${id}/walk-forward`, {
+    await authFetch(`/backtests/${id}/walk-forward`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
     await refresh();
   }
+
+  useEffect(() => {
+    setToken(getAccessToken());
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -55,10 +57,9 @@ export function BacktestResult({ id }: { id: string }) {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div>
             <h1 className="text-xl font-semibold">Backtest Sonucu #{id}</h1>
-            <p className="text-sm text-muted">{run ? `${run.symbol} · ${run.timeframe} · ${run.status}` : "JWT token gir ve sonucu yükle"}</p>
+            <p className="text-sm text-muted">{run ? `${run.symbol} · ${run.timeframe} · ${run.status}` : "Panelden giriş yapın ve sonucu yükleyin"}</p>
           </div>
           <div className="flex items-center gap-3">
-            <Input className="w-80" placeholder="JWT token" type="password" value={token} onChange={(event) => setToken(event.target.value)} />
             <Button onClick={optimize}><SlidersHorizontal size={16} /> Optimize</Button>
             <Button onClick={walkForward}><GitBranch size={16} /> Walk Forward</Button>
             <a href={`${apiUrl}/backtests/${id}/report.pdf`}><Button><Download size={16} /> PDF</Button></a>
