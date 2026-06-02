@@ -19,6 +19,17 @@ from app.services.risk.circuit_breaker import CircuitBreaker
 from app.services.trading_engine import TradingEngine
 
 
+async def _quote_depegged(client: GateIOClient, settings) -> bool:
+    """Best-effort depeg check on the configured reference stablecoin pair."""
+    from app.services.risk.stablecoin import is_depegged
+
+    try:
+        price = await client.last_price(settings.quote_depeg_reference_pair)
+    except Exception:
+        return False  # never halt on a transient lookup failure
+    return is_depegged(price, settings.quote_depeg_threshold_pct)
+
+
 async def run_cycle() -> None:
     settings = get_settings()
     db = SessionLocal()
@@ -62,6 +73,26 @@ async def run_cycle() -> None:
                 )
             )
             db.commit()
+            return
+
+        # Stablecoin depeg guard: the account is denominated in the quote
+        # stablecoin, so a depeg is a portfolio-wide risk — pause new entries.
+        if settings.quote_depeg_halt and await _quote_depegged(client, settings):
+            db.add(
+                SystemLog(
+                    level=LogLevel.warning,
+                    source="stablecoin",
+                    message=(
+                        f"New entries skipped: {settings.quote_depeg_reference_pair} "
+                        f"depeg beyond {settings.quote_depeg_threshold_pct:.2%}"
+                    ),
+                )
+            )
+            db.commit()
+            await TelegramNotifier().send(
+                f"⚠️ Stablecoin depeg uyarısı: {settings.quote_depeg_reference_pair} "
+                f"parite sapması eşiği aştı; yeni girişler duraklatıldı."
+            )
             return
 
         for symbol in settings.symbols:

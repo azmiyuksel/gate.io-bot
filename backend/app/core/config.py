@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # (e.g. exchange lending/Earn). The strategy must beat this hurdle to add value.
     annual_risk_free_rate: float = 0.04
 
+    # --- Stablecoin (quote) depeg monitoring ---
+    # Pair used to proxy the quote stablecoin's peg (drift from 1.0).
+    quote_depeg_reference_pair: str = "USDC_USDT"
+    quote_depeg_threshold_pct: float = 0.01  # 1% drift from parity
+    quote_depeg_halt: bool = True            # pause new entries while depegged
+
     # --- Volatility targeting (opt-in): scale size inversely to volatility ---
     vol_targeting_enabled: bool = False
     vol_target_atr_pct: float = 0.02          # target ATR as a fraction of price
