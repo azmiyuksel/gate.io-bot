@@ -123,7 +123,8 @@ The backtest module lives in `backend/app/backtest`:
 - `broker.py`: virtual broker with market, limit, stop and stop-limit trigger simulation primitives
 - `portfolio.py`: cash, equity, realized/unrealized PnL and positions
 - `strategy_runner.py`: `BaseStrategy` interface and EMA/RSI/ATR example strategy
-- `metrics.py`: total return, CAGR, drawdowns, Sharpe, Sortino, Calmar, win rate, profit factor and Monte Carlo
+- `engine.py`: signals are evaluated on a bar's close and **filled on the next bar's open** (no same-bar lookahead bias)
+- `metrics.py`: total return, CAGR, drawdowns, Sharpe, Sortino, Calmar, win rate, profit factor, Monte Carlo, **timeframe-aware annualization**, optional risk-free rate, and a **buy-and-hold benchmark** (`buy_hold_return`, `excess_return_vs_buy_hold`)
 - `optimizer.py`: grid search and walk-forward analysis
 - `reports.py`: Plotly JSON reports and PDF download adapter
 - `models.py`: backtest dataclasses and supported timeframe metadata

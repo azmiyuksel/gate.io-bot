@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.backtest.broker import VirtualBroker
-from app.backtest.metrics import compute_metrics, monte_carlo
+from app.backtest.metrics import buy_and_hold_benchmark, compute_metrics, monte_carlo
 from app.backtest.models import BacktestConfig, SUPPORTED_TIMEFRAMES, TIMEFRAME_TO_PANDAS
 from app.backtest.portfolio import Portfolio
 from app.backtest.reports import build_plotly_report
@@ -124,32 +124,57 @@ class BacktestEngine:
             spread_rate=config.spread_rate,
             order_latency_candles=config.order_latency_candles,
         )
+        trailing_pct = float(config.parameters.get("trailing_stop_pct", 0.01))
+        pending_entry = False
         for _, candle in prepared.iterrows():
             broker.process_orders(candle)
-            broker.manage_exits(candle, float(config.parameters.get("trailing_stop_pct", 0.01)))
-            strategy.on_candle(candle)
-            equity = portfolio.equity_curve[-1]["equity"] if portfolio.equity_curve else config.initial_cash
-            if not portfolio.can_open(config.max_open_positions):
-                continue
-            if strategy.should_buy():
+            broker.manage_exits(candle, trailing_pct)
+            # Execute an entry that was SIGNALLED on the previous bar's close at
+            # THIS bar's open. The signal therefore only uses information that was
+            # available before the fill — eliminating same-bar lookahead bias.
+            # `strategy.current` is still the prior (signal) bar here, so the
+            # ATR-based stop/target are computed from data available at signal time.
+            if pending_entry and portfolio.can_open(config.max_open_positions):
+                equity = (
+                    portfolio.equity_curve[-1]["equity"]
+                    if portfolio.equity_curve
+                    else config.initial_cash
+                )
                 entry = float(candle["open"])
                 quantity = strategy.position_size(equity, entry)
                 stop_loss, take_profit = strategy.risk_levels(entry)
                 if stop_loss > 0 and quantity > 0:
                     broker.market_buy(candle, config.symbol, quantity, stop_loss, take_profit)
+            pending_entry = False
+
+            strategy.on_candle(candle)
+            if portfolio.can_open(config.max_open_positions) and strategy.should_buy():
+                pending_entry = True
             portfolio.mark_to_market(candle.name, float(candle["close"]))
 
         for position in list(portfolio.positions):
             last = prepared.iloc[-1]
             broker._close(position, last, float(last["close"]), "end_of_test")
 
-        metrics = compute_metrics(portfolio.equity_curve, portfolio.closed_trades)
+        metrics = compute_metrics(
+            portfolio.equity_curve, portfolio.closed_trades, timeframe=config.timeframe
+        )
+        # Buy-and-hold baseline + excess return, so a profitable strategy can be
+        # judged against simply holding the asset.
+        benchmark = buy_and_hold_benchmark(prepared["close"].astype(float).tolist(), config.timeframe)
+        if metrics:
+            metrics["buy_hold_return"] = benchmark["buy_hold_return"]
+            metrics["buy_hold_sharpe"] = benchmark["buy_hold_sharpe"]
+            metrics["excess_return_vs_buy_hold"] = (
+                metrics.get("total_return", 0.0) - benchmark["buy_hold_return"]
+            )
         charts = build_plotly_report(portfolio.equity_curve, portfolio.closed_trades)
         mc = monte_carlo(portfolio.closed_trades, config.initial_cash, scenarios=1000)
         return {
             "metrics": metrics,
             "charts": charts,
             "monte_carlo": mc,
+            "benchmark": benchmark,
             "trades": portfolio.closed_trades,
             "completed_at": datetime.now(UTC),
         }

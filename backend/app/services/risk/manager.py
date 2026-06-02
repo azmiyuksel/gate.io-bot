@@ -35,6 +35,10 @@ class RiskManager:
         if self.trades.weekly_pnl() <= weekly_limit:
             return RiskDecision(False, "weekly_loss_limit")
 
+        # Sizing is NOTIONAL-based: allocate `max_capital_per_trade_pct` of equity
+        # to the position. This is deliberately conservative (capital preservation)
+        # and is NOT a fixed "risk-to-stop" model — the loss if stopped out is far
+        # smaller than the allocated notional (≈ notional * stop_distance/entry).
         notional = equity * settings.max_capital_per_trade_pct
         quantity = notional / entry
         stop_loss = entry - (atr_value * settings.atr_multiplier)
