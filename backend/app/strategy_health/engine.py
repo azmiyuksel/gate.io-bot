@@ -58,8 +58,10 @@ class StrategyHealthEngine:
         # 2. Compute rolling performance metrics
         live_metrics = StrategyMetricsTracker.calculate_rolling_metrics(trades_list)
 
-        # 3. Calculate drift
-        drift_score, drift_details = self.drift_detector.calculate_drift_score(live_metrics, baseline)
+        # 3. Calculate drift (with statistical-significance gating on the sample).
+        drift_score, drift_details = self.drift_detector.calculate_drift_score(
+            live_metrics, baseline, n_trades=len(trades_list)
+        )
 
         # 4. Check anomalies
         is_anomalous, anomaly_reason = self.anomaly_detector.detect_anomalies(trades_list)

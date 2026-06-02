@@ -1,11 +1,25 @@
 from typing import Any, Dict, Tuple
 
+from app.strategy_health.statistical_tests import (
+    binomial_winrate_pvalue,
+    is_sharpe_significantly_below,
+)
+
+# Minimum live trades before a degradation can be judged statistically.
+_MIN_TRADES_FOR_SIGNIFICANCE = 20
+
 
 class StrategyDriftDetector:
     @staticmethod
-    def calculate_drift_score(live: Dict[str, float], baseline: Any) -> Tuple[float, dict]:
+    def calculate_drift_score(
+        live: Dict[str, float], baseline: Any, n_trades: int = 0
+    ) -> Tuple[float, dict]:
         """
         Calculates performance drift (0.0 to 1.0) and lists individual deviations.
+
+        When `n_trades` is provided, a statistical-significance layer (binomial
+        test on win rate, standard-error test on Sharpe) distinguishes a real
+        degradation from sampling noise and is used to confirm escalation.
         """
         # Convert baseline values to float
         base_sharpe = float(baseline.expected_sharpe)
@@ -45,6 +59,22 @@ class StrategyDriftDetector:
             # Shift drift score to warning/critical bounds
             raw_drift = max(raw_drift, 0.55)
 
+        # Statistical-significance layer (only when we have enough live trades).
+        win_rate_pvalue = 1.0
+        win_rate_significant = False
+        sharpe_significant = False
+        if n_trades >= _MIN_TRADES_FOR_SIGNIFICANCE and base_win_rate > 0:
+            wins = round(live_win_rate * n_trades)
+            win_rate_pvalue = binomial_winrate_pvalue(wins, n_trades, base_win_rate)
+            win_rate_significant = win_rate_pvalue < 0.05
+            sharpe_significant = is_sharpe_significantly_below(
+                live_sharpe, base_sharpe, n_trades
+            )
+            # A statistically significant drop confirms (escalates) the drift even
+            # if the heuristic relative thresholds were not crossed.
+            if win_rate_significant or sharpe_significant:
+                raw_drift = max(raw_drift, 0.55)
+
         drift_score = max(0.0, min(1.0, raw_drift))
 
         details = {
@@ -53,6 +83,12 @@ class StrategyDriftDetector:
                 "win_rate": dev_win_rate,
                 "profit_factor": dev_pf,
                 "drawdown": dev_dd,
+            },
+            "statistical": {
+                "n_trades": n_trades,
+                "win_rate_pvalue": win_rate_pvalue,
+                "win_rate_significant": win_rate_significant,
+                "sharpe_significant": sharpe_significant,
             },
             "metrics": {
                 "live": live,

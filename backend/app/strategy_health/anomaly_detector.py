@@ -3,6 +3,8 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 from typing import List, Tuple, Any
 
+from app.strategy_health.statistical_tests import loss_streak_pvalue
+
 
 class StrategyAnomalyDetector:
     def __init__(self) -> None:
@@ -41,6 +43,17 @@ class StrategyAnomalyDetector:
         
         if consecutive_losses >= 6:
             return True, f"critical_loss_streak ({consecutive_losses} consecutive losses)"
+
+        # Adaptive: flag a shorter streak when it is statistically improbable for
+        # this strategy's win rate (a 4-loss run is a red flag at 70% win rate,
+        # but normal at 45%). p = loss_rate ** streak.
+        if consecutive_losses >= 4:
+            win_rate = len([p for p in pnls if p > 0]) / len(pnls)
+            p_value = loss_streak_pvalue(consecutive_losses, 1.0 - win_rate)
+            if 0 < p_value < 0.01:
+                return True, (
+                    f"improbable_loss_streak ({consecutive_losses} losses, p={p_value:.3f})"
+                )
 
         # 3. Isolation Forest check (requires at least 20 trades)
         if len(trades) >= 20:
