@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     default_quote_currency: str = "USDT"
     # Stablecoins counted as cash at par (not marked to market) in equity.
     stablecoins: str = "USDT,USDC,DAI,TUSD,FDUSD"
+
+    # --- Live strategy entry thresholds (tunable per market) ---
+    strategy_rsi_threshold: float = 35.0
+    strategy_ema20_distance_pct: float = 0.01
+    # Max 24h range as a fraction of price before an entry is rejected. 0.08 is
+    # tight for crypto; raise per pair to allow entries in normal volatility.
+    strategy_max_24h_range_pct: float = 0.08
     trading_symbols: str = "BTC_USDT,ETH_USDT"
 
     # Equity used when the exchange balance cannot be fetched (no keys / offline).

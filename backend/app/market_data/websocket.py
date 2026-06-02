@@ -55,7 +55,11 @@ class GateIOWebSocketClient:
         backoff = 1
         while self._running:
             try:
-                async with websockets.connect(self.url, ping_interval=20) as ws:
+                # ping_timeout closes a dead connection if the server stops
+                # answering pings, so reconnect logic kicks in instead of hanging.
+                async with websockets.connect(
+                    self.url, ping_interval=20, ping_timeout=10, close_timeout=5
+                ) as ws:
                     await ws.send(self._subscribe_message())
                     backoff = 1
                     async for raw in ws:

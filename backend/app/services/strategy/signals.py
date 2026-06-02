@@ -19,6 +19,17 @@ class Signal:
 class CapitalPreservationStrategy:
     name: str = STRATEGY_NAME
 
+    def __init__(self) -> None:
+        # Entry thresholds are configurable so they can be tuned per market
+        # without code changes. The 24h-range filter especially is asset
+        # dependent — 8% is tight for many crypto pairs that routinely move more.
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        self.rsi_threshold = Decimal(str(settings.strategy_rsi_threshold))
+        self.ema20_distance_pct = Decimal(str(settings.strategy_ema20_distance_pct))
+        self.max_24h_range_pct = Decimal(str(settings.strategy_max_24h_range_pct))
+
     def evaluate(self, candles: list[dict]) -> Signal:
         if len(candles) < 210:
             return Signal(False, "not_enough_history")
@@ -39,15 +50,15 @@ class CapitalPreservationStrategy:
 
         if last_price <= ema_200:
             return Signal(False, "below_200_ema")
-        if rsi_14 >= Decimal("35"):
+        if rsi_14 >= self.rsi_threshold:
             return Signal(False, "rsi_not_oversold")
 
         distance_to_ema20 = abs(last_price - ema_20) / ema_20
-        if distance_to_ema20 > Decimal("0.01"):
+        if distance_to_ema20 > self.ema20_distance_pct:
             return Signal(False, "not_near_20_ema")
 
         daily_range = max(closes[-24:]) - min(closes[-24:])
-        if daily_range / last_price > Decimal("0.08"):
+        if daily_range / last_price > self.max_24h_range_pct:
             return Signal(False, "excessive_24h_volatility")
 
         return Signal(True, "long_entry", last_price, atr_14)

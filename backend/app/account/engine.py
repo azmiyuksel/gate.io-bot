@@ -58,7 +58,8 @@ class AccountManager:
             total = avail + lock
             if total <= 0:
                 continue
-            balances[currency] = {"available": float(avail), "locked": float(lock)}
+            # Store as strings to preserve full Decimal precision in JSON.
+            balances[currency] = {"available": str(avail), "locked": str(lock)}
 
             # The quote and other stablecoins count as cash (at par), not as
             # marked-to-market positions, so available/locked cash is classified

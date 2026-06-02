@@ -110,3 +110,38 @@ async def test_last_price_falls_back_to_bid_ask_mid(monkeypatch):
 
     monkeypatch.setattr(c, "ticker", fake_ticker)
     assert await c.last_price("BTC_USDT") == Decimal("101")
+
+
+async def test_request_honors_retry_after_on_429(monkeypatch):
+    import httpx as _httpx
+
+    from app.services.exchange import gateio as gateio_mod
+
+    c = GateIOClient()
+    delays = []
+
+    async def fake_sleep(d):
+        delays.append(d)
+
+    def make_429(*args, **kwargs):
+        request = _httpx.Request("GET", "https://example/x")
+        response = _httpx.Response(429, headers={"Retry-After": "30"}, request=request)
+        raise _httpx.HTTPStatusError("rate limited", request=request, response=response)
+
+    async def fake_request(*args, **kwargs):
+        make_429()
+
+    monkeypatch.setattr(gateio_mod.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(c.client, "request", fake_request)
+    with pytest.raises(_httpx.HTTPStatusError):
+        await c.request("GET", "/spot/accounts")
+    # Backoff must respect the server's Retry-After (30s), not the 2/4s guess.
+    assert any(d == 30 for d in delays)
+
+
+def test_strategy_thresholds_loaded_from_config():
+    from app.services.strategy.signals import CapitalPreservationStrategy
+
+    strat = CapitalPreservationStrategy()
+    assert float(strat.rsi_threshold) == 35.0
+    assert float(strat.max_24h_range_pct) == 0.08

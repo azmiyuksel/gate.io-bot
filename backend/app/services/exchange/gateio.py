@@ -81,7 +81,16 @@ class GateIOClient:
                 retryable = status == 429 or status >= 500
                 if not retryable or attempt == attempts - 1:
                     raise
-                await asyncio.sleep(2**attempt)
+                # Honor the server's Retry-After on 429 instead of guessing.
+                delay = 2**attempt
+                if status == 429:
+                    retry_after = exc.response.headers.get("Retry-After")
+                    if retry_after:
+                        try:
+                            delay = max(delay, float(retry_after))
+                        except ValueError:
+                            pass
+                await asyncio.sleep(min(delay, 60))
             except self._RETRYABLE_NETWORK:
                 if attempt == attempts - 1:
                     raise
