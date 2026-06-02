@@ -107,6 +107,13 @@ are automated via Dependabot (`.github/dependabot.yml`).
 - **Metrics**: `GET /metrics` exposes Prometheus counters and a latency
   histogram (`http_requests_total`, `http_request_duration_seconds`), labelled by
   method, route template and status.
+- **Audit trail**: privileged actions (circuit-breaker trip/reset, strategy
+  changes, manual position close) are written to `audit_logs` attributed to the
+  acting user and mirrored to the structured log. Read them at
+  `GET /api/v1/dashboard/audit` (admin only).
+- **Error handling**: unhandled exceptions return `{"detail": "Internal server
+  error", "request_id": ...}` and are logged with the correlation id, without
+  leaking internals.
 
 ## Backtest Engine
 

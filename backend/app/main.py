@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
@@ -63,6 +64,22 @@ async def observability_middleware(request: Request, call_next):
         if "response" in locals():
             response.headers["X-Request-ID"] = request_id
         correlation_id.reset(token)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Log unhandled errors with the correlation id and return a safe payload.
+
+    Avoids leaking internal exception detail to clients while keeping the
+    request id so the matching server-side log can be found.
+    """
+    request_id = correlation_id.get()
+    logger.exception("unhandled_exception", extra={"path": request.url.path})
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "request_id": request_id},
+        headers={"X-Request-ID": request_id} if request_id else None,
+    )
 
 
 @app.get("/health")

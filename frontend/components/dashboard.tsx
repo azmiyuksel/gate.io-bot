@@ -39,16 +39,29 @@ const fallback: DashboardSummary = {
   },
 };
 
-const chartData = [
-  { date: "Mon", equity: 10000, pnl: 24 },
-  { date: "Tue", equity: 10034, pnl: 34 },
-  { date: "Wed", equity: 10018, pnl: -16 },
-  { date: "Thu", equity: 10052, pnl: 34 },
-  { date: "Fri", equity: 10080, pnl: 28 },
-];
+interface EquityPoint {
+  date: string;
+  equity: number;
+}
+interface PnlPoint {
+  date: string;
+  pnl: number;
+}
+interface ChartsData {
+  equity_curve: EquityPoint[];
+  daily_pnl: PnlPoint[];
+  win_rate: number;
+  max_drawdown: number;
+}
 
 export function Dashboard() {
   const [summary, setSummary] = useState<DashboardSummary>(fallback);
+  const [charts, setCharts] = useState<ChartsData>({
+    equity_curve: [],
+    daily_pnl: [],
+    win_rate: 0,
+    max_drawdown: 0,
+  });
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -64,7 +77,10 @@ export function Dashboard() {
       else if (response.status === 401) {
         setToken("");
         setAuthError("Oturum süresi doldu, tekrar giriş yapın.");
+        return;
       }
+      const chartsResponse = await authFetch(`/dashboard/charts`);
+      if (chartsResponse.ok) setCharts(await chartsResponse.json());
     } finally {
       setLoading(false);
     }
@@ -180,11 +196,13 @@ export function Dashboard() {
         <Card>
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-base font-semibold">Equity Curve</h2>
-            <span className="text-sm text-muted">Win rate 62% · Max DD -1.4%</span>
+            <span className="text-sm text-muted">
+              Win rate {charts.win_rate.toFixed(1)}% · Max DD {money(String(charts.max_drawdown))}
+            </span>
           </div>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
+              <AreaChart data={charts.equity_curve}>
                 <CartesianGrid stroke="#ecece7" />
                 <XAxis dataKey="date" />
                 <YAxis />
@@ -198,7 +216,7 @@ export function Dashboard() {
           <h2 className="mb-4 text-base font-semibold">Günlük PnL</h2>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
+              <BarChart data={charts.daily_pnl}>
                 <CartesianGrid stroke="#ecece7" />
                 <XAxis dataKey="date" />
                 <YAxis />
