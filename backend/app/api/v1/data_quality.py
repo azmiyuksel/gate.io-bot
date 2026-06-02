@@ -5,6 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import DbSession, current_user_role, require_admin
+from app.core.config import get_settings
 from app.market_data_quality.engine import MarketDataQualityEngine
 from app.market_data_quality.models import trade_status_for_score
 from app.models.entities import MarketDataAnomaly, MarketDataHealthLog
@@ -110,10 +111,12 @@ def report(
 
 @router.post("/revalidate", response_model=RevalidateOut, dependencies=[Depends(require_admin)])
 async def revalidate(payload: RevalidateIn, db: DbSession) -> RevalidateOut:
+    # Clamp the client-supplied limit to bound memory and Gate.io API abuse.
+    safe_limit = min(max(payload.limit, 1), get_settings().max_query_limit)
     client = GateIOClient()
     try:
         candles = await client.candles(
-            payload.symbol, interval=payload.timeframe, limit=payload.limit
+            payload.symbol, interval=payload.timeframe, limit=safe_limit
         )
     finally:
         await client.close()

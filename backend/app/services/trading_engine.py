@@ -284,6 +284,8 @@ class TradingEngine:
         new_stop = price * (Decimal("1") - self._trailing_stop_pct())
         if new_stop > position.stop_loss:
             position.stop_loss = new_stop
+            # Track the ratcheted level so the guard above can short-circuit.
+            position.trailing_stop = new_stop
             self.db.commit()
 
     def _log(self, source: str, message: str, level: LogLevel = LogLevel.info) -> None:

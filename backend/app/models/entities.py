@@ -64,14 +64,16 @@ class Position(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
-    status: Mapped[PositionStatus] = mapped_column(String(32), default=PositionStatus.open)
+    status: Mapped[PositionStatus] = mapped_column(
+        String(32), default=PositionStatus.open, index=True
+    )
     entry_price: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     stop_loss: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     take_profit: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     trailing_stop: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
     realized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
-    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
@@ -87,7 +89,7 @@ class Order(Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
@@ -102,7 +104,7 @@ class Trade(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     fee: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
     realized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
-    traded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    traded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
 
 
 class StrategySettings(Base):

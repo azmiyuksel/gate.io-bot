@@ -19,6 +19,8 @@ logger = get_logger("app.request")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
+    for warning in settings.validate_runtime_secrets():
+        logger.warning("config_warning", extra={"warning": warning})
     init_db()
     yield
 
@@ -48,8 +50,9 @@ async def observability_middleware(request: Request, call_next):
     finally:
         duration = time.perf_counter() - start
         # Use the matched route template to keep metric cardinality bounded.
+        # Unmatched paths (404s) collapse to a single label to avoid explosion.
         route = request.scope.get("route")
-        route_path = getattr(route, "path", request.url.path)
+        route_path = getattr(route, "path", None) or "unmatched"
         record_request(request.method, route_path, status_code, duration)
         logger.info(
             "request",

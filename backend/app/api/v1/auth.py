@@ -4,12 +4,14 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.api.deps import DbSession
+from app.core.audit import record_audit
 from app.core.config import get_settings
 from app.core.rate_limit import SlidingWindowRateLimiter
 from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    hash_password,
     verify_password,
 )
 from app.models.entities import RefreshToken, User
@@ -21,6 +23,9 @@ _settings = get_settings()
 _login_limiter = SlidingWindowRateLimiter(
     _settings.login_rate_limit_attempts, _settings.login_rate_limit_window_seconds
 )
+# Verified against this when no user matches, so login timing does not reveal
+# whether an email exists (user-enumeration mitigation).
+_DUMMY_HASH = hash_password("invalid-placeholder-password")
 
 
 def _issue_tokens(db: DbSession, user: User) -> TokenResponse:
@@ -41,11 +46,18 @@ def login(payload: LoginRequest, db: DbSession, request: Request) -> TokenRespon
             detail="Too many login attempts, try again later",
         )
     user = db.scalar(select(User).where(User.email == payload.email))
-    if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
+    # Always run a hash comparison (dummy when no user) for constant-ish timing.
+    password_ok = verify_password(
+        payload.password, user.password_hash if user else _DUMMY_HASH
+    )
+    if user is None or not user.is_active or not password_ok:
+        record_audit(db, payload.email, "auth.login_failed", f"ip={client_ip}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
     # Successful auth clears the throttle for this key.
     _login_limiter.reset(rate_key)
-    return _issue_tokens(db, user)
+    tokens = _issue_tokens(db, user)
+    record_audit(db, user.email, "auth.login", f"ip={client_ip}")
+    return tokens
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -81,12 +93,15 @@ def logout(payload: RefreshRequest, db: DbSession) -> None:
     if record is not None and not record.revoked:
         record.revoked = True
         db.commit()
+        record_audit(db, f"user_id={record.user_id}", "auth.logout", None)
 
 
 def purge_expired_refresh_tokens(db: DbSession) -> int:
-    """Delete refresh tokens past their expiry; returns the number removed."""
-    rows = db.query(RefreshToken).filter(RefreshToken.expires_at < datetime.now(UTC)).all()
-    for row in rows:
-        db.delete(row)
+    """Bulk-delete refresh tokens past their expiry; returns the number removed."""
+    removed = (
+        db.query(RefreshToken)
+        .filter(RefreshToken.expires_at < datetime.now(UTC))
+        .delete(synchronize_session=False)
+    )
     db.commit()
-    return len(rows)
+    return removed

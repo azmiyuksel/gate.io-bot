@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     # Comma-separated list of allowed CORS origins for the browser dashboard.
     cors_origins: str = "http://localhost:3000"
 
+    # Max inline CSV upload size (backtests / walk-forward) in bytes.
+    max_csv_upload_bytes: int = 10 * 1024 * 1024
+    # Hard cap on list/candle `limit` query params to bound memory and API abuse.
+    max_query_limit: int = 1000
+
     gateio_api_key: str = ""
     gateio_api_secret: str = ""
     gateio_base_url: str = "https://api.gateio.ws/api/v4"
@@ -99,6 +104,29 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.lower() in ("production", "prod", "staging")
+
+    def validate_runtime_secrets(self) -> list[str]:
+        """Enforce strong secrets outside local/dev. Returns non-fatal warnings.
+
+        Raises RuntimeError for fatal misconfiguration in production-like
+        environments (a forgeable JWT secret is a full auth bypass).
+        """
+        warnings: list[str] = []
+        weak_secret = self.secret_key in ("", "change-me")
+        if weak_secret:
+            if self.is_production:
+                raise RuntimeError(
+                    "SECRET_KEY must be set to a strong, unique value in "
+                    f"environment='{self.environment}'."
+                )
+            warnings.append("SECRET_KEY is the insecure default ('change-me').")
+        if not self.fernet_key:
+            warnings.append("FERNET_KEY is unset; stored API secrets are not encrypted.")
+        return warnings
 
 
 @lru_cache

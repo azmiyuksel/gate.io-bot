@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.api.deps import DbSession, current_user_role, require_admin
 from app.backtest.engine import HistoricalDataLoader
+from app.core.config import get_settings
 from app.models.entities import WalkForwardRun, WalkForwardWindow
 from app.models.enums import WalkForwardMode, WalkForwardStatus
 from app.schemas.walkforward import WalkForwardDetail, WalkForwardListItem, WalkForwardStart
@@ -43,6 +44,11 @@ async def start_walkforward(payload: WalkForwardStart, db: DbSession) -> dict:
         if payload.data_source == "csv":
             if not payload.csv_data:
                 raise HTTPException(status_code=400, detail="csv_data is required")
+            limit = get_settings().max_csv_upload_bytes
+            if len(payload.csv_data.encode("utf-8")) > limit:
+                raise HTTPException(
+                    status_code=413, detail=f"csv_data exceeds the {limit // (1024 * 1024)} MB limit"
+                )
             data = loader.load_from_csv(payload.csv_data, payload.timeframe)
             loader.cache(data, payload.symbol, payload.timeframe, "csv")
         elif payload.data_source == "gateio":

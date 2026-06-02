@@ -12,17 +12,28 @@ from collections import defaultdict, deque
 
 
 class SlidingWindowRateLimiter:
-    def __init__(self, max_attempts: int, window_seconds: int) -> None:
+    def __init__(self, max_attempts: int, window_seconds: int, prune_every: int = 500) -> None:
         self.max_attempts = max_attempts
         self.window_seconds = window_seconds
+        self._prune_every = prune_every
         self._hits: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
+        self._ops = 0
+
+    def _prune(self, cutoff: float) -> None:
+        """Drop keys whose hits have all aged out, bounding memory growth."""
+        stale = [key for key, hits in self._hits.items() if not hits or hits[-1] < cutoff]
+        for key in stale:
+            del self._hits[key]
 
     def is_allowed(self, key: str) -> bool:
         """Record an attempt and return False once the window limit is exceeded."""
         now = time.monotonic()
         cutoff = now - self.window_seconds
         with self._lock:
+            self._ops += 1
+            if self._ops % self._prune_every == 0:
+                self._prune(cutoff)
             hits = self._hits[key]
             while hits and hits[0] < cutoff:
                 hits.popleft()
