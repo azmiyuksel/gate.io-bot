@@ -56,6 +56,28 @@ def trade_economics(pnls: list[float]) -> dict:
     }
 
 
+def hurdle_comparison(
+    strategy_return: float, annual_risk_free_rate: float, period_days: float
+) -> dict:
+    """Compare the strategy's return against the opportunity cost of idle capital.
+
+    Idle USDT could earn a ~risk-free yield (lending/Earn); the strategy only
+    creates value if it beats that hurdle over the same period.
+    """
+    if period_days <= 0:
+        hurdle = 0.0
+    else:
+        hurdle = (1 + annual_risk_free_rate) ** (period_days / 365.0) - 1
+    excess = strategy_return - hurdle
+    return {
+        "annual_risk_free_rate": annual_risk_free_rate,
+        "period_days": period_days,
+        "hurdle_return": hurdle,
+        "excess_over_hurdle": excess,
+        "beats_hurdle": excess > 0,
+    }
+
+
 def benchmark_comparison(strategy_return: float, benchmark_closes: list[float]) -> dict:
     """Strategy return vs buy-and-hold the benchmark asset over the same window.
 

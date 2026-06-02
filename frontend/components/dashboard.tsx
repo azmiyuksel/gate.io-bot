@@ -69,6 +69,11 @@ interface EconomicsData {
     outperforms: boolean;
     benchmark_symbol: string;
   };
+  hurdle: {
+    annual_risk_free_rate: number;
+    excess_over_hurdle: number;
+    beats_hurdle: boolean;
+  };
 }
 
 export function Dashboard() {
@@ -269,6 +274,11 @@ export function Dashboard() {
             label={`Al-tut'a göre (${economics.benchmark.benchmark_symbol})`}
             value={`${(economics.benchmark.excess_return * 100).toFixed(1)}%`}
             icon={economics.benchmark.outperforms ? <ShieldCheck size={18} /> : <XCircle size={18} />}
+          />
+          <Metric
+            label={`Risk-free hurdle üstü (%${(economics.hurdle.annual_risk_free_rate * 100).toFixed(0)}/yıl)`}
+            value={`${(economics.hurdle.excess_over_hurdle * 100).toFixed(1)}%`}
+            icon={economics.hurdle.beats_hurdle ? <ShieldCheck size={18} /> : <XCircle size={18} />}
           />
         </section>
       )}

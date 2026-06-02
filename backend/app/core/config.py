@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     # Stablecoins counted as cash at par (not marked to market) in equity.
     stablecoins: str = "USDT,USDC,DAI,TUSD,FDUSD"
 
+    # Opportunity cost of idle capital: the ~risk-free yield idle USDT could earn
+    # (e.g. exchange lending/Earn). The strategy must beat this hurdle to add value.
+    annual_risk_free_rate: float = 0.04
+
     # --- Live strategy entry thresholds (tunable per market) ---
     strategy_rsi_threshold: float = 35.0
     strategy_ema20_distance_pct: float = 0.01

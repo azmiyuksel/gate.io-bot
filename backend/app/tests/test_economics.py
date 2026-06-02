@@ -46,3 +46,23 @@ def test_benchmark_excess_return():
 def test_benchmark_outperforms():
     out = benchmark_comparison(0.20, [100.0, 110.0])
     assert out["outperforms"] is True
+
+
+def test_hurdle_comparison_beats_and_misses():
+    from app.services.analytics.economics import hurdle_comparison
+
+    # 4% annual over ~half a year ~= 1.98% hurdle.
+    out = hurdle_comparison(0.05, 0.04, 182.5)
+    assert 0.019 < out["hurdle_return"] < 0.021
+    assert out["beats_hurdle"] is True
+    # A return below the prorated risk-free yield does not beat the hurdle.
+    miss = hurdle_comparison(0.01, 0.04, 365)
+    assert miss["beats_hurdle"] is False
+
+
+def test_hurdle_zero_period():
+    from app.services.analytics.economics import hurdle_comparison
+
+    out = hurdle_comparison(0.05, 0.04, 0)
+    assert out["hurdle_return"] == 0.0
+    assert out["excess_over_hurdle"] == 0.05

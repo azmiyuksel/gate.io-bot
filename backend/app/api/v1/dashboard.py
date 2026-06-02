@@ -15,7 +15,11 @@ from app.repositories.trading import (
     TradeRepository,
 )
 from app.schemas.dashboard import DashboardSummary, StrategySettingsUpdate
-from app.services.analytics.economics import benchmark_comparison, trade_economics
+from app.services.analytics.economics import (
+    benchmark_comparison,
+    hurdle_comparison,
+    trade_economics,
+)
 from app.services.exchange.gateio import GateIOClient
 from app.services.trading_engine import TradingEngine
 
@@ -120,7 +124,11 @@ def economics(db: DbSession) -> dict:
         if len(closes) >= 2:
             benchmark = benchmark_comparison(strategy_return, closes)
     benchmark["benchmark_symbol"] = symbol
-    return {"edge": edge, "benchmark": benchmark}
+
+    # Opportunity cost: did the strategy beat what idle capital could have earned?
+    period_days = (trades[-1].traded_at - trades[0].traded_at).days if trades else 0
+    hurdle = hurdle_comparison(strategy_return, settings.annual_risk_free_rate, period_days)
+    return {"edge": edge, "benchmark": benchmark, "hurdle": hurdle}
 
 
 @router.patch("/strategy", dependencies=[Depends(require_admin)])
