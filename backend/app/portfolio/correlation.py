@@ -77,8 +77,19 @@ class CorrelationEngine:
         avg_corr = np.mean([v for v in corr_values if v > 0]) if corr_values else 0.0
         risk_score = float(max(0.0, min(1.0, avg_corr)))
 
+        # Per-asset volatility and the covariance matrix (from returns) feed the
+        # mean-variance / risk-parity optimizers downstream.
+        if len(returns) >= 2:
+            volatilities = {s: float(returns[s].std()) for s in returns.columns}
+            covariance = returns.cov().fillna(0.0).to_dict()
+        else:
+            volatilities = {s: 0.0 for s in df.columns}
+            covariance = {s1: {s2: 0.0 for s2 in df.columns} for s1 in df.columns}
+
         return {
             "matrix": matrix_dict,
             "high_correlation_pairs": high_corr,
-            "risk_score": risk_score
+            "risk_score": risk_score,
+            "volatilities": volatilities,
+            "covariance": covariance,
         }

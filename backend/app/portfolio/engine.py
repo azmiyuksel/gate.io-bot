@@ -9,6 +9,7 @@ from app.portfolio.allocator import CapitalAllocator
 from app.portfolio.correlation import CorrelationEngine
 from app.portfolio.exposure import ExposureManager
 from app.portfolio.models import DEFAULT_STRATEGY_WEIGHTS
+from app.portfolio.optimizer import PortfolioOptimizer
 from app.portfolio.rebalancer import PortfolioRebalancer
 from app.portfolio.risk_model import PortfolioRiskModel
 
@@ -234,6 +235,23 @@ class PortfolioEngine:
         self.db.add(snapshot)
         self.db.commit()
         return snapshot
+
+    def risk_parity_allocation(self) -> Dict[str, float]:
+        """Equal-risk-contribution weights across held assets, from the real
+        return covariance (a genuine optimization, not a heuristic score)."""
+        assets = (
+            self.db.query(PortfolioAsset)
+            .filter(PortfolioAsset.portfolio_id == self.portfolio.id)
+            .all()
+        )
+        symbols = [a.symbol for a in assets]
+        if not symbols:
+            return {}
+        corr_data = self.correlation_engine.calculate_correlation(symbols)
+        covariance = corr_data.get("covariance", {})
+        if not covariance:
+            return {s: 1.0 / len(symbols) for s in symbols}
+        return PortfolioOptimizer.risk_parity_weights(covariance)
 
     def value_at_risk(self, confidence: float = 0.95, lookback: int = 200) -> dict:
         """Historical VaR/CVaR from the recorded portfolio-equity history."""
