@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # (e.g. exchange lending/Earn). The strategy must beat this hurdle to add value.
     annual_risk_free_rate: float = 0.04
 
+    # --- Volatility targeting (opt-in): scale size inversely to volatility ---
+    vol_targeting_enabled: bool = False
+    vol_target_atr_pct: float = 0.02          # target ATR as a fraction of price
+    vol_target_min_multiplier: float = 0.25
+    vol_target_max_multiplier: float = 2.0
+
     # --- Live strategy entry thresholds (tunable per market) ---
     strategy_rsi_threshold: float = 35.0
     strategy_ema20_distance_pct: float = 0.01
