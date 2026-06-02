@@ -4,6 +4,7 @@ import pandas as pd
 
 from app.backtest.engine import BacktestEngine
 from app.backtest.models import BacktestConfig
+from app.backtest.multiple_testing import assess_multiple_testing
 
 
 class ParameterOptimizer:
@@ -27,7 +28,7 @@ class ParameterOptimizer:
                     "total_trades": metrics.get("total_trades", 0),
                 }
             )
-        return sorted(
+        ranked = sorted(
             results,
             key=lambda item: (
                 item["net_profit"],
@@ -36,6 +37,12 @@ class ParameterOptimizer:
             ),
             reverse=True,
         )
+        # Flag selection bias: the best of N trials is inflated by multiple testing.
+        if ranked:
+            ranked[0]["multiple_testing"] = assess_multiple_testing(
+                [r["sharpe_ratio"] for r in ranked]
+            )
+        return ranked
 
     def walk_forward(
         self, data: pd.DataFrame, base_config: BacktestConfig, windows: list[dict], grid: dict[str, list]

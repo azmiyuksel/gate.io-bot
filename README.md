@@ -126,7 +126,7 @@ The backtest module lives in `backend/app/backtest`:
 - `strategy_runner.py`: `BaseStrategy` interface and EMA/RSI/ATR example strategy
 - `engine.py`: signals are evaluated on a bar's close and **filled on the next bar's open** (no same-bar lookahead bias)
 - `metrics.py`: total return, CAGR, drawdowns, Sharpe, Sortino, Calmar, win rate, profit factor, **compounding** Monte Carlo (bootstraps per-trade equity-fraction returns), **timeframe-aware annualization**, optional risk-free rate, and a **buy-and-hold benchmark** (`buy_hold_return`, `excess_return_vs_buy_hold`)
-- `optimizer.py`: grid search and walk-forward analysis
+- `optimizer.py`: grid search and walk-forward analysis, with a **multiple-testing / selection-bias** assessment (expected maximum Sharpe under the null given N trials) that flags a best config as `likely_overfit` when it is no better than chance
 - `reports.py`: Plotly JSON reports and PDF download adapter
 - `models.py`: backtest dataclasses and supported timeframe metadata
 
