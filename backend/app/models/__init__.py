@@ -53,6 +53,12 @@ from app.models.entities import (
     HypothesisTest,
     FeatureRecord,
     ABTestResult,
+    LearningCycle,
+    KnowledgeEntry,
+    DiscoveredFeature,
+    StrategyRanking,
+    PromotionRequest,
+    LearningReport,
 )
 
 __all__ = [
@@ -110,6 +116,12 @@ __all__ = [
     "HypothesisTest",
     "FeatureRecord",
     "ABTestResult",
+    "LearningCycle",
+    "KnowledgeEntry",
+    "DiscoveredFeature",
+    "StrategyRanking",
+    "PromotionRequest",
+    "LearningReport",
 ]
 
 

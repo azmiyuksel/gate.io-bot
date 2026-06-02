@@ -3,6 +3,7 @@ import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.account.engine import AccountManager
+from app.auto_learning.engine import AutoLearningEngine
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.market_data.ingestion import MarketDataIngestion
@@ -120,6 +121,46 @@ async def run_research_loop() -> None:
             )
 
 
+async def run_learning_cycle() -> None:
+    """Continuous auto-learning: evolve + validate candidates, never auto-deploy.
+
+    Runs in a worker thread (CPU-bound) and only ever creates promotion *requests*
+    that a human must approve.
+    """
+    settings = get_settings()
+    if not settings.learning_enabled:
+        return
+    symbol = settings.symbols[0] if settings.symbols else "BTC_USDT"
+
+    def _cycle() -> dict:
+        db = SessionLocal()
+        try:
+            return AutoLearningEngine(db).run_cycle(symbol, settings.market_data_interval)
+        finally:
+            db.close()
+
+    summary = await asyncio.to_thread(_cycle)
+    if summary.get("promotion_requests"):
+        await TelegramNotifier().send(
+            f"🧠 Auto-Learning: {summary['promotion_requests']} strateji insan onayı bekliyor "
+            f"(cycle #{summary.get('cycle_id')}, {summary.get('strategies_validated')} doğrulandı). "
+            f"Onay olmadan canlıya geçiş YOK."
+        )
+
+
+async def weekly_learning_report() -> None:
+    db = SessionLocal()
+    try:
+        report = AutoLearningEngine(db).weekly_report(7)
+        await TelegramNotifier().send(
+            f"📚 Haftalık Öğrenme Raporu: {report.patterns_learned} pattern, "
+            f"{report.new_candidates} aday, {report.failed_strategies} elenen, "
+            f"{report.promotion_requests} terfi talebi."
+        )
+    finally:
+        db.close()
+
+
 async def daily_report() -> None:
     await TelegramNotifier().send("Daily report: check dashboard for PnL, drawdown and open risk.")
 
@@ -136,6 +177,8 @@ async def main() -> None:
     scheduler.add_job(run_cycle, "interval", minutes=15, max_instances=1)
     scheduler.add_job(ingest_market_data, "interval", minutes=15, max_instances=1)
     scheduler.add_job(run_research_loop, "interval", hours=6, max_instances=1)
+    scheduler.add_job(run_learning_cycle, "cron", hour=3, minute=0, max_instances=1)
+    scheduler.add_job(weekly_learning_report, "cron", day_of_week="mon", hour=8, minute=0)
     scheduler.add_job(daily_report, "cron", hour=21, minute=0)
     scheduler.start()
     try:

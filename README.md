@@ -269,6 +269,55 @@ API (`/api/v1/research`):
 Dashboard page: `http://localhost:3000/strategy-research` — leaderboard, feature
 importance, hypothesis results, experiment feed and one-click promotion.
 
+## Auto Learning & Continuous Evolution (`backend/app/auto_learning`)
+
+A continuous learning system that mines patterns, generates hypotheses, discovers
+features, evolves strategies and ranks them — **but never deploys anything
+automatically**. Every candidate must travel:
+
+    Research → Validation → Paper Trading → Human Approval → Production
+
+The engine only ever creates a `PromotionRequest` in `AWAITING_APPROVAL`; a human
+must explicitly approve it. The layer never enables live trading, never changes
+risk limits and never touches the circuit breaker (enforced structurally and by
+`SafetyGuard`, with a test asserting state is unchanged across a cycle).
+
+Modules:
+
+- `knowledge_base.py`: long-term memory (strategies, trades, regime/feature performance, learned facts)
+- `pattern_miner.py`: best/worst trade sets, regime-based and parameter-region patterns
+- `hypothesis_generator.py`: generate + statistically test market hypotheses
+- `feature_discovery.py`: derived features (ATR/Volume, RSI*ADX, volatility-regime score) auto-tested
+- `strategy_evolution.py`: mutation/crossover/perturbation seeded from known-good parameters
+- `meta_learning.py`: which family works in which regime, `strategy_family_score`, portfolio learning
+- `validation_pipeline.py`: backtest → cross-validation → walk-forward → Monte Carlo → robustness → paper proxy
+- `ranking_engine.py`: 30 robustness + 25 walk-forward + 20 stability + 15 sharpe + 10 drawdown (0-100)
+- `safety.py`: hard safety locks + verifiable invariant snapshot
+- `engine.py`: the learning loop + human-approval promotion workflow + weekly report
+
+Promotion gate (then human approval): Sharpe > 1.5, Profit Factor > 1.3,
+Consistency > 60%, Walk-Forward PASS, Monte Carlo PASS, overfit LOW, paper PASS.
+
+The scheduler runs a learning cycle nightly and a weekly report (both in worker
+threads), alerting on Telegram when strategies await approval.
+
+Tables: `learning_cycles`, `knowledge_entries`, `discovered_features`,
+`strategy_rankings`, `promotion_requests`, `learning_reports`.
+
+API (`/api/v1/learning`):
+
+- `POST /learning/start` (admin) — run one learning cycle
+- `POST /learning/stop` (admin)
+- `GET /learning/status` · `GET /learning/cycles`
+- `GET /learning/hypotheses` · `GET /learning/features` · `GET /learning/rankings` · `GET /learning/knowledge`
+- `GET /learning/promotion-requests`
+- `POST /learning/promote-request/{strategy_id}` (admin) — **human approval gate**
+- `POST /learning/promotion-requests/{request_id}/reject` (admin)
+- `POST /learning/report` (admin)
+
+Dashboard page: `http://localhost:3000/learning` — pending approvals with
+approve/reject, strategy ranking, discovered features and the knowledge feed.
+
 ## Important Notes
 
 This is an engineering scaffold, not financial advice. Start in read-only or tiny-size mode, verify Gate.io order minimums per symbol, and review every live permission before enabling the strategy.

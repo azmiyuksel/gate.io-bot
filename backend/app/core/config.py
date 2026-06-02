@@ -66,6 +66,18 @@ class Settings(BaseSettings):
     research_population: int = 12
     research_survivors: int = 4
 
+    # --- Auto Learning & Continuous Evolution ---
+    learning_enabled: bool = True
+    # Candidates evolved per learning cycle.
+    learning_population: int = 8
+    # Promotion gate (human approval still required afterwards).
+    learning_gate_min_sharpe: float = 1.5
+    learning_gate_min_profit_factor: float = 1.3
+    learning_gate_min_consistency: float = 0.60
+    learning_gate_max_ruin: float = 0.20
+    # Minimum ranking score (0-100) to even create a promotion request.
+    learning_min_ranking: float = 60.0
+
     @property
     def symbols(self) -> list[str]:
         return [symbol.strip() for symbol in self.trading_symbols.split(",") if symbol.strip()]
