@@ -48,10 +48,13 @@ class ReconciliationEngine:
         )
 
     @staticmethod
-    def _filled_quantity(remote: dict, original: Decimal) -> Decimal:
+    def _filled_quantity(remote: dict, original: Decimal, side: str = "buy") -> Decimal:
+        # `filled_amount` is the base quantity filled (correct for both sides).
         if remote.get("filled_amount") is not None:
             return _to_decimal(remote["filled_amount"])
-        if remote.get("left") is not None:
+        # `left` is the outstanding amount in the order's `amount` unit: base for a
+        # SELL (safe to subtract), but QUOTE for a market BUY — so only use it on sells.
+        if side == "sell" and remote.get("left") is not None:
             return original - _to_decimal(remote["left"])
         if str(remote.get("status")) in ("closed", "filled"):
             return original
@@ -78,9 +81,16 @@ class ReconciliationEngine:
                              Decimal("0"), f"exchange lookup failed: {exc}")
 
         remote_status = str(remote.get("status", "")).lower()
-        mapped = _STATUS_MAP.get(remote_status, OrderStatus.open)
         original_qty = order.quantity or Decimal("0")
-        filled = self._filled_quantity(remote, original_qty)
+        filled = self._filled_quantity(remote, original_qty, order.side.value)
+
+        # An IOC order (all our market orders are IOC) that fills part of the
+        # request and cancels the rest reports status "cancelled" WITH filled > 0.
+        # Treat that as a (partial) fill rather than a no-op cancellation.
+        if remote_status in ("cancelled", "canceled") and filled > 0:
+            mapped = OrderStatus.filled
+        else:
+            mapped = _STATUS_MAP.get(remote_status, OrderStatus.open)
 
         if mapped == OrderStatus.open:
             return self._log(order, ReconcileAction.no_change, previous, previous,
@@ -100,19 +110,26 @@ class ReconciliationEngine:
         else:
             action = ReconcileAction.cancelled
 
-        # Keep the linked position entry price aligned with the real fill.
+        # Align the linked position with the real fill (price and, on a partial
+        # fill, the actually-filled quantity).
         if action in (ReconcileAction.filled, ReconcileAction.partially_filled) and fill_price:
-            self._sync_position_price(order, fill_price)
+            self._sync_position(order, fill_price, filled, original_qty)
 
         return self._log(order, action, previous, str(mapped), filled,
                          f"exchange status={remote_status}")
 
-    def _sync_position_price(self, order: Order, fill_price: Decimal) -> None:
+    def _sync_position(
+        self, order: Order, fill_price: Decimal, filled: Decimal, original: Decimal
+    ) -> None:
         if order.position_id is None:
             return
         position = self.db.get(Position, order.position_id)
-        if position is not None and order.side.value == "buy":
-            position.entry_price = fill_price
+        if position is None or order.side.value != "buy":
+            return
+        position.entry_price = fill_price
+        # A partial buy fill means the position holds only what actually filled.
+        if 0 < filled < original:
+            position.quantity = filled
 
     async def reconcile_open_orders(self) -> list[ReconciliationLog]:
         logs = [await self.reconcile_order(order) for order in self.open_orders()]

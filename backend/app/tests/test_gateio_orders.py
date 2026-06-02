@@ -80,3 +80,33 @@ def test_fee_in_quote_converts_base_fee():
 def test_fee_in_quote_passes_through_quote_fee():
     resp = {"fee": "2.5", "fee_currency": "USDT"}
     assert _fee_in_quote(resp, Decimal("50000"), "BTC_USDT") == Decimal("2.5")
+
+
+async def test_candles_expose_base_and_quote_volume(monkeypatch):
+    c = GateIOClient()
+    raw = [
+        # 6-element (no base volume): quote=1000, close=100 -> base 10
+        [1700000000, "1000", "100", "101", "99", "100"],
+        # 8-element: base volume present at index 6 -> used directly
+        [1700003600, "2000", "200", "201", "199", "200", "8", True],
+    ]
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        return raw
+
+    monkeypatch.setattr(c, "request", fake_request)
+    candles = await c.candles("BTC_USDT")
+    by_ts = {x["timestamp"]: x for x in candles}
+    assert by_ts[1700000000]["volume"] == Decimal("10")        # derived quote/close
+    assert by_ts[1700000000]["quote_volume"] == Decimal("1000")
+    assert by_ts[1700003600]["volume"] == Decimal("8")         # from base-volume field
+
+
+async def test_last_price_falls_back_to_bid_ask_mid(monkeypatch):
+    c = GateIOClient()
+
+    async def fake_ticker(symbol):
+        return {"last": None, "highest_bid": "100", "lowest_ask": "102"}
+
+    monkeypatch.setattr(c, "ticker", fake_ticker)
+    assert await c.last_price("BTC_USDT") == Decimal("101")

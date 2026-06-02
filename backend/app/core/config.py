@@ -40,6 +40,8 @@ class Settings(BaseSettings):
 
     bot_enabled: bool = False
     default_quote_currency: str = "USDT"
+    # Stablecoins counted as cash at par (not marked to market) in equity.
+    stablecoins: str = "USDT,USDC,DAI,TUSD,FDUSD"
     trading_symbols: str = "BTC_USDT,ETH_USDT"
 
     # Equity used when the exchange balance cannot be fetched (no keys / offline).
@@ -104,6 +106,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def stablecoin_set(self) -> set[str]:
+        return {s.strip().upper() for s in self.stablecoins.split(",") if s.strip()}
 
     @property
     def is_production(self) -> bool:

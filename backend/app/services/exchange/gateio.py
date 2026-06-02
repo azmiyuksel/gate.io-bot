@@ -93,17 +93,29 @@ class GateIOClient:
             "/spot/candlesticks",
             params={"currency_pair": symbol, "interval": interval, "limit": limit},
         )
-        return [
-            {
-                "timestamp": item[0],
-                "volume": item[1],
-                "close": Decimal(str(item[2])),
-                "high": Decimal(str(item[3])),
-                "low": Decimal(str(item[4])),
-                "open": Decimal(str(item[5])),
-            }
-            for item in reversed(data)
-        ]
+        result = []
+        for item in reversed(data):
+            close = Decimal(str(item[2]))
+            quote_volume = Decimal(str(item[1]))
+            # Gate.io v4 returns QUOTE volume at index 1 (and base volume at index 6
+            # on newer responses). Expose base volume — the conventional meaning —
+            # deriving it from quote/close when the base field is absent.
+            if len(item) > 6 and item[6] not in (None, ""):
+                base_volume = Decimal(str(item[6]))
+            else:
+                base_volume = quote_volume / close if close > 0 else Decimal("0")
+            result.append(
+                {
+                    "timestamp": item[0],
+                    "volume": base_volume,
+                    "quote_volume": quote_volume,
+                    "close": close,
+                    "high": Decimal(str(item[3])),
+                    "low": Decimal(str(item[4])),
+                    "open": Decimal(str(item[5])),
+                }
+            )
+        return result
 
     async def balances(self) -> list[dict]:
         return await self.request("GET", "/spot/accounts")
@@ -175,6 +187,14 @@ class GateIOClient:
 
     async def last_price(self, symbol: str) -> Decimal | None:
         ticker = await self.ticker(symbol)
-        if not ticker or ticker.get("last") is None:
+        if not ticker:
             return None
-        return Decimal(str(ticker["last"]))
+        last = ticker.get("last")
+        if last not in (None, "", "0"):
+            return Decimal(str(last))
+        # Fall back to the bid/ask midpoint when `last` is missing/stale
+        # (illiquid pairs or feed gaps).
+        bid, ask = ticker.get("highest_bid"), ticker.get("lowest_ask")
+        if bid not in (None, "", "0") and ask not in (None, "", "0"):
+            return (Decimal(str(bid)) + Decimal(str(ask))) / 2
+        return None

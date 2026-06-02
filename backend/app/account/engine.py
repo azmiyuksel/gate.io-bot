@@ -26,6 +26,7 @@ class AccountManager:
         self.client = client
         self.settings = get_settings()
         self.quote = self.settings.default_quote_currency
+        self.stablecoins = self.settings.stablecoin_set
 
     async def _price(self, currency: str) -> Decimal | None:
         symbol = f"{currency}_{self.quote}"
@@ -59,7 +60,10 @@ class AccountManager:
                 continue
             balances[currency] = {"available": float(avail), "locked": float(lock)}
 
-            if currency == self.quote:
+            # The quote and other stablecoins count as cash (at par), not as
+            # marked-to-market positions, so available/locked cash is classified
+            # correctly across multi-stablecoin balances (USDT, USDC, ...).
+            if currency == self.quote or currency.upper() in self.stablecoins:
                 cash += total
                 available += avail
                 locked += lock
