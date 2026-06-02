@@ -1,6 +1,7 @@
 import asyncio
 
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.db.session import SessionLocal
 from app.models.entities import PaperAccount
 from app.paper_trading.engine import PaperTradingEngine
@@ -8,6 +9,7 @@ from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
 
 
 async def main() -> None:
+    configure_logging()
     settings = get_settings()
     db = SessionLocal()
     try:

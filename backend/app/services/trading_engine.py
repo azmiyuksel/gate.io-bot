@@ -48,7 +48,8 @@ class TradingEngine:
                 f"{symbol}: trading paused, data INVALID (health={mdq_result.health.score})",
             )
             return
-        data_risk_mult = Decimal("0.5") if data_status == DataTradeStatus.degraded else Decimal("1")
+        degraded_mult = Decimal(str(get_settings().mdq_degraded_risk_multiplier))
+        data_risk_mult = degraded_mult if data_status == DataTradeStatus.degraded else Decimal("1")
 
         signal = self.strategy.evaluate(candles)
         if not signal.should_buy or signal.entry_price is None or signal.atr_value is None:
@@ -266,10 +267,21 @@ class TradingEngine:
         await self.notifier.send(f"Closed {position.symbol}: {reason}, pnl={pnl}")
         return order
 
+    def _trailing_stop_pct(self) -> Decimal:
+        """Configured trailing-stop distance from StrategySettings (default 1%)."""
+        from app.repositories.trading import StrategySettingsRepository
+
+        settings = StrategySettingsRepository(self.db).current()
+        pct = settings.trailing_stop_pct if settings is not None else Decimal("0.01")
+        # Clamp to a sane (0, 1) range so a misconfiguration cannot widen the stop.
+        if pct <= 0 or pct >= 1:
+            return Decimal("0.01")
+        return Decimal(str(pct))
+
     def _update_trailing_stop(self, position: Position, price: Decimal) -> None:
         if position.trailing_stop and price <= position.trailing_stop:
             return
-        new_stop = price * Decimal("0.99")
+        new_stop = price * (Decimal("1") - self._trailing_stop_pct())
         if new_stop > position.stop_loss:
             position.stop_loss = new_stop
             self.db.commit()

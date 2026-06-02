@@ -19,6 +19,9 @@ from app.schemas.backtest import (
 )
 from app.services.exchange.gateio import GateIOClient
 
+# Cap inline CSV uploads to keep request bodies and parsing bounded.
+MAX_CSV_BYTES = 10 * 1024 * 1024
+
 router = APIRouter(prefix="/backtests", tags=["backtests"], dependencies=[Depends(current_user_role)])
 
 
@@ -44,6 +47,11 @@ async def create_backtest(payload: BacktestCreate, db: DbSession) -> dict:
         if payload.data_source == "csv":
             if not payload.csv_data:
                 raise HTTPException(status_code=400, detail="csv_data is required")
+            if len(payload.csv_data.encode("utf-8")) > MAX_CSV_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"csv_data exceeds the {MAX_CSV_BYTES // (1024 * 1024)} MB limit",
+                )
             data = loader.load_from_csv(payload.csv_data, payload.timeframe)
             loader.cache(data, payload.symbol, payload.timeframe, "csv")
         elif payload.data_source == "gateio":

@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     mdq_spike_mode: str = "flag"
     # Block trading when feed health score falls below INVALID threshold.
     mdq_pause_on_invalid: bool = True
+    # Position-size multiplier applied while the data feed is DEGRADED (de-risk).
+    mdq_degraded_risk_multiplier: float = 0.5
     # Enable the optional Isolation Forest ML anomaly layer.
     mdq_enable_ml: bool = True
 

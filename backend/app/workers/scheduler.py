@@ -5,6 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.account.engine import AccountManager
 from app.auto_learning.engine import AutoLearningEngine
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.db.session import SessionLocal
 from app.market_data.ingestion import MarketDataIngestion
 from app.market_data.websocket import GateIOWebSocketClient
@@ -201,6 +202,7 @@ async def daily_report() -> None:
 
 
 async def main() -> None:
+    configure_logging()
     settings = get_settings()
     await startup_recovery()
 

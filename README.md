@@ -92,7 +92,21 @@ pytest
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the backend lint + tests and a
-frontend type-checking build on every push and pull request.
+frontend type-checking build on every push and pull request. Dependency updates
+are automated via Dependabot (`.github/dependabot.yml`).
+
+## Observability
+
+- **Structured logging**: every process (API, scheduler, paper worker) emits
+  JSON log lines via `app.core.logging`. API request logs carry a per-request
+  `correlation_id`.
+- **Correlation IDs**: the API accepts/echoes an `X-Request-ID` header and tags
+  all logs produced while handling that request.
+- **Health probes**: `GET /health` (liveness) and `GET /health/ready` (database
+  readiness, returns 503 when the DB is unreachable).
+- **Metrics**: `GET /metrics` exposes Prometheus counters and a latency
+  histogram (`http_requests_total`, `http_request_duration_seconds`), labelled by
+  method, route template and status.
 
 ## Backtest Engine
 

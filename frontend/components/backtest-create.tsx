@@ -6,12 +6,10 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+import { authFetch } from "@/lib/auth-api";
 
 export function BacktestCreate() {
   const router = useRouter();
-  const [token, setToken] = useState("");
   const [symbol, setSymbol] = useState("BTC_USDT");
   const [timeframe, setTimeframe] = useState("1h");
   const [startAt, setStartAt] = useState("2024-01-01T00:00:00Z");
@@ -19,24 +17,50 @@ export function BacktestCreate() {
   const [initialCash, setInitialCash] = useState("10000");
   const [dataSource, setDataSource] = useState("cache");
   const [parameters, setParameters] = useState('{"ema_trend":200,"rsi_threshold":35,"atr_multiplier":1.5}');
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   async function submit() {
-    const response = await fetch(`${apiUrl}/backtests`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        symbol,
-        timeframe,
-        start_at: startAt,
-        end_at: endAt,
-        initial_cash: initialCash,
-        data_source: dataSource,
-        parameters: JSON.parse(parameters),
-      }),
-    });
-    if (response.ok) {
-      const result = await response.json();
-      router.push(`/backtests/results/${result.id}`);
+    setError("");
+
+    let parsedParameters: unknown;
+    try {
+      parsedParameters = JSON.parse(parameters);
+    } catch {
+      setError("Parametreler geçerli JSON değil.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await authFetch(`/backtests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol,
+          timeframe,
+          start_at: startAt,
+          end_at: endAt,
+          initial_cash: initialCash,
+          data_source: dataSource,
+          parameters: parsedParameters,
+        }),
+      });
+      if (response.ok) {
+        const result = await response.json();
+        router.push(`/backtests/results/${result.id}`);
+        return;
+      }
+      if (response.status === 401) {
+        setError("Oturum gerekli. Lütfen panelden giriş yapın.");
+      } else {
+        const detail = await response.json().catch(() => null);
+        setError(detail?.detail ? `Hata: ${detail.detail}` : "Backtest başlatılamadı.");
+      }
+    } catch {
+      setError("Sunucuya ulaşılamadı.");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -50,7 +74,9 @@ export function BacktestCreate() {
       </header>
       <section className="mx-auto max-w-4xl px-6 py-6">
         <Card className="grid gap-4">
-          <Input placeholder="JWT token" type="password" value={token} onChange={(event) => setToken(event.target.value)} />
+          {error && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>
+          )}
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Sembol"><Input value={symbol} onChange={(event) => setSymbol(event.target.value)} /></Field>
             <Field label="Timeframe"><Input value={timeframe} onChange={(event) => setTimeframe(event.target.value)} /></Field>
@@ -63,7 +89,7 @@ export function BacktestCreate() {
             <span className="mb-1 block text-muted">Parametreler JSON</span>
             <textarea className="min-h-28 w-full rounded-md border border-border p-3 text-sm outline-none focus:ring-2 focus:ring-primary/30" value={parameters} onChange={(event) => setParameters(event.target.value)} />
           </label>
-          <Button onClick={submit}><Play size={16} /> Backtest Başlat</Button>
+          <Button onClick={submit} disabled={submitting}><Play size={16} /> {submitting ? "Çalışıyor..." : "Backtest Başlat"}</Button>
         </Card>
       </section>
     </main>

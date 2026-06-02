@@ -79,7 +79,9 @@ export function Dashboard() {
     await refresh();
   }
 
-  async function closePosition(id: number) {
+  async function closePosition(id: number, symbol: string) {
+    // Closing a position is irreversible — confirm first.
+    if (!window.confirm(`${symbol} pozisyonunu kapatmak istediğinize emin misiniz?`)) return;
     await authFetch(`/dashboard/positions/${id}/close`, { method: "POST" });
     await refresh();
   }
@@ -232,7 +234,7 @@ export function Dashboard() {
                     <td>{money(position.stop_loss)}</td>
                     <td>{money(position.take_profit)}</td>
                     <td className="text-right">
-                      <Button className="bg-danger px-3" onClick={() => closePosition(position.id)}>
+                      <Button className="bg-danger px-3" onClick={() => closePosition(position.id, position.symbol)}>
                         <XCircle size={16} /> Kapat
                       </Button>
                     </td>
