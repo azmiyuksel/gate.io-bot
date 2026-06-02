@@ -3,9 +3,19 @@ from app.execution_quality.tca import (
     aggregate_implementation_shortfall,
     benchmark_slippage_bps,
     implementation_shortfall,
+    markout_bps,
     twap,
     vwap,
 )
+
+
+def test_markout_detects_adverse_selection():
+    # Bought at 100, price fell to 99 afterwards -> adverse (negative markout).
+    assert markout_bps("buy", 100.0, 99.0) == -100.0
+    # Bought at 100, price rose to 101 -> favourable.
+    assert markout_bps("buy", 100.0, 101.0) == 100.0
+    # Sold at 100, price rose to 101 afterwards -> adverse for a sell.
+    assert markout_bps("sell", 100.0, 101.0) == -100.0
 
 
 def test_vwap_weights_by_volume():

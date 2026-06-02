@@ -70,6 +70,21 @@ def benchmark_slippage_bps(side: str, fill_price: float, benchmark_price: float)
     return (fill_price - benchmark_price) * direction / benchmark_price * 1e4
 
 
+def markout_bps(side: str, fill_price: float, future_price: float) -> float:
+    """Post-fill markout in basis points: how the market moved in your favour
+    shortly after the fill.
+
+    Positive = favourable (price rose after a buy / fell after a sell);
+    persistently negative markouts indicate ADVERSE SELECTION — you are being
+    filled right before the price moves against you (informed flow / lagging
+    signals).
+    """
+    if fill_price <= 0:
+        return 0.0
+    direction = 1.0 if side.lower() == "buy" else -1.0
+    return (future_price - fill_price) * direction / fill_price * 1e4
+
+
 def aggregate_implementation_shortfall(records: list[dict]) -> dict:
     """Average the per-order implementation-shortfall components."""
     if not records:

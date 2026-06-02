@@ -24,6 +24,7 @@ from app.execution_quality.tca import (
     aggregate_implementation_shortfall,
     benchmark_slippage_bps,
     implementation_shortfall,
+    markout_bps,
     twap,
     vwap,
 )
@@ -279,17 +280,12 @@ class ExecutionQualityEngine:
 
         return False, "normal"
 
-    def _vwap_twap_benchmark(self, orders, fills, start_time, end_time) -> dict:
-        """Average fill execution vs the window VWAP/TWAP, per fill, in bps.
-
-        Compares each fill price against its symbol's volume-weighted (VWAP) and
-        time-weighted (TWAP) market price over the reporting window.
-        """
+    def _window_candles(self, symbols, start_time, end_time) -> dict:
+        """Fetch the window's candles per symbol once (shared by TCA benchmarks)."""
         timeframe = get_settings().market_data_interval
-        symbols = {o.symbol for o in orders}
-        bench: dict[str, dict] = {}
+        out: dict[str, list] = {}
         for symbol in symbols:
-            candles = (
+            out[symbol] = (
                 self.db.query(HistoricalCandle)
                 .filter(
                     HistoricalCandle.symbol == symbol,
@@ -300,6 +296,16 @@ class ExecutionQualityEngine:
                 .order_by(HistoricalCandle.timestamp.asc())
                 .all()
             )
+        return out
+
+    def _vwap_twap_benchmark(self, orders, fills, candles_by_symbol) -> dict:
+        """Average fill execution vs the window VWAP/TWAP, per fill, in bps.
+
+        Compares each fill price against its symbol's volume-weighted (VWAP) and
+        time-weighted (TWAP) market price over the reporting window.
+        """
+        bench: dict[str, dict] = {}
+        for symbol, candles in candles_by_symbol.items():
             if candles:
                 closes = [float(c.close) for c in candles]
                 volumes = [float(c.volume) for c in candles]
@@ -320,6 +326,38 @@ class ExecutionQualityEngine:
             "avg_vwap_slippage_bps": sum(vwap_bps) / len(vwap_bps) if vwap_bps else 0.0,
             "avg_twap_slippage_bps": sum(twap_bps) / len(twap_bps) if twap_bps else 0.0,
             "fills_benchmarked": len(vwap_bps),
+        }
+
+    def _adverse_selection(self, orders, fills, candles_by_symbol, horizon_bars: int = 3) -> dict:
+        """Post-fill markout: did the market move against fills shortly after?
+
+        A persistently negative average markout (and a high adverse-fill ratio)
+        signals adverse selection — fills land right before the price turns
+        against the position (informed flow / lagging signals).
+        """
+        order_by_id = {o.id: o for o in orders}
+        markouts = []
+        for f in fills:
+            order = order_by_id.get(f.execution_order_id)
+            if order is None:
+                continue
+            candles = candles_by_symbol.get(order.symbol) or []
+            # First candle at/after the fill, then look `horizon_bars` ahead.
+            future = None
+            for i, c in enumerate(candles):
+                if c.timestamp >= f.fill_time:
+                    nxt = candles[min(i + horizon_bars, len(candles) - 1)]
+                    future = float(nxt.close)
+                    break
+            if future is not None:
+                markouts.append(markout_bps(order.side, float(f.fill_price), future))
+        if not markouts:
+            return {"avg_markout_bps": 0.0, "adverse_fill_ratio": 0.0, "fills_analyzed": 0}
+        adverse = sum(1 for m in markouts if m < 0)
+        return {
+            "avg_markout_bps": sum(markouts) / len(markouts),
+            "adverse_fill_ratio": adverse / len(markouts),
+            "fills_analyzed": len(markouts),
         }
 
     def generate_report(
@@ -408,6 +446,9 @@ class ExecutionQualityEngine:
                 )
             )
 
+        # Shared market-data fetch for the VWAP/TWAP and adverse-selection TCA.
+        candles_by_symbol = self._window_candles({o.symbol for o in orders}, start_time, end_time)
+
         report_data = {
             "slippage_distribution": {
                 "good": sum(1 for f in fills if abs(f.slippage) < 0.0005),
@@ -416,7 +457,8 @@ class ExecutionQualityEngine:
                 "critical": sum(1 for f in fills if abs(f.slippage) > 0.0050),
             },
             "implementation_shortfall": aggregate_implementation_shortfall(is_records),
-            "execution_benchmark": self._vwap_twap_benchmark(orders, fills, start_time, end_time),
+            "execution_benchmark": self._vwap_twap_benchmark(orders, fills, candles_by_symbol),
+            "adverse_selection": self._adverse_selection(orders, fills, candles_by_symbol),
             "recommendations": recs
         }
 
