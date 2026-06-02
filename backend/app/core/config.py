@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # (e.g. exchange lending/Earn). The strategy must beat this hurdle to add value.
     annual_risk_free_rate: float = 0.04
 
+    # Graded de-risking: shrink size as account drawdown approaches the max.
+    drawdown_derisk_enabled: bool = True
+    drawdown_derisk_floor: float = 0.0
+
     # --- Stablecoin (quote) depeg monitoring ---
     # Pair used to proxy the quote stablecoin's peg (drift from 1.0).
     quote_depeg_reference_pair: str = "USDC_USDT"

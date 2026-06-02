@@ -16,6 +16,21 @@ class RiskDecision:
     take_profit: Decimal = Decimal("0")
 
 
+def drawdown_risk_multiplier(
+    drawdown: Decimal, max_drawdown: Decimal, floor: Decimal = Decimal("0")
+) -> Decimal:
+    """Graded de-risking: shrink position size as account drawdown deepens.
+
+    Returns 1.0 at no drawdown and falls linearly toward `floor` as drawdown
+    approaches `max_drawdown` (where the circuit breaker hard-stops). This
+    respects recovery math — deeper drawdowns need disproportionately larger
+    gains to recover, so risk is cut before the hard limit."""
+    if max_drawdown <= 0 or drawdown <= 0:
+        return Decimal("1")
+    mult = Decimal("1") - (drawdown / max_drawdown)
+    return max(floor, min(mult, Decimal("1")))
+
+
 def vol_target_multiplier(
     atr_pct: Decimal, target_pct: Decimal, min_mult: Decimal, max_mult: Decimal
 ) -> Decimal:

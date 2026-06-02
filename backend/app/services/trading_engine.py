@@ -113,9 +113,21 @@ class TradingEngine:
 
         # Scale position quantity by regime, health and data-quality risk multipliers
         health_mult = Decimal(str(health_status.get("risk_multiplier", 1)))
-        final_quantity = decision.quantity * risk_mult * health_mult * data_risk_mult
+        # Graded de-risking as account drawdown deepens (recovery-math aware).
+        dd_mult = Decimal("1")
+        from app.core.config import get_settings as _get_settings
+        _s = _get_settings()
+        if _s.drawdown_derisk_enabled:
+            from app.account.engine import AccountManager
+            from app.services.risk.manager import drawdown_risk_multiplier
+            dd_mult = drawdown_risk_multiplier(
+                AccountManager(self.db).drawdown_pct(),
+                Decimal(str(_s.max_account_drawdown_pct)),
+                Decimal(str(_s.drawdown_derisk_floor)),
+            )
+        final_quantity = decision.quantity * risk_mult * health_mult * data_risk_mult * dd_mult
         if final_quantity <= 0:
-            self._log("risk_filter", f"{symbol} trade quantity scaled to zero by risk filters (regime: {risk_mult}x, health: {health_mult}x, data: {data_risk_mult}x)")
+            self._log("risk_filter", f"{symbol} trade quantity scaled to zero by risk filters (regime: {risk_mult}x, health: {health_mult}x, data: {data_risk_mult}x, drawdown: {dd_mult}x)")
             return
 
         submission_time = datetime.now(UTC)
