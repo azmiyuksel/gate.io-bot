@@ -46,22 +46,39 @@ class GateIOClient:
         ).hexdigest()
         return {"KEY": self.api_key, "Timestamp": timestamp, "SIGN": signature}
 
+    # Transient transport failures and HTTP 429/5xx are retried; other 4xx
+    # (auth, bad request, not found) fail fast since retrying cannot help.
+    _RETRYABLE_NETWORK = (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError)
+
     async def request(
         self, method: str, path: str, *, params: dict | None = None, json_body: dict | None = None
     ) -> Any:
-        await self.limiter.wait()
         body = json.dumps(json_body, separators=(",", ":")) if json_body else ""
         query = str(httpx.QueryParams(params or {}))
-        headers = self._sign(method, path, query, body) if self.api_key and self.api_secret else {}
-        for attempt in range(3):
+        attempts = 3
+        for attempt in range(attempts):
+            await self.limiter.wait()
+            # Re-sign on every attempt: the signature embeds a timestamp that
+            # the exchange rejects once it drifts past its tolerance window.
+            headers = (
+                self._sign(method, path, query, body)
+                if self.api_key and self.api_secret
+                else {}
+            )
             try:
                 response = await self.client.request(
                     method, path, params=params, content=body or None, headers=headers
                 )
                 response.raise_for_status()
                 return response.json()
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError):
-                if attempt == 2:
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                retryable = status == 429 or status >= 500
+                if not retryable or attempt == attempts - 1:
+                    raise
+                await asyncio.sleep(2**attempt)
+            except self._RETRYABLE_NETWORK:
+                if attempt == attempts - 1:
                     raise
                 await asyncio.sleep(2**attempt)
 

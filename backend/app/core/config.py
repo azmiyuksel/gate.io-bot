@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     fallback_equity: float = 10000.0
     # Max account drawdown from peak equity before the circuit breaker trips.
     max_account_drawdown_pct: float = 0.15
+    # Max age (seconds) of an equity snapshot before it is considered stale and
+    # unsafe to size new positions against. Trading runs every 15m, so allow ~2 cycles.
+    max_equity_staleness_seconds: int = 1800
     gateio_ws_url: str = "wss://api.gateio.ws/ws/v4/"
     market_data_interval: str = "1h"
 

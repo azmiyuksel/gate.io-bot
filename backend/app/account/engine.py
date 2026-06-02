@@ -7,6 +7,7 @@ known snapshot (or a configured fallback) when the exchange is unreachable.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import func
@@ -138,6 +139,23 @@ class AccountManager:
         if last is not None and last.total_equity > 0:
             return last.total_equity
         return Decimal(str(self.settings.fallback_equity))
+
+    def snapshot_age_seconds(self) -> float | None:
+        """Age of the most recent snapshot in seconds, or None if there is none."""
+        last = self.last_snapshot()
+        if last is None or last.created_at is None:
+            return None
+        created = last.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        return (datetime.now(UTC) - created).total_seconds()
+
+    def is_equity_stale(self) -> bool:
+        """True when the latest equity is too old (or absent) to size risk against."""
+        age = self.snapshot_age_seconds()
+        if age is None:
+            return True
+        return age > self.settings.max_equity_staleness_seconds
 
     def peak_equity(self) -> Decimal:
         value = self.db.query(func.max(AccountSnapshot.total_equity)).scalar()

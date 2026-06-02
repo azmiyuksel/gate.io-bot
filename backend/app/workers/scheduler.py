@@ -8,6 +8,8 @@ from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.market_data.ingestion import MarketDataIngestion
 from app.market_data.websocket import GateIOWebSocketClient
+from app.models.entities import SystemLog
+from app.models.enums import LogLevel
 from app.reconciliation.engine import ReconciliationEngine
 from app.repositories.trading import StrategySettingsRepository
 from app.services.exchange.gateio import GateIOClient
@@ -25,12 +27,13 @@ async def run_cycle() -> None:
         await ReconciliationEngine(db, client).reconcile_open_orders()
 
         # 2. Mark the account to market and derive real equity.
-        snapshot = await AccountManager(db, client).refresh()
+        account = AccountManager(db, client)
+        snapshot = await account.refresh()
         equity = snapshot.total_equity
 
         # 3. Global kill-switch: trip on breached limits, halt cycle if tripped.
         breaker = CircuitBreaker(db)
-        drawdown = AccountManager(db).drawdown_pct()
+        drawdown = account.drawdown_pct()
         if breaker.check_and_trip(equity, drawdown):
             return
 
@@ -39,9 +42,33 @@ async def run_cycle() -> None:
             return
 
         engine = TradingEngine(db, client)
+        # Always manage open positions so stops/take-profits are honoured.
         await engine.manage_open_positions()
+
+        # Only size NEW entries against trustworthy equity. If the exchange was
+        # unreachable (fallback snapshot) while API keys are configured, or the
+        # equity is stale, skip new entries rather than risk-sizing on guesses.
+        has_keys = bool(settings.gateio_api_key and settings.gateio_api_secret)
+        if (snapshot.source == "fallback" and has_keys) or account.is_equity_stale():
+            db.add(
+                SystemLog(
+                    level=LogLevel.warning,
+                    source="account",
+                    message=(
+                        f"New entries skipped: equity not trustworthy "
+                        f"(source={snapshot.source}, age={account.snapshot_age_seconds()}s)"
+                    ),
+                )
+            )
+            db.commit()
+            return
+
         for symbol in settings.symbols:
             await engine.scan_symbol(symbol, equity)
+    except Exception:
+        # Never leave uncommitted/partial state behind for the next cycle.
+        db.rollback()
+        raise
     finally:
         await client.close()
         db.close()

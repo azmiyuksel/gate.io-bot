@@ -83,10 +83,11 @@ class TradingEngine:
         # Strategy Health Filter
         from app.strategy_health.engine import StrategyHealthEngine
         health_engine = StrategyHealthEngine(self.db)
-        health_status = health_engine.update_health(strategy_name)
-        
-        if health_status["state"] in ("PAUSED", "DISABLED"):
-            self._log("health_filter", f"{symbol} trade blocked: strategy health is {health_status['state']}")
+        health_status = health_engine.update_health(strategy_name) or {}
+
+        health_state = health_status.get("state")
+        if health_state in ("PAUSED", "DISABLED"):
+            self._log("health_filter", f"{symbol} trade blocked: strategy health is {health_state}")
             return
 
         decision = self.risk.approve_entry(equity, signal.entry_price, signal.atr_value)
@@ -95,7 +96,7 @@ class TradingEngine:
             return
 
         # Scale position quantity by regime, health and data-quality risk multipliers
-        health_mult = health_status["risk_multiplier"]
+        health_mult = Decimal(str(health_status.get("risk_multiplier", 1)))
         final_quantity = decision.quantity * risk_mult * health_mult * data_risk_mult
         if final_quantity <= 0:
             self._log("risk_filter", f"{symbol} trade quantity scaled to zero by risk filters (regime: {risk_mult}x, health: {health_mult}x, data: {data_risk_mult}x)")
@@ -124,7 +125,18 @@ class TradingEngine:
             raw_response=json.dumps(response),
         )
         self.db.add(order)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except Exception:
+            # The exchange order is already live; roll back the local write so the
+            # session is consistent and let reconciliation recover the order state.
+            self.db.rollback()
+            self._log(
+                "trade_persist_error",
+                f"{symbol}: failed to persist order {response.get('id')}, rolled back",
+                LogLevel.error,
+            )
+            raise
         self.db.refresh(order)
 
         # Record Execution Quality metrics
@@ -154,6 +166,9 @@ class TradingEngine:
                 ack_time=ack_time
             )
         except Exception as e:
+            # Best-effort audit metric; clear any partial state so the session
+            # stays usable for the rest of the cycle.
+            self.db.rollback()
             self._log("execution_quality_error", f"Failed to record execution quality: {e}")
 
         await self.notifier.send(f"Opened {symbol}: qty={final_quantity} entry={signal.entry_price}")
@@ -209,7 +224,16 @@ class TradingEngine:
             realized_pnl=pnl,
         )
         self.db.add(trade)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            self._log(
+                "trade_persist_error",
+                f"{position.symbol}: failed to persist close {response.get('id')}, rolled back",
+                LogLevel.error,
+            )
+            raise
         self.db.refresh(order)
 
         # Record Execution Quality metrics
@@ -236,6 +260,7 @@ class TradingEngine:
                 ack_time=ack_time
             )
         except Exception as e:
+            self.db.rollback()
             self._log("execution_quality_error", f"Failed to record execution quality on close: {e}")
 
         await self.notifier.send(f"Closed {position.symbol}: {reason}, pnl={pnl}")

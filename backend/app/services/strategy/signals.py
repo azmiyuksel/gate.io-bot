@@ -32,6 +32,11 @@ class CapitalPreservationStrategy:
         if None in (ema_200, ema_20, rsi_14, atr_14):
             return Signal(False, "indicator_unavailable")
 
+        # Guard against degenerate feeds: a zero/negative price or EMA would make
+        # the ratio checks below raise ZeroDivisionError and crash the scan.
+        if last_price <= 0 or ema_20 <= 0 or ema_200 <= 0:
+            return Signal(False, "invalid_price_data")
+
         if last_price <= ema_200:
             return Signal(False, "below_200_ema")
         if rsi_14 >= Decimal("35"):
