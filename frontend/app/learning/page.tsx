@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getAccessToken } from "@/lib/auth-api";
 import {
   approvePromotion,
   getDiscoveredFeatures,
@@ -78,6 +79,10 @@ export default function LearningPage() {
     setRankings(r);
     setRequests(pr);
   }, [token]);
+
+  useEffect(() => {
+    setToken(getAccessToken());
+  }, []);
 
   useEffect(() => {
     if (token) refresh();
@@ -143,7 +148,6 @@ export default function LearningPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Input className="w-60" placeholder="JWT token" value={token} onChange={(e) => setToken(e.target.value)} />
           <Input className="w-52" placeholder="Onaylayan e-posta" value={approver} onChange={(e) => setApprover(e.target.value)} />
           <Button onClick={refresh}>
             <RefreshCw className="mr-1 h-4 w-4" /> Yenile

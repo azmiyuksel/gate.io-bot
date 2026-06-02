@@ -5,24 +5,14 @@ import type {
   StrategyAlert,
   StrategyStateTransition,
 } from "@/types/health";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
-
-function headers(token: string) {
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
-}
+import { authFetch } from "@/lib/auth-api";
 
 export async function getStrategyHealth(
   token: string,
   strategyName: string
 ): Promise<StrategyHealthStatus | null> {
   try {
-    const res = await fetch(`${apiUrl}/strategy-health/${strategyName}`, {
-      headers: headers(token),
-    });
+    const res = await authFetch(`/strategy-health/${strategyName}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error(`Error fetching strategy health for ${strategyName}:`, err);
@@ -35,9 +25,7 @@ export async function getHealthMetrics(
   strategyName: string
 ): Promise<StrategyHealthLog[]> {
   try {
-    const res = await fetch(`${apiUrl}/strategy-health/${strategyName}/metrics`, {
-      headers: headers(token),
-    });
+    const res = await authFetch(`/strategy-health/${strategyName}/metrics`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error(`Error fetching health metrics for ${strategyName}:`, err);
@@ -50,9 +38,7 @@ export async function getStrategyAlerts(
   strategyName: string
 ): Promise<StrategyAlert[]> {
   try {
-    const res = await fetch(`${apiUrl}/strategy-health/${strategyName}/alerts`, {
-      headers: headers(token),
-    });
+    const res = await authFetch(`/strategy-health/${strategyName}/alerts`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error(`Error fetching strategy alerts for ${strategyName}:`, err);
@@ -65,9 +51,8 @@ export async function recalculateStrategyHealth(
   strategyName: string
 ): Promise<StrategyHealthStatus | null> {
   try {
-    const res = await fetch(`${apiUrl}/strategy-health/${strategyName}/recalculate`, {
+    const res = await authFetch(`/strategy-health/${strategyName}/recalculate`, {
       method: "POST",
-      headers: headers(token),
     });
     if (res.ok) return await res.json();
   } catch (err) {
@@ -81,9 +66,8 @@ export async function pauseStrategy(
   strategyName: string
 ): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/strategy-health/${strategyName}/pause`, {
+    const res = await authFetch(`/strategy-health/${strategyName}/pause`, {
       method: "POST",
-      headers: headers(token),
     });
     return res.ok;
   } catch (err) {
@@ -97,9 +81,8 @@ export async function resumeStrategy(
   strategyName: string
 ): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/strategy-health/${strategyName}/resume`, {
+    const res = await authFetch(`/strategy-health/${strategyName}/resume`, {
       method: "POST",
-      headers: headers(token),
     });
     return res.ok;
   } catch (err) {
@@ -113,9 +96,7 @@ export async function getStrategyBaseline(
   strategyName: string
 ): Promise<StrategyBaseline | null> {
   try {
-    const res = await fetch(`${apiUrl}/strategy-health/${strategyName}/baseline`, {
-      headers: headers(token),
-    });
+    const res = await authFetch(`/strategy-health/${strategyName}/baseline`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error(`Error fetching strategy baseline for ${strategyName}:`, err);
@@ -128,9 +109,7 @@ export async function getTransitions(
   strategyName: string
 ): Promise<StrategyStateTransition[]> {
   try {
-    const res = await fetch(`${apiUrl}/strategy-health/${strategyName}/transitions`, {
-      headers: headers(token),
-    });
+    const res = await authFetch(`/strategy-health/${strategyName}/transitions`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error(`Error fetching state transitions for ${strategyName}:`, err);

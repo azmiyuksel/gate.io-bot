@@ -29,6 +29,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getAccessToken } from "@/lib/auth-api";
 import { money } from "@/lib/utils";
 import {
   getStrategyHealth,
@@ -85,6 +86,10 @@ export default function StrategyHealthPage() {
   const [transitions, setTransitions] = useState<StrategyStateTransition[]>([]);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    setToken(getAccessToken());
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!token || !strategyName) return;
@@ -252,13 +257,6 @@ export default function StrategyHealthPage() {
               placeholder="Strateji Adı"
               value={strategyName}
               onChange={(e) => setStrategyName(e.target.value)}
-            />
-            <Input
-              className="w-64"
-              placeholder="JWT token"
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
             />
             <Button onClick={refresh} disabled={loading || !token}>
               <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Yenile

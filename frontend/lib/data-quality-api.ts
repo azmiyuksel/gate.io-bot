@@ -5,15 +5,7 @@ import type {
   MarketDataHealthLog,
   RevalidateResult,
 } from "@/types/data-quality";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
-
-function headers(token: string) {
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
-}
+import { authFetch } from "@/lib/auth-api";
 
 export async function getDataQualityStatus(
   token: string,
@@ -21,9 +13,8 @@ export async function getDataQualityStatus(
   timeframe: string = "1h"
 ): Promise<DataQualityStatus | null> {
   try {
-    const res = await fetch(
-      `${apiUrl}/data-quality/status?symbol=${symbol}&timeframe=${timeframe}`,
-      { headers: headers(token) }
+    const res = await authFetch(
+      `/data-quality/status?symbol=${symbol}&timeframe=${timeframe}`
     );
     if (res.ok) return await res.json();
   } catch (err) {
@@ -39,9 +30,8 @@ export async function getDataQualityAnomalies(
   limit: number = 100
 ): Promise<MarketDataAnomaly[]> {
   try {
-    const res = await fetch(
-      `${apiUrl}/data-quality/anomalies?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`,
-      { headers: headers(token) }
+    const res = await authFetch(
+      `/data-quality/anomalies?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`
     );
     if (res.ok) return await res.json();
   } catch (err) {
@@ -57,9 +47,8 @@ export async function getDataQualityHealthLogs(
   limit: number = 200
 ): Promise<MarketDataHealthLog[]> {
   try {
-    const res = await fetch(
-      `${apiUrl}/data-quality/health-logs?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`,
-      { headers: headers(token) }
+    const res = await authFetch(
+      `/data-quality/health-logs?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`
     );
     if (res.ok) return await res.json();
   } catch (err) {
@@ -75,9 +64,8 @@ export async function getDataQualityReport(
   hours: number = 24
 ): Promise<DataQualityReport | null> {
   try {
-    const res = await fetch(
-      `${apiUrl}/data-quality/report?symbol=${symbol}&timeframe=${timeframe}&hours=${hours}`,
-      { headers: headers(token) }
+    const res = await authFetch(
+      `/data-quality/report?symbol=${symbol}&timeframe=${timeframe}&hours=${hours}`
     );
     if (res.ok) return await res.json();
   } catch (err) {
@@ -93,9 +81,9 @@ export async function revalidateDataQuality(
   limit: number = 240
 ): Promise<RevalidateResult | null> {
   try {
-    const res = await fetch(`${apiUrl}/data-quality/revalidate`, {
+    const res = await authFetch(`/data-quality/revalidate`, {
       method: "POST",
-      headers: headers(token),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol, timeframe, limit }),
     });
     if (res.ok) return await res.json();

@@ -31,7 +31,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { getAccessToken } from "@/lib/auth-api";
 import { money } from "@/lib/utils";
 import {
   getPortfolio,
@@ -58,6 +58,10 @@ export default function PortfolioPage() {
   const [stressResult, setStressResult] = useState<RiskSnapshot | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    setToken(getAccessToken());
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -154,13 +158,6 @@ export default function PortfolioPage() {
             <p className="text-sm text-muted">Çoklu strateji ve sermaye dağıtım kontrol merkezi</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Input
-              className="w-72"
-              placeholder="JWT token"
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-            />
             <Button onClick={refresh} disabled={loading || !token}>
               <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Yenile
             </Button>

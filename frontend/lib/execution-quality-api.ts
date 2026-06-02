@@ -4,24 +4,14 @@ import type {
   ExecutionLatencyLog,
   ExecutionReport,
 } from "@/types/execution-quality";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
-
-function headers(token: string) {
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
-}
+import { authFetch } from "@/lib/auth-api";
 
 export async function getStrategyExecutionStatus(
   token: string,
   strategyName: string
 ): Promise<ExecutionQualityStatus | null> {
   try {
-    const res = await fetch(`${apiUrl}/execution-quality/${strategyName}`, {
-      headers: headers(token),
-    });
+    const res = await authFetch(`/execution-quality/${strategyName}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error(`Error fetching execution status for ${strategyName}:`, err);
@@ -35,9 +25,8 @@ export async function getSlippageLogs(
   limit: number = 100
 ): Promise<ExecutionSlippageLog[]> {
   try {
-    const res = await fetch(
-      `${apiUrl}/execution-quality/slippage/logs?strategy_name=${strategyName}&limit=${limit}`,
-      { headers: headers(token) }
+    const res = await authFetch(
+      `/execution-quality/slippage/logs?strategy_name=${strategyName}&limit=${limit}`
     );
     if (res.ok) return await res.json();
   } catch (err) {
@@ -52,9 +41,8 @@ export async function getLatencyLogs(
   limit: number = 100
 ): Promise<ExecutionLatencyLog[]> {
   try {
-    const res = await fetch(
-      `${apiUrl}/execution-quality/latency/logs?strategy_name=${strategyName}&limit=${limit}`,
-      { headers: headers(token) }
+    const res = await authFetch(
+      `/execution-quality/latency/logs?strategy_name=${strategyName}&limit=${limit}`
     );
     if (res.ok) return await res.json();
   } catch (err) {
@@ -69,9 +57,8 @@ export async function getExecutionReport(
   days: number = 30
 ): Promise<ExecutionReport | null> {
   try {
-    const res = await fetch(
-      `${apiUrl}/execution-quality/report/logs?strategy_name=${strategyName}&days=${days}`,
-      { headers: headers(token) }
+    const res = await authFetch(
+      `/execution-quality/report/logs?strategy_name=${strategyName}&days=${days}`
     );
     if (res.ok) return await res.json();
   } catch (err) {
@@ -85,11 +72,10 @@ export async function recalculateExecutionQuality(
   strategyName: string = "capital_preservation_v1"
 ): Promise<ExecutionQualityStatus | null> {
   try {
-    const res = await fetch(
-      `${apiUrl}/execution-quality/recalculate?strategy_name=${strategyName}`,
+    const res = await authFetch(
+      `/execution-quality/recalculate?strategy_name=${strategyName}`,
       {
         method: "POST",
-        headers: headers(token),
       }
     );
     if (res.ok) return await res.json();

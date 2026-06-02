@@ -7,20 +7,12 @@ import type {
   ResearchStrategy,
   StrategyVersion,
 } from "@/types/strategy-research";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
-
-function headers(token: string) {
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
-}
+import { authFetch } from "@/lib/auth-api";
 
 export async function getStrategies(token: string, status?: string): Promise<ResearchStrategy[]> {
   try {
     const qs = status ? `?status=${status}` : "";
-    const res = await fetch(`${apiUrl}/research/strategies${qs}`, { headers: headers(token) });
+    const res = await authFetch(`/research/strategies${qs}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching strategies:", err);
@@ -30,9 +22,7 @@ export async function getStrategies(token: string, status?: string): Promise<Res
 
 export async function getLeaderboard(token: string, limit = 25): Promise<StrategyVersion[]> {
   try {
-    const res = await fetch(`${apiUrl}/research/leaderboard?limit=${limit}`, {
-      headers: headers(token),
-    });
+    const res = await authFetch(`/research/leaderboard?limit=${limit}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching leaderboard:", err);
@@ -42,9 +32,7 @@ export async function getLeaderboard(token: string, limit = 25): Promise<Strateg
 
 export async function getExperiments(token: string, limit = 100): Promise<ResearchExperiment[]> {
   try {
-    const res = await fetch(`${apiUrl}/research/experiments?limit=${limit}`, {
-      headers: headers(token),
-    });
+    const res = await authFetch(`/research/experiments?limit=${limit}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching experiments:", err);
@@ -58,9 +46,8 @@ export async function getFeatures(
   timeframe = "1h"
 ): Promise<FeatureRecord[]> {
   try {
-    const res = await fetch(
-      `${apiUrl}/research/features?symbol=${symbol}&timeframe=${timeframe}`,
-      { headers: headers(token) }
+    const res = await authFetch(
+      `/research/features?symbol=${symbol}&timeframe=${timeframe}`
     );
     if (res.ok) return await res.json();
   } catch (err) {
@@ -71,9 +58,7 @@ export async function getFeatures(
 
 export async function getHypotheses(token: string, limit = 50): Promise<HypothesisTest[]> {
   try {
-    const res = await fetch(`${apiUrl}/research/hypotheses?limit=${limit}`, {
-      headers: headers(token),
-    });
+    const res = await authFetch(`/research/hypotheses?limit=${limit}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching hypotheses:", err);
@@ -88,9 +73,9 @@ export async function runResearch(
   population?: number
 ): Promise<ResearchRunResult | null> {
   try {
-    const res = await fetch(`${apiUrl}/research/run`, {
+    const res = await authFetch(`/research/run`, {
       method: "POST",
-      headers: headers(token),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol, timeframe, population }),
     });
     if (res.ok) return await res.json();
@@ -106,9 +91,9 @@ export async function recomputeFeatures(
   timeframe = "1h"
 ): Promise<FeatureRecord[]> {
   try {
-    const res = await fetch(
-      `${apiUrl}/research/features/recompute?symbol=${symbol}&timeframe=${timeframe}`,
-      { method: "POST", headers: headers(token) }
+    const res = await authFetch(
+      `/research/features/recompute?symbol=${symbol}&timeframe=${timeframe}`,
+      { method: "POST" }
     );
     if (res.ok) return await res.json();
   } catch (err) {
@@ -123,9 +108,9 @@ export async function testHypotheses(
   timeframe = "1h"
 ): Promise<HypothesisTest[]> {
   try {
-    const res = await fetch(
-      `${apiUrl}/research/hypotheses/test?symbol=${symbol}&timeframe=${timeframe}`,
-      { method: "POST", headers: headers(token) }
+    const res = await authFetch(
+      `/research/hypotheses/test?symbol=${symbol}&timeframe=${timeframe}`,
+      { method: "POST" }
     );
     if (res.ok) return await res.json();
   } catch (err) {
@@ -139,9 +124,8 @@ export async function promoteStrategy(
   strategyId: number
 ): Promise<PromotionResult | null> {
   try {
-    const res = await fetch(`${apiUrl}/research/promote/${strategyId}`, {
+    const res = await authFetch(`/research/promote/${strategyId}`, {
       method: "POST",
-      headers: headers(token),
     });
     if (res.ok) return await res.json();
   } catch (err) {

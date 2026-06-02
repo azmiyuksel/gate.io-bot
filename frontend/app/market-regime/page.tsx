@@ -31,7 +31,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { getAccessToken } from "@/lib/auth-api";
 import { money } from "@/lib/utils";
 import {
   getCurrentRegime,
@@ -71,6 +71,10 @@ export default function MarketRegimePage() {
   const [transitions, setTransitions] = useState<RegimeTransition[]>([]);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    setToken(getAccessToken());
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -154,13 +158,6 @@ export default function MarketRegimePage() {
             <p className="text-sm text-muted">Makine öğrenimi ve kurallı analiz ile piyasa koşulu tespiti</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Input
-              className="w-72"
-              placeholder="JWT token"
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-            />
             <Button onClick={refresh} disabled={loading || !token}>
               <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Yenile
             </Button>

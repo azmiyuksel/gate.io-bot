@@ -1,17 +1,9 @@
 import type { RegimeConfidence, RegimePerformance, RegimeStatus, RegimeTransition } from "@/types/regime";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
-
-function headers(token: string) {
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
-}
+import { authFetch } from "@/lib/auth-api";
 
 export async function getCurrentRegime(token: string, symbol: string = "BTC_USDT", timeframe: string = "1h"): Promise<RegimeStatus | null> {
   try {
-    const res = await fetch(`${apiUrl}/regime/current?symbol=${symbol}&timeframe=${timeframe}`, { headers: headers(token) });
+    const res = await authFetch(`/regime/current?symbol=${symbol}&timeframe=${timeframe}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching current regime:", err);
@@ -21,7 +13,7 @@ export async function getCurrentRegime(token: string, symbol: string = "BTC_USDT
 
 export async function getRegimeHistory(token: string, symbol: string = "BTC_USDT", timeframe: string = "1h"): Promise<RegimeStatus[]> {
   try {
-    const res = await fetch(`${apiUrl}/regime/history?symbol=${symbol}&timeframe=${timeframe}`, { headers: headers(token) });
+    const res = await authFetch(`/regime/history?symbol=${symbol}&timeframe=${timeframe}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching regime history:", err);
@@ -31,7 +23,7 @@ export async function getRegimeHistory(token: string, symbol: string = "BTC_USDT
 
 export async function getConfidenceHistory(token: string, symbol: string = "BTC_USDT"): Promise<RegimeConfidence[]> {
   try {
-    const res = await fetch(`${apiUrl}/regime/confidence?symbol=${symbol}`, { headers: headers(token) });
+    const res = await authFetch(`/regime/confidence?symbol=${symbol}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching confidence history:", err);
@@ -41,7 +33,7 @@ export async function getConfidenceHistory(token: string, symbol: string = "BTC_
 
 export async function getRegimePerformance(token: string): Promise<RegimePerformance[]> {
   try {
-    const res = await fetch(`${apiUrl}/regime/performance`, { headers: headers(token) });
+    const res = await authFetch(`/regime/performance`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching regime performance:", err);
@@ -51,9 +43,9 @@ export async function getRegimePerformance(token: string): Promise<RegimePerform
 
 export async function recalculateRegime(token: string, symbol: string = "BTC_USDT", timeframe: string = "1h"): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/regime/recalculate`, {
+    const res = await authFetch(`/regime/recalculate`, {
       method: "POST",
-      headers: headers(token),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol, timeframe }),
     });
     return res.ok;
@@ -65,7 +57,7 @@ export async function recalculateRegime(token: string, symbol: string = "BTC_USD
 
 export async function getRegimeTransitions(token: string, symbol: string = "BTC_USDT"): Promise<RegimeTransition[]> {
   try {
-    const res = await fetch(`${apiUrl}/regime/transitions?symbol=${symbol}`, { headers: headers(token) });
+    const res = await authFetch(`/regime/transitions?symbol=${symbol}`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching regime transitions:", err);

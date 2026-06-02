@@ -28,6 +28,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getAccessToken } from "@/lib/auth-api";
 import {
   getDataQualityAnomalies,
   getDataQualityHealthLogs,
@@ -75,6 +76,10 @@ export default function DataQualityPage() {
   const [anomalies, setAnomalies] = useState<MarketDataAnomaly[]>([]);
   const [healthLogs, setHealthLogs] = useState<MarketDataHealthLog[]>([]);
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setToken(getAccessToken());
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!token || !symbol) return;
@@ -160,7 +165,6 @@ export default function DataQualityPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Input className="w-64" placeholder="JWT token" value={token} onChange={(e) => setToken(e.target.value)} />
           <Input className="w-36" placeholder="Sembol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
           <Input className="w-20" placeholder="TF" value={timeframe} onChange={(e) => setTimeframe(e.target.value)} />
           <Button onClick={refresh} disabled={loading}>

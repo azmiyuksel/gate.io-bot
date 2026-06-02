@@ -8,24 +8,16 @@ import type {
   PaperStatus,
   PaperTrade,
 } from "@/types/paper";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
-
-function headers(token: string) {
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
-}
+import { authFetch } from "@/lib/auth-api";
 
 export async function startPaperTrading(
   token: string,
   config?: { account_name?: string; initial_balance?: number; symbols?: string[] },
 ): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/paper/start`, {
+    const res = await authFetch(`/paper/start`, {
       method: "POST",
-      headers: headers(token),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(config ?? {}),
     });
     return res.ok;
@@ -36,7 +28,7 @@ export async function startPaperTrading(
 
 export async function stopPaperTrading(token: string): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/paper/stop`, { method: "POST", headers: headers(token) });
+    const res = await authFetch(`/paper/stop`, { method: "POST" });
     return res.ok;
   } catch {
     return false;
@@ -45,7 +37,7 @@ export async function stopPaperTrading(token: string): Promise<boolean> {
 
 export async function pausePaperTrading(token: string): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/paper/pause`, { method: "POST", headers: headers(token) });
+    const res = await authFetch(`/paper/pause`, { method: "POST" });
     return res.ok;
   } catch {
     return false;
@@ -54,7 +46,7 @@ export async function pausePaperTrading(token: string): Promise<boolean> {
 
 export async function resumePaperTrading(token: string): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/paper/resume`, { method: "POST", headers: headers(token) });
+    const res = await authFetch(`/paper/resume`, { method: "POST" });
     return res.ok;
   } catch {
     return false;
@@ -63,7 +55,7 @@ export async function resumePaperTrading(token: string): Promise<boolean> {
 
 export async function resetPaperTrading(token: string): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/paper/reset`, { method: "POST", headers: headers(token) });
+    const res = await authFetch(`/paper/reset`, { method: "POST" });
     return res.ok;
   } catch {
     return false;
@@ -72,7 +64,7 @@ export async function resetPaperTrading(token: string): Promise<boolean> {
 
 export async function getPaperStatus(token: string): Promise<PaperStatus | null> {
   try {
-    const res = await fetch(`${apiUrl}/paper/status`, { headers: headers(token) });
+    const res = await authFetch(`/paper/status`);
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -82,7 +74,7 @@ export async function getPaperStatus(token: string): Promise<PaperStatus | null>
 
 export async function getPaperPositions(token: string): Promise<PaperPosition[]> {
   try {
-    const res = await fetch(`${apiUrl}/paper/positions`, { headers: headers(token) });
+    const res = await authFetch(`/paper/positions`);
     if (!res.ok) return [];
     return res.json();
   } catch {
@@ -92,7 +84,7 @@ export async function getPaperPositions(token: string): Promise<PaperPosition[]>
 
 export async function getPaperTrades(token: string): Promise<PaperTrade[]> {
   try {
-    const res = await fetch(`${apiUrl}/paper/trades`, { headers: headers(token) });
+    const res = await authFetch(`/paper/trades`);
     if (!res.ok) return [];
     return res.json();
   } catch {
@@ -102,7 +94,7 @@ export async function getPaperTrades(token: string): Promise<PaperTrade[]> {
 
 export async function getPaperOrders(token: string): Promise<PaperOrder[]> {
   try {
-    const res = await fetch(`${apiUrl}/paper/orders`, { headers: headers(token) });
+    const res = await authFetch(`/paper/orders`);
     if (!res.ok) return [];
     return res.json();
   } catch {
@@ -112,7 +104,7 @@ export async function getPaperOrders(token: string): Promise<PaperOrder[]> {
 
 export async function getPaperEquity(token: string): Promise<PaperEquityPoint[]> {
   try {
-    const res = await fetch(`${apiUrl}/paper/equity`, { headers: headers(token) });
+    const res = await authFetch(`/paper/equity`);
     if (!res.ok) return [];
     return res.json();
   } catch {
@@ -122,7 +114,7 @@ export async function getPaperEquity(token: string): Promise<PaperEquityPoint[]>
 
 export async function getPaperMetrics(token: string): Promise<PaperMetrics | null> {
   try {
-    const res = await fetch(`${apiUrl}/paper/metrics`, { headers: headers(token) });
+    const res = await authFetch(`/paper/metrics`);
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -132,7 +124,7 @@ export async function getPaperMetrics(token: string): Promise<PaperMetrics | nul
 
 export async function getPaperRiskStatus(token: string): Promise<PaperRiskStatus | null> {
   try {
-    const res = await fetch(`${apiUrl}/paper/risk`, { headers: headers(token) });
+    const res = await authFetch(`/paper/risk`);
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -142,7 +134,7 @@ export async function getPaperRiskStatus(token: string): Promise<PaperRiskStatus
 
 export async function getPaperLogs(token: string): Promise<PaperLog[]> {
   try {
-    const res = await fetch(`${apiUrl}/paper/logs`, { headers: headers(token) });
+    const res = await authFetch(`/paper/logs`);
     if (!res.ok) return [];
     return res.json();
   } catch {

@@ -7,16 +7,11 @@ import type {
   PromotionRequest,
   StrategyRanking,
 } from "@/types/learning";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
-
-function headers(token: string) {
-  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-}
+import { authFetch } from "@/lib/auth-api";
 
 async function getJson<T>(token: string, path: string, fallback: T): Promise<T> {
   try {
-    const res = await fetch(`${apiUrl}${path}`, { headers: headers(token) });
+    const res = await authFetch(path);
     if (res.ok) return (await res.json()) as T;
   } catch (err) {
     console.error(`Error fetching ${path}:`, err);
@@ -53,9 +48,9 @@ export async function startLearning(
   population?: number
 ): Promise<LearningRunResult | null> {
   try {
-    const res = await fetch(`${apiUrl}/learning/start`, {
+    const res = await authFetch(`/learning/start`, {
       method: "POST",
-      headers: headers(token),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol, timeframe, population }),
     });
     if (res.ok) return await res.json();
@@ -72,9 +67,9 @@ export async function approvePromotion(
   note?: string
 ): Promise<PromotionRequest | null> {
   try {
-    const res = await fetch(`${apiUrl}/learning/promote-request/${strategyId}`, {
+    const res = await authFetch(`/learning/promote-request/${strategyId}`, {
       method: "POST",
-      headers: headers(token),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ decided_by: decidedBy, note }),
     });
     if (res.ok) return await res.json();
@@ -91,9 +86,9 @@ export async function rejectPromotion(
   note?: string
 ): Promise<PromotionRequest | null> {
   try {
-    const res = await fetch(`${apiUrl}/learning/promotion-requests/${requestId}/reject`, {
+    const res = await authFetch(`/learning/promotion-requests/${requestId}/reject`, {
       method: "POST",
-      headers: headers(token),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ decided_by: decidedBy, note }),
     });
     if (res.ok) return await res.json();

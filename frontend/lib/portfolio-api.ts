@@ -1,17 +1,9 @@
 import type { Allocation, Portfolio, PortfolioMetric, RebalanceEvent, RiskSnapshot } from "@/types/portfolio";
-
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
-
-function headers(token: string) {
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
-}
+import { authFetch } from "@/lib/auth-api";
 
 export async function getPortfolio(token: string): Promise<Portfolio | null> {
   try {
-    const res = await fetch(`${apiUrl}/portfolio`, { headers: headers(token) });
+    const res = await authFetch(`/portfolio`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching portfolio:", err);
@@ -21,7 +13,7 @@ export async function getPortfolio(token: string): Promise<Portfolio | null> {
 
 export async function getPortfolioMetrics(token: string): Promise<PortfolioMetric[]> {
   try {
-    const res = await fetch(`${apiUrl}/portfolio/metrics`, { headers: headers(token) });
+    const res = await authFetch(`/portfolio/metrics`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching portfolio metrics:", err);
@@ -31,7 +23,7 @@ export async function getPortfolioMetrics(token: string): Promise<PortfolioMetri
 
 export async function getPortfolioAllocations(token: string): Promise<Allocation[]> {
   try {
-    const res = await fetch(`${apiUrl}/portfolio/allocations`, { headers: headers(token) });
+    const res = await authFetch(`/portfolio/allocations`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching portfolio allocations:", err);
@@ -41,9 +33,8 @@ export async function getPortfolioAllocations(token: string): Promise<Allocation
 
 export async function triggerRebalance(token: string): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/portfolio/rebalance`, {
+    const res = await authFetch(`/portfolio/rebalance`, {
       method: "POST",
-      headers: headers(token),
     });
     return res.ok;
   } catch (err) {
@@ -54,9 +45,8 @@ export async function triggerRebalance(token: string): Promise<boolean> {
 
 export async function resetPortfolio(token: string): Promise<boolean> {
   try {
-    const res = await fetch(`${apiUrl}/portfolio/reset`, {
+    const res = await authFetch(`/portfolio/reset`, {
       method: "POST",
-      headers: headers(token),
     });
     return res.ok;
   } catch (err) {
@@ -67,9 +57,8 @@ export async function resetPortfolio(token: string): Promise<boolean> {
 
 export async function runStressTest(token: string, scenarioName: string): Promise<RiskSnapshot | null> {
   try {
-    const res = await fetch(`${apiUrl}/portfolio/stress-test?scenario_name=${scenarioName}`, {
+    const res = await authFetch(`/portfolio/stress-test?scenario_name=${scenarioName}`, {
       method: "POST",
-      headers: headers(token),
     });
     if (res.ok) return await res.json();
   } catch (err) {
@@ -80,7 +69,7 @@ export async function runStressTest(token: string, scenarioName: string): Promis
 
 export async function getRebalanceHistory(token: string): Promise<RebalanceEvent[]> {
   try {
-    const res = await fetch(`${apiUrl}/portfolio/rebalances`, { headers: headers(token) });
+    const res = await authFetch(`/portfolio/rebalances`);
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching rebalance history:", err);
