@@ -12,6 +12,23 @@ from app.portfolio.models import DEFAULT_STRATEGY_WEIGHTS
 from app.portfolio.rebalancer import PortfolioRebalancer
 from app.portfolio.risk_model import PortfolioRiskModel
 
+_MAJORS = {"BTC_USDT", "ETH_USDT", "BTC", "ETH", "BTC_USD", "ETH_USD"}
+
+
+def _scenario_shocks(scenario: str, symbols: list[str]) -> tuple[dict[str, float], str]:
+    """Per-symbol price shock (fraction) for a stress scenario."""
+    if scenario == "market_crash_30":
+        return {s: -0.30 for s in symbols}, scenario
+    if scenario == "flash_crash":
+        # Majors -50%, altcoins -70%.
+        return {s: (-0.50 if s in _MAJORS else -0.70) for s in symbols}, scenario
+    if scenario == "high_volatility":
+        return {s: -0.15 for s in symbols}, scenario
+    if scenario == "correlation_spike":
+        # Diversification fails — everything sells off together.
+        return {s: -0.20 for s in symbols}, scenario
+    return {s: 0.0 for s in symbols}, "custom_scenario"
+
 
 class PortfolioEngine:
     def __init__(self, db: Session, portfolio: Portfolio) -> None:
@@ -168,31 +185,35 @@ class PortfolioEngine:
 
     def run_stress_testing(self, scenario_name: str) -> RiskSnapshot:
         """
-        Simulates hypothetical market scenarios and records a risk snapshot.
-        """
-        equity = float(self.portfolio.total_equity)
-        loss = 0.0
-        status = "normal"
+        Stress test by SHOCKING ACTUAL HOLDINGS, not a flat haircut on equity.
 
-        if scenario_name == "market_crash_30":
-            # 30% drop in all asset prices
-            loss = equity * 0.30
-            status = "violated" if (loss / equity) > float(self.portfolio.daily_max_risk_pct) else "normal"
-        elif scenario_name == "flash_crash":
-            # 50% drop in major cryptos, 70% in altcoins
-            loss = equity * 0.45
-            status = "violated"
-        elif scenario_name == "high_volatility":
-            # Volatility spike -> wider stops, minor simulation loss (e.g. 5%)
-            loss = equity * 0.05
-            status = "normal"
-        elif scenario_name == "correlation_spike":
-            # Correlation spike -> no immediate loss but higher exposure risk (10% virtual risk)
-            loss = equity * 0.02
-            status = "normal"
-        else:
-            scenario_name = "custom_scenario"
-            loss = 0.0
+        Each scenario applies a per-asset price shock to the real positions, so
+        the loss depends on actual exposure: a mostly-cash portfolio barely moves
+        while a fully-invested one takes the full hit.
+        """
+        assets = (
+            self.db.query(PortfolioAsset)
+            .filter(PortfolioAsset.portfolio_id == self.portfolio.id)
+            .all()
+        )
+        cash = float(self.portfolio.cash_balance)
+        position_value = float(sum((a.position_size * a.current_price for a in assets), Decimal("0")))
+        equity_before = cash + position_value
+
+        shocks, scenario_name = _scenario_shocks(scenario_name, [a.symbol for a in assets])
+        shocked_value = 0.0
+        per_asset: dict[str, float] = {}
+        for asset in assets:
+            base = float(asset.position_size * asset.current_price)
+            shock = shocks.get(asset.symbol, 0.0)
+            shocked_value += base * (1 + shock)
+            per_asset[asset.symbol] = base * shock  # signed loss contribution
+        equity_after = cash + shocked_value
+        loss = equity_before - equity_after
+        loss_pct = loss / equity_before if equity_before > 0 else 0.0
+
+        status = "violated" if loss_pct > float(self.portfolio.daily_max_risk_pct) else "normal"
+        var_cvar = self.value_at_risk()
 
         snapshot = RiskSnapshot(
             portfolio_id=self.portfolio.id,
@@ -201,11 +222,27 @@ class PortfolioEngine:
             simulated_loss=Decimal(str(loss)),
             limit_status=status,
             metrics_snapshot={
-                "equity_before": equity,
-                "equity_after": equity - loss,
-                "simulated_loss_pct": loss / equity if equity > 0 else 0.0
-            }
+                "equity_before": equity_before,
+                "equity_after": equity_after,
+                "simulated_loss_pct": loss_pct,
+                "position_value": position_value,
+                "per_asset_loss": per_asset,
+                "historical_var_95": var_cvar["var"],
+                "historical_cvar_95": var_cvar["cvar"],
+            },
         )
         self.db.add(snapshot)
         self.db.commit()
         return snapshot
+
+    def value_at_risk(self, confidence: float = 0.95, lookback: int = 200) -> dict:
+        """Historical VaR/CVaR from the recorded portfolio-equity history."""
+        rows = (
+            self.db.query(PortfolioMetric)
+            .filter(PortfolioMetric.portfolio_id == self.portfolio.id)
+            .order_by(PortfolioMetric.timestamp.desc())
+            .limit(lookback)
+            .all()
+        )
+        equities = [float(r.total_equity) for r in reversed(rows) if r.total_equity]
+        return PortfolioRiskModel.historical_var_cvar(equities, confidence)

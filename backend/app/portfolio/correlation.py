@@ -9,9 +9,11 @@ class CorrelationEngine:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def calculate_correlation(self, symbols: list[str], timeframe: str = "1h", limit: int = 100) -> dict:
+    def calculate_correlation(self, symbols: list[str], timeframe: str = "1h", limit: int = 500) -> dict:
         """
-        Calculates rolling correlation matrix for given symbols based on historical candles.
+        Correlation matrix for the given symbols, computed on RETURNS (not price
+        levels — correlating non-stationary prices is spurious and almost always
+        near 1). Uses a longer window for a stabler estimate.
         """
         if len(symbols) < 2:
             # Return identity matrix for single asset
@@ -47,10 +49,16 @@ class CorrelationEngine:
 
         # Align series into a DataFrame
         df = pd.DataFrame(data).ffill().bfill()
-        
-        # Calculate correlation matrix
-        corr_matrix = df.corr(method="pearson").fillna(0.0)
-        
+
+        # Correlate RETURNS, not price levels (avoids spurious correlation).
+        returns = df.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+        if len(returns) < 2:
+            corr_matrix = pd.DataFrame(
+                np.eye(len(df.columns)), index=df.columns, columns=df.columns
+            )
+        else:
+            corr_matrix = returns.corr(method="pearson").fillna(0.0)
+
         matrix_dict = corr_matrix.to_dict()
         
         # Find high correlation pairs (> 0.8)

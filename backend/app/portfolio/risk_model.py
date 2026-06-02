@@ -1,5 +1,7 @@
 from decimal import Decimal
 from typing import Tuple
+
+import numpy as np
 from sqlalchemy.orm import Session
 
 from app.models.entities import Portfolio
@@ -8,6 +10,28 @@ from app.models.entities import Portfolio
 class PortfolioRiskModel:
     def __init__(self, db: Session) -> None:
         self.db = db
+
+    @staticmethod
+    def historical_var_cvar(equity_history: list[float], confidence: float = 0.95) -> dict:
+        """Historical Value-at-Risk and Conditional VaR (expected shortfall).
+
+        VaR_95 is the loss at the 5th percentile of the return distribution;
+        CVaR_95 is the mean loss in that tail. Returned as positive fractions
+        (e.g. 0.04 == a 4% loss). Needs at least a few return observations.
+        """
+        if not equity_history or len(equity_history) < 3:
+            return {"var": 0.0, "cvar": 0.0}
+        equity = np.array(equity_history, dtype="float64")
+        returns = np.diff(equity) / equity[:-1]
+        returns = returns[np.isfinite(returns)]
+        if returns.size == 0:
+            return {"var": 0.0, "cvar": 0.0}
+        alpha = (1 - confidence) * 100
+        var_threshold = np.percentile(returns, alpha)  # negative for a loss
+        tail = returns[returns <= var_threshold]
+        cvar = tail.mean() if tail.size else var_threshold
+        # Report losses as positive magnitudes.
+        return {"var": float(max(-var_threshold, 0.0)), "cvar": float(max(-cvar, 0.0))}
 
     def check_risk_limits(self, portfolio: Portfolio) -> Tuple[bool, str]:
         """
