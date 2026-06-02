@@ -18,6 +18,7 @@ from app.execution_quality.latency_tracker import LatencyTracker
 from app.execution_quality.metrics import ExecutionMetricsCalculator
 from app.execution_quality.optimizer import AdaptiveExecutionOptimizer
 from app.execution_quality.benchmark import ExecutionBenchmarkSystem
+from app.execution_quality.tca import aggregate_implementation_shortfall, implementation_shortfall
 
 
 class ExecutionQualityEngine:
@@ -339,6 +340,23 @@ class ExecutionQualityEngine:
             partial_fill_ratio=sum(1 for o in orders if o.status == "partially_filled") / total_orders
         )
 
+        # Implementation shortfall (TCA) per order, against the decision price.
+        is_records = []
+        for f in fills:
+            ord_ref = next((o for o in orders if o.id == f.execution_order_id), None)
+            if ord_ref is None:
+                continue
+            is_records.append(
+                implementation_shortfall(
+                    side=ord_ref.side,
+                    decision_price=float(ord_ref.expected_price),
+                    fill_price=float(f.fill_price),
+                    fill_quantity=float(f.fill_quantity),
+                    expected_quantity=float(ord_ref.expected_quantity),
+                    fee=float(f.fee),
+                )
+            )
+
         report_data = {
             "slippage_distribution": {
                 "good": sum(1 for f in fills if abs(f.slippage) < 0.0005),
@@ -346,6 +364,7 @@ class ExecutionQualityEngine:
                 "bad": sum(1 for f in fills if 0.0020 < abs(f.slippage) <= 0.0050),
                 "critical": sum(1 for f in fills if abs(f.slippage) > 0.0050),
             },
+            "implementation_shortfall": aggregate_implementation_shortfall(is_records),
             "recommendations": recs
         }
 
