@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -65,7 +66,9 @@ async def create_backtest(payload: BacktestCreate, db: DbSession) -> dict:
             data = loader.load_from_cache(payload.symbol, payload.timeframe, payload.start_at, payload.end_at)
 
         config = _config_from_run(run)
-        result = BacktestEngine().run(data, config)
+        # Backtesting is CPU-bound; run it off the event loop so it doesn't block
+        # other requests. The engine is pure compute (no DB access).
+        result = await asyncio.to_thread(BacktestEngine().run, data, config)
         _persist_result(db, run, result)
         return {"id": run.id, "status": run.status, "metrics": run.metrics}
     except HTTPException:

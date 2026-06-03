@@ -4,14 +4,25 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from app.account.engine import AccountManager
+from app.core.config import get_settings
+from app.execution_quality.engine import ExecutionQualityEngine
+from app.market_data_quality.engine import MarketDataQualityEngine
+from app.market_data_quality.models import DataTradeStatus
+from app.market_regime.engine import MarketRegimeEngine
 from app.models.entities import Order, Position, SystemLog, Trade
 from app.models.enums import LogLevel, OrderSide, OrderStatus, PositionStatus
-from app.repositories.trading import OrderRepository, PositionRepository
+from app.repositories.trading import (
+    OrderRepository,
+    PositionRepository,
+    StrategySettingsRepository,
+)
 from app.services.exchange.gateio import GateIOClient, OrderBelowMinimum
 from app.services.notifications.telegram import TelegramNotifier
 from app.services.risk.circuit_breaker import CircuitBreaker
-from app.services.risk.manager import RiskManager
+from app.services.risk.manager import RiskManager, drawdown_risk_multiplier
 from app.services.strategy.signals import CapitalPreservationStrategy
+from app.strategy_health.engine import StrategyHealthEngine
 
 
 def _fee_in_quote(response: dict, price: Decimal, symbol: str) -> Decimal:
@@ -51,10 +62,6 @@ class TradingEngine:
 
         # Market Data Quality gate: run the feed through the quality pipeline and
         # block trading on unreliable data, de-risk on degraded data.
-        from app.core.config import get_settings
-        from app.market_data_quality.engine import MarketDataQualityEngine
-        from app.market_data_quality.models import DataTradeStatus
-
         mdq_result = MarketDataQualityEngine(self.db).ingest(candles, symbol, "1h", source="gateio")
         data_status = mdq_result.trade_status
         if data_status == DataTradeStatus.invalid and get_settings().mdq_pause_on_invalid:
@@ -72,7 +79,6 @@ class TradingEngine:
             return
 
         # Market Regime Detection Filter
-        from app.market_regime.engine import MarketRegimeEngine
         regime_engine = MarketRegimeEngine(self.db)
         
         # Convert exchange candles to list of dicts for feature calculation
@@ -97,7 +103,6 @@ class TradingEngine:
             return
 
         # Strategy Health Filter
-        from app.strategy_health.engine import StrategyHealthEngine
         health_engine = StrategyHealthEngine(self.db)
         health_status = health_engine.update_health(strategy_name) or {}
 
@@ -115,11 +120,8 @@ class TradingEngine:
         health_mult = Decimal(str(health_status.get("risk_multiplier", 1)))
         # Graded de-risking as account drawdown deepens (recovery-math aware).
         dd_mult = Decimal("1")
-        from app.core.config import get_settings as _get_settings
-        _s = _get_settings()
+        _s = get_settings()
         if _s.drawdown_derisk_enabled:
-            from app.account.engine import AccountManager
-            from app.services.risk.manager import drawdown_risk_multiplier
             dd_mult = drawdown_risk_multiplier(
                 AccountManager(self.db).drawdown_pct(),
                 Decimal(str(_s.max_account_drawdown_pct)),
@@ -163,50 +165,27 @@ class TradingEngine:
             raw_response=json.dumps(response),
         )
         self.db.add(order)
-        try:
-            self.db.commit()
-        except Exception:
-            # The exchange order is already live; roll back the local write so the
-            # session is consistent and let reconciliation recover the order state.
-            self.db.rollback()
-            self._log(
-                "trade_persist_error",
-                f"{symbol}: failed to persist order {response.get('id')}, rolled back",
-                LogLevel.error,
-            )
-            raise
+        # The exchange order is already live; on persist failure roll back so the
+        # session is consistent and let reconciliation recover the order state.
+        self._commit_or_rollback(
+            f"{symbol}: failed to persist order {response.get('id')}, rolled back"
+        )
         self.db.refresh(order)
 
-        # Record Execution Quality metrics
-        try:
-            from app.execution_quality.engine import ExecutionQualityEngine
-            eq_engine = ExecutionQualityEngine(self.db)
-            exec_order = eq_engine.record_order(
-                strategy_name=strategy_name,
-                symbol=symbol,
-                side="buy",
-                expected_price=signal.entry_price,
-                expected_quantity=final_quantity,
-                signal_time=signal_time,
-                submission_time=submission_time,
-                order_id=order.id,
-            )
-            fill_qty = Decimal(str(response.get("filled_total") or final_quantity))
-            fee = _fee_in_quote(response, fill_price, symbol)
-
-            eq_engine.record_fill(
-                execution_order_id=exec_order.id,
-                fill_price=fill_price,
-                fill_quantity=fill_qty,
-                fee=fee,
-                fill_time=datetime.now(UTC),
-                ack_time=ack_time
-            )
-        except Exception as e:
-            # Best-effort audit metric; clear any partial state so the session
-            # stays usable for the rest of the cycle.
-            self.db.rollback()
-            self._log("execution_quality_error", f"Failed to record execution quality: {e}")
+        self._record_execution_quality(
+            strategy_name=strategy_name,
+            symbol=symbol,
+            side="buy",
+            expected_price=signal.entry_price,
+            expected_quantity=final_quantity,
+            signal_time=signal_time,
+            submission_time=submission_time,
+            order_id=order.id,
+            fill_price=fill_price,
+            fill_quantity=Decimal(str(response.get("filled_total") or final_quantity)),
+            fee=_fee_in_quote(response, fill_price, symbol),
+            ack_time=ack_time,
+        )
 
         await self.notifier.send(f"Opened {symbol}: qty={final_quantity} entry={signal.entry_price}")
 
@@ -224,9 +203,6 @@ class TradingEngine:
 
     async def close_position(self, position: Position, reason: str) -> Order:
         signal_time = datetime.now(UTC)
-        from app.execution_quality.engine import ExecutionQualityEngine
-        eq_engine = ExecutionQualityEngine(self.db)
-        
         submission_time = datetime.now(UTC)
         response = await self.client.place_market_sell(position.symbol, position.quantity)
         ack_time = datetime.now(UTC)
@@ -261,52 +237,31 @@ class TradingEngine:
             realized_pnl=pnl,
         )
         self.db.add(trade)
-        try:
-            self.db.commit()
-        except Exception:
-            self.db.rollback()
-            self._log(
-                "trade_persist_error",
-                f"{position.symbol}: failed to persist close {response.get('id')}, rolled back",
-                LogLevel.error,
-            )
-            raise
+        self._commit_or_rollback(
+            f"{position.symbol}: failed to persist close {response.get('id')}, rolled back"
+        )
         self.db.refresh(order)
 
-        # Record Execution Quality metrics
-        try:
-            strategy_name = self.strategy.name
-            exec_order = eq_engine.record_order(
-                strategy_name=strategy_name,
-                symbol=position.symbol,
-                side="sell",
-                expected_price=exit_price,
-                expected_quantity=position.quantity,
-                signal_time=signal_time,
-                submission_time=submission_time,
-                order_id=order.id,
-            )
-            fill_qty = Decimal(str(response.get("filled_total") or position.quantity))
-
-            eq_engine.record_fill(
-                execution_order_id=exec_order.id,
-                fill_price=exit_price,
-                fill_quantity=fill_qty,
-                fee=fee,
-                fill_time=datetime.now(UTC),
-                ack_time=ack_time
-            )
-        except Exception as e:
-            self.db.rollback()
-            self._log("execution_quality_error", f"Failed to record execution quality on close: {e}")
+        self._record_execution_quality(
+            strategy_name=self.strategy.name,
+            symbol=position.symbol,
+            side="sell",
+            expected_price=exit_price,
+            expected_quantity=position.quantity,
+            signal_time=signal_time,
+            submission_time=submission_time,
+            order_id=order.id,
+            fill_price=exit_price,
+            fill_quantity=Decimal(str(response.get("filled_total") or position.quantity)),
+            fee=fee,
+            ack_time=ack_time,
+        )
 
         await self.notifier.send(f"Closed {position.symbol}: {reason}, pnl={pnl}")
         return order
 
     def _trailing_stop_pct(self) -> Decimal:
         """Configured trailing-stop distance from StrategySettings (default 1%)."""
-        from app.repositories.trading import StrategySettingsRepository
-
         settings = StrategySettingsRepository(self.db).current()
         pct = settings.trailing_stop_pct if settings is not None else Decimal("0.01")
         # Clamp to a sane (0, 1) range so a misconfiguration cannot widen the stop.
@@ -323,6 +278,58 @@ class TradingEngine:
             # Track the ratcheted level so the guard above can short-circuit.
             position.trailing_stop = new_stop
             self.db.commit()
+
+    def _commit_or_rollback(self, error_detail: str) -> None:
+        """Commit; on failure roll back, log, and re-raise (exchange order is live,
+        reconciliation will recover it). Shared by entry and exit persistence."""
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            self._log("trade_persist_error", error_detail, LogLevel.error)
+            raise
+
+    def _record_execution_quality(
+        self,
+        *,
+        strategy_name: str,
+        symbol: str,
+        side: str,
+        expected_price: Decimal,
+        expected_quantity: Decimal,
+        signal_time: datetime,
+        submission_time: datetime,
+        order_id: int,
+        fill_price: Decimal,
+        fill_quantity: Decimal,
+        fee: Decimal,
+        ack_time: datetime,
+    ) -> None:
+        """Best-effort TCA recording shared by entry and exit. A failure here must
+        never abort the trade, so it rolls back only its own partial writes."""
+        try:
+            eq_engine = ExecutionQualityEngine(self.db)
+            exec_order = eq_engine.record_order(
+                strategy_name=strategy_name,
+                symbol=symbol,
+                side=side,
+                expected_price=expected_price,
+                expected_quantity=expected_quantity,
+                signal_time=signal_time,
+                submission_time=submission_time,
+                order_id=order_id,
+            )
+            eq_engine.record_fill(
+                execution_order_id=exec_order.id,
+                fill_price=fill_price,
+                fill_quantity=fill_quantity,
+                fee=fee,
+                fill_time=datetime.now(UTC),
+                ack_time=ack_time,
+            )
+        except Exception as e:
+            self.db.rollback()
+            self._log("execution_quality_error", f"Failed to record execution quality ({side} {symbol}): {e}")
 
     def _log(self, source: str, message: str, level: LogLevel = LogLevel.info) -> None:
         self.db.add(SystemLog(level=level, source=source, message=message))

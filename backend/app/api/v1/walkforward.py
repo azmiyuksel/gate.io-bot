@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -58,7 +59,8 @@ async def start_walkforward(payload: WalkForwardStart, db: DbSession) -> dict:
         else:
             data = loader.load_from_cache(payload.symbol, payload.timeframe, payload.start_at, payload.end_at)
 
-        result = WalkForwardEngine().run(data, _config_from_payload(payload))
+        # CPU-bound walk-forward: run off the event loop (pure compute, no DB).
+        result = await asyncio.to_thread(WalkForwardEngine().run, data, _config_from_payload(payload))
         _persist_result(db, run, result)
         return {
             "id": run.id,
