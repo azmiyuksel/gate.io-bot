@@ -52,6 +52,10 @@ class RiskManager:
         self.settings = StrategySettingsRepository(db)
 
     def approve_entry(self, equity: Decimal, entry: Decimal, atr_value: Decimal) -> RiskDecision:
+        # Master env kill-switch: live entries require BOT_ENABLED=true as well
+        # as the strategy's own enable flag (defense-in-depth alongside scheduler).
+        if not get_settings().bot_enabled:
+            return RiskDecision(False, "bot_disabled")
         settings = self.settings.current()
         if not settings.is_enabled:
             return RiskDecision(False, "strategy_disabled")

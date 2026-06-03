@@ -49,13 +49,17 @@ async def run_cycle() -> None:
         if breaker.check_and_trip(equity, drawdown):
             return
 
-        strategy_settings = StrategySettingsRepository(db).current()
-        if not strategy_settings.is_enabled:
-            return
-
         engine = TradingEngine(db, client)
-        # Always manage open positions so stops/take-profits are honoured.
+        # Always manage open positions so stops/take-profits are honoured, even
+        # while new entries are paused.
         await engine.manage_open_positions()
+
+        # New entries require BOTH the env master switch (BOT_ENABLED) and the
+        # strategy's own enable flag. If either is off, no new trades are opened
+        # (open positions are still managed above).
+        strategy_settings = StrategySettingsRepository(db).current()
+        if not settings.bot_enabled or not strategy_settings.is_enabled:
+            return
 
         # Only size NEW entries against trustworthy equity. If the exchange was
         # unreachable (fallback snapshot) while API keys are configured, or the

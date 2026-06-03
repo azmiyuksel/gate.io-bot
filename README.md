@@ -111,20 +111,30 @@ curl -X POST http://localhost:8000/api/v1/market-data/ingest \
 Panelin ana sayfasında pozisyon boyutu, günlük/haftalık zarar limitleri ve maksimum
 açık pozisyon sayısını kontrol edin. Küçük değerlerle başlayın.
 
-**8. Stratejiyi ETKİNLEŞTİRİN (canlı işlem anahtarı)**
+**8. Stratejiyi ETKİNLEŞTİRİN — iki anahtar birden gerekir**
 
-Canlı işlemin gerçek anahtarı veritabanındaki strateji durumudur (`is_enabled`).
-Panelden açın ya da API ile:
+Canlı işlem açılması için **HEM** `.env`'deki master anahtar **HEM** veritabanındaki
+strateji anahtarı açık olmalıdır. İkisinden biri kapalıysa yeni işlem açılmaz
+(açık pozisyonlar yine de stop/TP ile yönetilmeye devam eder).
 
-```bash
-curl -X PATCH http://localhost:8000/api/v1/dashboard/strategy \
-  -H "Authorization: Bearer <ACCESS_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"is_enabled": true}'
-```
+1. `.env` içinde master anahtarı açın ve `backend` + `scheduler` servislerini yeniden başlatın:
 
-> Not: `.env` içindeki `BOT_ENABLED` yalnızca bir varsayılan bayraktır; **etkin
-> kapı** yukarıdaki strateji durumudur.
+   ```bash
+   # .env
+   BOT_ENABLED=true
+   ```
+   ```bash
+   docker compose up -d --force-recreate backend scheduler
+   ```
+
+2. Strateji anahtarını panelden açın ya da API ile:
+
+   ```bash
+   curl -X PATCH http://localhost:8000/api/v1/dashboard/strategy \
+     -H "Authorization: Bearer <ACCESS_TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{"is_enabled": true}'
+   ```
 
 **9. Devre kesicinin "armed" olduğundan emin olun**
 
@@ -140,9 +150,58 @@ Bundan sonra `scheduler` her döngüde (15 dk) sembolleri tarar; tüm filtreler
 
 ### Botu durdurma
 
-Stratejiyi kapatın (`{"is_enabled": false}`) veya devre kesiciyi tripleyin
-(`POST /circuit-breaker/trip`). Her ikisi de yeni giriş açılmasını engeller;
-açık pozisyonlar stop/TP yönetimiyle korunmaya devam eder.
+Stratejiyi kapatın (`{"is_enabled": false}`) veya `.env`'de `BOT_ENABLED=false`
+yapın ya da devre kesiciyi tripleyin (`POST /circuit-breaker/trip`). Üçü de yeni
+giriş açılmasını engeller; açık pozisyonlar stop/TP yönetimiyle korunmaya devam eder.
+
+---
+
+## Test hesabı ile kullanım (önerilen ilk adım)
+
+Gerçek para riske atmadan stratejiyi denemenin iki yolu var:
+
+**A) Kağıt-ticaret (paper) — gerçek emir yok, simülasyon.** En güvenli yöntem.
+
+1. `.env`'de `BOT_ENABLED=false` bırakın (canlı işlem kapalı).
+2. Servisleri başlatın; `paper-worker` çalışır.
+3. Panelde **Paper Trading** sayfasından başlatın. Bot gerçek piyasa verisiyle
+   sinyalleri simüle eder, emirleri sanal hesapta doldurur ve PnL/metilkleri gösterir.
+4. Davranıştan memnun olana kadar burada kalın — gerçek bakiye etkilenmez.
+
+**B) Gate.io testnet API anahtarlarıyla dry-run (opsiyonel, ileri seviye).**
+
+1. Gate.io testnet'ten test API anahtarı alın.
+2. `.env`'de borsa adresini testnet'e ve anahtarları testnet anahtarlarınıza çevirin:
+   ```bash
+   GATEIO_BASE_URL=<gate.io testnet REST adresi>
+   GATEIO_WS_URL=<gate.io testnet WS adresi>
+   GATEIO_API_KEY=<testnet key>
+   GATEIO_API_SECRET=<testnet secret>
+   ```
+3. "Botu Aktif Hale Getirme" adımlarını izleyin (testnet bakiyesi gerçek değildir).
+
+> Testnet adreslerini Gate.io'nun güncel dokümantasyonundan doğrulayın. Spot
+> testnet sunulmuyorsa **(A) kağıt-ticaret** yöntemini kullanın.
+
+## Gerçek hesap ile kullanım
+
+> 💸 Bu mod **gerçek para** ile işlem açar. Önce mutlaka kağıt-ticaret ile test edin.
+
+1. **Gate.io API anahtarı** oluşturun — yalnızca **spot işlem** izni verin;
+   **çekim (withdraw) iznini kapalı** tutun. Mümkünse IP kısıtlaması ekleyin.
+2. `.env`'i doldurun: gerçek `GATEIO_API_KEY`/`GATEIO_API_SECRET`, güçlü `SECRET_KEY`,
+   `FERNET_KEY`, `TRADING_SYMBOLS` ve (opsiyonel) Telegram bilgileri.
+   `GATEIO_BASE_URL`/`GATEIO_WS_URL`'i Gate.io canlı (mainnet) adreslerinde bırakın.
+3. Servisleri başlatın, admin oluşturun, panele girin (yukarıdaki kurulum adımları).
+4. **Küçük başlayın:** tek sembol ve düşük `max_capital_per_trade_pct` ile.
+   İsteğe bağlı: aşırı dar `STRATEGY_MAX_24H_RANGE_PCT` değerini sembole göre ayarlayın.
+5. Önce strateji **kapalıyken** birkaç döngü gözlemleyin (loglar + panel) — veri
+   çekiliyor mu, equity doğru mu, depeg/veri-kalitesi uyarısı var mı?
+6. Hazır olunca **iki anahtarı da açın**: `.env`'de `BOT_ENABLED=true` (+ servisleri
+   yeniden başlat) ve panelden strateji `is_enabled=true`.
+7. Devre kesicinin armed olduğunu doğrulayın. Bot bir sonraki döngüde işlem açabilir.
+8. İlk günlerde Telegram bildirimlerini ve **işlem ekonomisi** sayfasını
+   (`/api/v1/dashboard/economics`) yakından izleyin; edge/al-tut karşılaştırması negatifse durun.
 
 ---
 
@@ -150,8 +209,8 @@ açık pozisyonlar stop/TP yönetimiyle korunmaya devam eder.
 
 Bir işlem açılmadan önce şu koşulların tümü sağlanmalıdır:
 
+- Master anahtar açık (`BOT_ENABLED=true`) **ve** strateji etkin (`is_enabled=true`)
 - Devre kesici tripli değil
-- Strateji etkin (`is_enabled = true`)
 - Equity güvenilir (borsa erişilebilir, snapshot bayat değil)
 - Stablecoin (USDT) depeg yok
 - Piyasa-veri kalitesi yeterli (INVALID veride duraklar, DEGRADED veride boyut yarılanır)
