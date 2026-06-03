@@ -57,6 +57,60 @@ Bu komut şu servisleri ayağa kaldırır: `postgres`, `redis`, `backend` (API),
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Bildirimler için (opsiyonel) |
 | `TRADING_SYMBOLS` | İşlem yapılacak semboller, örn. `BTC_USDT,ETH_USDT` |
 
+### Docker'sız (yerel geliştirme) çalıştırma
+
+Docker kullanmadan elle çalıştırmak için gereksinimler: **Python 3.12**, **Node 22**,
+ve çalışan bir **PostgreSQL** + **Redis** (yerelde kurulu ya da yalnızca bu ikisini
+Docker'la başlatabilirsiniz: `docker compose up -d postgres redis`).
+
+`.env`'de host adlarını yerelde çalışacak şekilde güncelleyin:
+
+```bash
+DATABASE_URL=postgresql+psycopg://gatebot:gatebot@localhost:5432/gatebot
+REDIS_URL=redis://localhost:6379/0
+```
+
+**Backend (API) — terminal 1:**
+
+```bash
+cd backend
+pip install -e .                 # bağımlılıklar (Python 3.12)
+alembic upgrade head             # tabloları oluştur (ya da uygulama açılışta oluşturur)
+uvicorn app.main:app --reload --port 8000
+```
+
+**Scheduler (işlem döngüsü) — terminal 2:**
+
+```bash
+cd backend
+python -m app.workers.scheduler
+```
+
+**Paper worker (kağıt-ticaret) — terminal 3 (opsiyonel):**
+
+```bash
+cd backend
+python -m app.workers.paper_worker
+```
+
+**Frontend (panel) — terminal 4:**
+
+```bash
+cd frontend
+npm install
+NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1 npm run dev
+```
+
+Admin kullanıcıyı yerelde şu şekilde oluşturun:
+
+```bash
+cd backend
+python app/scripts_create_admin.py --email admin@example.com --password guclu-bir-parola
+```
+
+Panel yine `http://localhost:3000`, API `http://localhost:8000` üzerinden erişilir.
+Bundan sonra aşağıdaki "Botu Aktif Hale Getirme" adımlarını izleyin.
+
 ---
 
 ## Botu Aktif Hale Getirme (Adım Adım)
