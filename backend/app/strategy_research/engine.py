@@ -7,6 +7,8 @@ strategy, version and experiment.
 """
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -24,6 +26,8 @@ from app.strategy_research.models import (
     WalkForwardWindowResult,
 )
 from app.strategy_research.repository import ResearchRepository
+
+logger = logging.getLogger(__name__)
 
 
 class StrategyResearchEngine:
@@ -110,7 +114,7 @@ class StrategyResearchEngine:
         try:
             self.feature_store.compute(symbol, timeframe)
         except Exception:
-            pass
+            logger.warning("Feature-store recompute failed", exc_info=True)
 
         # 1. Build a diverse population (seed + random + feature-driven).
         genomes: list[StrategyGenome] = [self.generator.seed_genome(template_name="ema_rsi_atr")]

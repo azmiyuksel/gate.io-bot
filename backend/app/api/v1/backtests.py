@@ -18,17 +18,8 @@ from app.schemas.backtest import (
     OptimizationRequest,
     WalkForwardRequest,
 )
-from app.core.config import get_settings
+from app.api.v1._common import check_csv_size, mark_run_failed_on_error
 from app.services.exchange.gateio import GateIOClient
-
-
-def _check_csv_size(csv_data: str) -> None:
-    limit = get_settings().max_csv_upload_bytes
-    if len(csv_data.encode("utf-8")) > limit:
-        raise HTTPException(
-            status_code=413, detail=f"csv_data exceeds the {limit // (1024 * 1024)} MB limit"
-        )
-
 
 router = APIRouter(prefix="/backtests", tags=["backtests"], dependencies=[Depends(current_user_role)])
 
@@ -51,36 +42,27 @@ async def create_backtest(payload: BacktestCreate, db: DbSession) -> dict:
 
     client = GateIOClient() if payload.data_source == "gateio" else None
     try:
-        loader = HistoricalDataLoader(db, client)
-        if payload.data_source == "csv":
-            if not payload.csv_data:
-                raise HTTPException(status_code=400, detail="csv_data is required")
-            _check_csv_size(payload.csv_data)
-            data = loader.load_from_csv(payload.csv_data, payload.timeframe)
-            loader.cache(data, payload.symbol, payload.timeframe, "csv")
-        elif payload.data_source == "gateio":
-            data = await loader.load_from_gateio(
-                payload.symbol, payload.timeframe, payload.start_at, payload.end_at
-            )
-        else:
-            data = loader.load_from_cache(payload.symbol, payload.timeframe, payload.start_at, payload.end_at)
+        with mark_run_failed_on_error(db, run, BacktestStatus.failed):
+            loader = HistoricalDataLoader(db, client)
+            if payload.data_source == "csv":
+                if not payload.csv_data:
+                    raise HTTPException(status_code=400, detail="csv_data is required")
+                check_csv_size(payload.csv_data)
+                data = loader.load_from_csv(payload.csv_data, payload.timeframe)
+                loader.cache(data, payload.symbol, payload.timeframe, "csv")
+            elif payload.data_source == "gateio":
+                data = await loader.load_from_gateio(
+                    payload.symbol, payload.timeframe, payload.start_at, payload.end_at
+                )
+            else:
+                data = loader.load_from_cache(payload.symbol, payload.timeframe, payload.start_at, payload.end_at)
 
-        config = _config_from_run(run)
-        # Backtesting is CPU-bound; run it off the event loop so it doesn't block
-        # other requests. The engine is pure compute (no DB access).
-        result = await asyncio.to_thread(BacktestEngine().run, data, config)
-        _persist_result(db, run, result)
-        return {"id": run.id, "status": run.status, "metrics": run.metrics}
-    except HTTPException:
-        run.status = BacktestStatus.failed
-        run.error = "Invalid request"
-        db.commit()
-        raise
-    except Exception as exc:
-        run.status = BacktestStatus.failed
-        run.error = str(exc)
-        db.commit()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+            config = _config_from_run(run)
+            # Backtesting is CPU-bound; run it off the event loop so it doesn't
+            # block other requests. The engine is pure compute (no DB access).
+            result = await asyncio.to_thread(BacktestEngine().run, data, config)
+            _persist_result(db, run, result)
+            return {"id": run.id, "status": run.status, "metrics": run.metrics}
     finally:
         if client:
             await client.close()

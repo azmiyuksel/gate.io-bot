@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 from typing import List, Any
 from sqlalchemy.orm import Session
@@ -19,6 +20,8 @@ from app.strategy_health.models import MIN_TRADE_WARMUP
 from app.strategy_health.performance_analyzer import StrategyPerformanceAnalyzer
 from app.strategy_health.risk_adjuster import StrategyRiskAdjuster
 from app.services.notifications.telegram import TelegramNotifier
+
+logger = logging.getLogger(__name__)
 
 
 class StrategyHealthEngine:
@@ -99,7 +102,7 @@ class StrategyHealthEngine:
                             {}, {}
                         ))
                 except Exception:
-                    pass
+                    logger.warning("Strategy-health alert failed", exc_info=True)
         elif action == "block_new_trades":
             new_state = StrategyHealthState.degraded
         elif action == "risk_reduced_50":

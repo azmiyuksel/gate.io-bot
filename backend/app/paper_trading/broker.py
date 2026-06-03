@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -7,6 +8,8 @@ from app.models.entities import PaperAccount, PaperLog, PaperOrder, PaperPositio
 from app.models.enums import LogLevel, OrderSide, PaperOrderStatus, PaperOrderType
 from app.paper_trading.execution_simulator import ExecutionSimulator
 from app.paper_trading.models import MarketData, PaperExecution, PaperSide, TradingSignal
+
+logger = logging.getLogger(__name__)
 
 
 class PaperBroker:
@@ -68,7 +71,7 @@ class PaperBroker:
                 ack_time=ack_time
             )
         except Exception:
-            pass
+            logger.warning("Paper execution-quality recording failed", exc_info=True)
 
         return order
 
@@ -156,7 +159,7 @@ class PaperBroker:
                 ack_time=ack_time
             )
         except Exception:
-            pass
+            logger.warning("Paper execution-quality recording failed", exc_info=True)
 
     def _apply_buy(self, order: PaperOrder, execution: PaperExecution) -> None:
         quantity = Decimal(str(execution.filled_quantity))

@@ -7,6 +7,7 @@ known snapshot (or a configured fallback) when the exchange is unreachable.
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -18,6 +19,8 @@ from app.market_data.price_cache import price_cache
 from app.models.entities import AccountSnapshot
 from app.account.models import EquitySnapshot
 from app.services.exchange.gateio import GateIOClient
+
+logger = logging.getLogger(__name__)
 
 
 class AccountManager:
@@ -45,6 +48,7 @@ class AccountManager:
         try:
             raw = await self.client.balances()
         except Exception:
+            logger.warning("Balance fetch failed; using fallback equity snapshot", exc_info=True)
             return self._fallback_snapshot()
 
         cash = available = locked = Decimal("0")

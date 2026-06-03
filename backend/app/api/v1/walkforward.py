@@ -5,8 +5,8 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.api.deps import DbSession, current_user_role, require_admin
+from app.api.v1._common import check_csv_size, mark_run_failed_on_error
 from app.backtest.engine import HistoricalDataLoader
-from app.core.config import get_settings
 from app.models.entities import WalkForwardRun, WalkForwardWindow
 from app.models.enums import WalkForwardMode, WalkForwardStatus
 from app.schemas.walkforward import WalkForwardDetail, WalkForwardListItem, WalkForwardStart
@@ -41,43 +41,32 @@ async def start_walkforward(payload: WalkForwardStart, db: DbSession) -> dict:
 
     client = GateIOClient() if payload.data_source == "gateio" else None
     try:
-        loader = HistoricalDataLoader(db, client)
-        if payload.data_source == "csv":
-            if not payload.csv_data:
-                raise HTTPException(status_code=400, detail="csv_data is required")
-            limit = get_settings().max_csv_upload_bytes
-            if len(payload.csv_data.encode("utf-8")) > limit:
-                raise HTTPException(
-                    status_code=413, detail=f"csv_data exceeds the {limit // (1024 * 1024)} MB limit"
+        with mark_run_failed_on_error(
+            db, run, WalkForwardStatus.failed, "Invalid walk-forward request"
+        ):
+            loader = HistoricalDataLoader(db, client)
+            if payload.data_source == "csv":
+                if not payload.csv_data:
+                    raise HTTPException(status_code=400, detail="csv_data is required")
+                check_csv_size(payload.csv_data)
+                data = loader.load_from_csv(payload.csv_data, payload.timeframe)
+                loader.cache(data, payload.symbol, payload.timeframe, "csv")
+            elif payload.data_source == "gateio":
+                data = await loader.load_from_gateio(
+                    payload.symbol, payload.timeframe, payload.start_at, payload.end_at
                 )
-            data = loader.load_from_csv(payload.csv_data, payload.timeframe)
-            loader.cache(data, payload.symbol, payload.timeframe, "csv")
-        elif payload.data_source == "gateio":
-            data = await loader.load_from_gateio(
-                payload.symbol, payload.timeframe, payload.start_at, payload.end_at
-            )
-        else:
-            data = loader.load_from_cache(payload.symbol, payload.timeframe, payload.start_at, payload.end_at)
+            else:
+                data = loader.load_from_cache(payload.symbol, payload.timeframe, payload.start_at, payload.end_at)
 
-        # CPU-bound walk-forward: run off the event loop (pure compute, no DB).
-        result = await asyncio.to_thread(WalkForwardEngine().run, data, _config_from_payload(payload))
-        _persist_result(db, run, result)
-        return {
-            "id": run.id,
-            "status": run.status,
-            "aggregated_metrics": run.aggregated_metrics,
-            "deployment_decision": run.deployment_decision,
-        }
-    except HTTPException:
-        run.status = WalkForwardStatus.failed
-        run.error = "Invalid walk-forward request"
-        db.commit()
-        raise
-    except Exception as exc:
-        run.status = WalkForwardStatus.failed
-        run.error = str(exc)
-        db.commit()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # CPU-bound walk-forward: run off the event loop (pure compute, no DB).
+            result = await asyncio.to_thread(WalkForwardEngine().run, data, _config_from_payload(payload))
+            _persist_result(db, run, result)
+            return {
+                "id": run.id,
+                "status": run.status,
+                "aggregated_metrics": run.aggregated_metrics,
+                "deployment_decision": run.deployment_decision,
+            }
     finally:
         if client:
             await client.close()

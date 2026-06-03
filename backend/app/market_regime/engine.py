@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import List, Tuple
@@ -9,6 +10,8 @@ from app.market_regime.detector import MarketRegimeDetector
 from app.market_regime.features import FeatureEngineer
 from app.market_regime.signals import RegimeSignalFilter
 from app.services.notifications.telegram import TelegramNotifier
+
+logger = logging.getLogger(__name__)
 
 
 class MarketRegimeEngine:
@@ -95,7 +98,7 @@ class MarketRegimeEngine:
                         {}, {}
                     ))
             except Exception:
-                pass
+                logger.warning("Regime-transition alert failed", exc_info=True)
 
         # 4. Save Current Regime Record
         record = MarketRegimeRecord(
