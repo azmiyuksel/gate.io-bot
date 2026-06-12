@@ -1,4 +1,5 @@
 services:
+  # ── Infrastructure (always runs) ──────────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -27,6 +28,7 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── API Server (always runs) ─────────────────────────────────────
   backend:
     build: ./backend
     restart: unless-stopped
@@ -48,28 +50,7 @@ services:
       redis:
         condition: service_healthy
 
-  scheduler:
-    build: ./backend
-    restart: unless-stopped
-    env_file: .env
-    command: python -m app.workers.scheduler
-    volumes:
-      - ./backend:/app
-    depends_on:
-      backend:
-        condition: service_healthy
-
-  paper-worker:
-    build: ./backend
-    restart: unless-stopped
-    env_file: .env
-    command: python -m app.workers.paper_worker
-    volumes:
-      - ./backend:/app
-    depends_on:
-      backend:
-        condition: service_healthy
-
+  # ── Dashboard (always runs) ──────────────────────────────────────
   frontend:
     build: ./frontend
     restart: unless-stopped
@@ -83,6 +64,32 @@ services:
       - /app/node_modules
     depends_on:
       - backend
+
+  # ── Paper Trading (profiles: paper) ──────────────────────────────
+  paper-worker:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: python -m app.workers.paper_worker
+    volumes:
+      - ./backend:/app
+    profiles: ["paper"]
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # ── Live Trading (profiles: live) ────────────────────────────────
+  scheduler:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: python -m app.workers.scheduler
+    volumes:
+      - ./backend:/app
+    profiles: ["live"]
+    depends_on:
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
