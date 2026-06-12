@@ -81,10 +81,10 @@ export default function MarketRegimePage() {
     setLoading(true);
     try {
       const [curr, hist, perf, trans] = await Promise.all([
-        getCurrentRegime(token),
-        getRegimeHistory(token),
-        getRegimePerformance(token),
-        getRegimeTransitions(token),
+        getCurrentRegime(),
+        getRegimeHistory(),
+        getRegimePerformance(),
+        getRegimeTransitions(),
       ]);
       if (curr) setCurrentRegime(curr);
       setHistory(hist);
@@ -106,7 +106,7 @@ export default function MarketRegimePage() {
 
   async function handleRecalculate() {
     setActionLoading(true);
-    const success = await recalculateRegime(token);
+        const success = await recalculateRegime();
     if (success) {
       alert("Piyasa rejimi geçmişi başarıyla hesaplandı ve modeller eğitildi!");
       await refresh();

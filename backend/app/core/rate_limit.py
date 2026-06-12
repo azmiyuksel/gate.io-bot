@@ -20,9 +20,17 @@ class SlidingWindowRateLimiter:
         self._lock = threading.Lock()
         self._ops = 0
 
-    def _prune(self, cutoff: float) -> None:
-        """Drop keys whose hits have all aged out, bounding memory growth."""
-        stale = [key for key, hits in self._hits.items() if not hits or hits[-1] < cutoff]
+    def _prune(self, cutoff: float, skip_key: str | None = None) -> None:
+        """Drop keys whose hits have all aged out, bounding memory growth.
+
+        *skip_key* exempts one key from pruning (the key about to be touched)
+        so that a zero-window prune does not evict the entry we're about to use.
+        """
+        stale = [
+            key
+            for key, hits in self._hits.items()
+            if key != skip_key and (not hits or hits[-1] <= cutoff)
+        ]
         for key in stale:
             del self._hits[key]
 
@@ -33,9 +41,9 @@ class SlidingWindowRateLimiter:
         with self._lock:
             self._ops += 1
             if self._ops % self._prune_every == 0:
-                self._prune(cutoff)
+                self._prune(cutoff, skip_key=key)
             hits = self._hits[key]
-            while hits and hits[0] < cutoff:
+            while hits and hits[0] <= cutoff:
                 hits.popleft()
             if len(hits) >= self.max_attempts:
                 return False

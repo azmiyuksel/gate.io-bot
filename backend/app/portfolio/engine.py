@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Dict, List, Any
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings as _get_settings
 from app.models.entities import Allocation, Portfolio, PortfolioAsset, PortfolioMetric, RiskSnapshot
 from app.models.enums import RebalanceTrigger
 from app.portfolio.allocator import CapitalAllocator
@@ -18,17 +19,16 @@ _MAJORS = {"BTC_USDT", "ETH_USDT", "BTC", "ETH", "BTC_USD", "ETH_USD"}
 
 def _scenario_shocks(scenario: str, symbols: list[str]) -> tuple[dict[str, float], str]:
     """Per-symbol price shock (fraction) for a stress scenario."""
+    s = _get_settings()
     if scenario == "market_crash_30":
-        return {s: -0.30 for s in symbols}, scenario
+        return {sym: -s.stress_market_crash_pct for sym in symbols}, scenario
     if scenario == "flash_crash":
-        # Majors -50%, altcoins -70%.
-        return {s: (-0.50 if s in _MAJORS else -0.70) for s in symbols}, scenario
+        return {sym: (-s.stress_flash_crash_major if sym in _MAJORS else -s.stress_flash_crash_alt) for sym in symbols}, scenario
     if scenario == "high_volatility":
-        return {s: -0.15 for s in symbols}, scenario
+        return {sym: -s.stress_high_vol_pct for sym in symbols}, scenario
     if scenario == "correlation_spike":
-        # Diversification fails — everything sells off together.
-        return {s: -0.20 for s in symbols}, scenario
-    return {s: 0.0 for s in symbols}, "custom_scenario"
+        return {sym: -s.stress_correlation_spike_pct for sym in symbols}, scenario
+    return {sym: 0.0 for sym in symbols}, "custom_scenario"
 
 
 class PortfolioEngine:

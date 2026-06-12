@@ -68,10 +68,10 @@ export default function PortfolioPage() {
     setLoading(true);
     try {
       const [p, m, a, r] = await Promise.all([
-        getPortfolio(token),
-        getPortfolioMetrics(token),
-        getPortfolioAllocations(token),
-        getRebalanceHistory(token),
+        getPortfolio(),
+        getPortfolioMetrics(),
+        getPortfolioAllocations(),
+        getRebalanceHistory(),
       ]);
       if (p) setPortfolio(p);
       setMetrics(m);
@@ -93,7 +93,7 @@ export default function PortfolioPage() {
 
   async function handleRebalance() {
     setActionLoading(true);
-    const success = await triggerRebalance(token);
+    const success = await triggerRebalance();
     if (success) {
       alert("Portföy başarıyla yeniden dengelendi!");
       await refresh();
@@ -104,7 +104,7 @@ export default function PortfolioPage() {
   async function handleReset() {
     if (confirm("Portföy verileri ve metrikleri sıfırlanacak. Emin misiniz?")) {
       setActionLoading(true);
-      const success = await resetPortfolio(token);
+      const success = await resetPortfolio();
       if (success) {
         setStressResult(null);
         await refresh();
@@ -115,7 +115,7 @@ export default function PortfolioPage() {
 
   async function handleStressTest(scenario: string) {
     setActionLoading(true);
-    const result = await runStressTest(token, scenario);
+    const result = await runStressTest(scenario);
     if (result) {
       setStressResult(result);
     }

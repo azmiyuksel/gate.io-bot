@@ -75,11 +75,11 @@ export default function PaperTradingPage() {
     setLoading(true);
     try {
       const [s, p, t, e, r] = await Promise.all([
-        getPaperStatus(token),
-        getPaperPositions(token),
-        getPaperTrades(token),
-        getPaperEquity(token),
-        getPaperRiskStatus(token),
+        getPaperStatus(),
+        getPaperPositions(),
+        getPaperTrades(),
+        getPaperEquity(),
+        getPaperRiskStatus(),
       ]);
       if (s) setStatus(s);
       setPositions(p);
@@ -100,9 +100,9 @@ export default function PaperTradingPage() {
     };
   }, [token, refresh]);
 
-  async function action(fn: (t: string) => Promise<boolean>) {
+  async function action(fn: () => Promise<boolean>) {
     setActionLoading(true);
-    await fn(token);
+    await fn();
     await refresh();
     setActionLoading(false);
   }

@@ -35,7 +35,6 @@ def test_strategy_guards_against_zero_price() -> None:
     assert signal.reason == "invalid_price_data"
 
 
-@pytest.mark.asyncio
 async def test_request_fails_fast_on_4xx(monkeypatch) -> None:
     client = GateIOClient()
     calls = 0
@@ -54,7 +53,6 @@ async def test_request_fails_fast_on_4xx(monkeypatch) -> None:
     await client.close()
 
 
-@pytest.mark.asyncio
 async def test_request_retries_on_429(monkeypatch) -> None:
     client = GateIOClient()
     calls = 0
@@ -104,7 +102,6 @@ def test_equity_freshness(db_session) -> None:
     assert manager.is_equity_stale() is True
 
 
-@pytest.mark.asyncio
 async def test_telegram_send_swallows_errors(monkeypatch) -> None:
     notifier = TelegramNotifier()
     # Force credentials so send() actually attempts a request.

@@ -130,6 +130,54 @@ class Settings(BaseSettings):
     # Minimum ranking score (0-100) to even create a promotion request.
     learning_min_ranking: float = 60.0
 
+    # --- Portfolio ---
+    # Rebalance trigger drawdown threshold.
+    portfolio_rebalance_drawdown_pct: float = 0.05
+    # Rebalance schedule intervals (days).
+    portfolio_rebalance_weekly_days: int = 7
+    portfolio_rebalance_monthly_days: int = 30
+    # Correlation threshold for flagging high-correlation pairs.
+    portfolio_correlation_threshold: float = 0.8
+    # Max candles for correlation calculation.
+    portfolio_correlation_limit: int = 500
+    # Stress test shock magnitudes.
+    stress_market_crash_pct: float = 0.30
+    stress_flash_crash_major: float = 0.50
+    stress_flash_crash_alt: float = 0.70
+    stress_high_vol_pct: float = 0.15
+    stress_correlation_spike_pct: float = 0.20
+
+    # --- Backtest ---
+    backtest_monte_carlo_scenarios: int = 1000
+
+    # --- Strategy Health Risk Adjuster ---
+    health_drift_tier_low: float = 0.3
+    health_drift_tier_mid: float = 0.5
+    health_drift_tier_high: float = 0.7
+    health_risk_mult_low: float = 1.0
+    health_risk_mult_mid: float = 0.7
+    health_risk_mult_high: float = 0.4
+    health_risk_mult_paused: float = 0.0
+
+    # --- Execution Quality ---
+    eq_default_volatility: float = 0.015
+    eq_default_spread: float = 0.0002
+    eq_latency_zscore_threshold: float = 3.0
+    eq_critical_slippage_pct: float = 0.005
+    eq_partial_fill_explosion_threshold: int = 4
+
+    # --- Portfolio Allocator ---
+    alloc_weight_strategy: float = 0.40
+    alloc_weight_risk_adj: float = 0.30
+    alloc_weight_correlation: float = 0.20
+    alloc_weight_stability: float = 0.10
+    alloc_dd_tier_high: float = 0.15
+    alloc_dd_tier_mid: float = 0.08
+    alloc_dd_tier_low: float = 0.03
+    alloc_dd_scale_high: float = 0.30
+    alloc_dd_scale_mid: float = 0.60
+    alloc_dd_scale_low: float = 0.85
+
     @property
     def symbols(self) -> list[str]:
         return [symbol.strip() for symbol in self.trading_symbols.split(",") if symbol.strip()]
@@ -150,7 +198,8 @@ class Settings(BaseSettings):
         """Enforce strong secrets outside local/dev. Returns non-fatal warnings.
 
         Raises RuntimeError for fatal misconfiguration in production-like
-        environments (a forgeable JWT secret is a full auth bypass).
+        environments (a forgeable JWT secret is a full auth bypass, and unencrypted
+        API secrets on disk are a credential-theft risk).
         """
         warnings: list[str] = []
         weak_secret = self.secret_key in ("", "change-me")
@@ -162,6 +211,11 @@ class Settings(BaseSettings):
                 )
             warnings.append("SECRET_KEY is the insecure default ('change-me').")
         if not self.fernet_key:
+            if self.is_production:
+                raise RuntimeError(
+                    "FERNET_KEY must be set in production — stored API secrets "
+                    "would otherwise be persisted in plain text."
+                )
             warnings.append("FERNET_KEY is unset; stored API secrets are not encrypted.")
         return warnings
 

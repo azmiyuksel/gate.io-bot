@@ -11,7 +11,6 @@ import type {
 import { authFetch } from "@/lib/auth-api";
 
 export async function startPaperTrading(
-  token: string,
   config?: { account_name?: string; initial_balance?: number; symbols?: string[] },
 ): Promise<boolean> {
   try {
@@ -26,7 +25,7 @@ export async function startPaperTrading(
   }
 }
 
-export async function stopPaperTrading(token: string): Promise<boolean> {
+export async function stopPaperTrading(): Promise<boolean> {
   try {
     const res = await authFetch(`/paper/stop`, { method: "POST" });
     return res.ok;
@@ -35,7 +34,7 @@ export async function stopPaperTrading(token: string): Promise<boolean> {
   }
 }
 
-export async function pausePaperTrading(token: string): Promise<boolean> {
+export async function pausePaperTrading(): Promise<boolean> {
   try {
     const res = await authFetch(`/paper/pause`, { method: "POST" });
     return res.ok;
@@ -44,7 +43,7 @@ export async function pausePaperTrading(token: string): Promise<boolean> {
   }
 }
 
-export async function resumePaperTrading(token: string): Promise<boolean> {
+export async function resumePaperTrading(): Promise<boolean> {
   try {
     const res = await authFetch(`/paper/resume`, { method: "POST" });
     return res.ok;
@@ -53,7 +52,7 @@ export async function resumePaperTrading(token: string): Promise<boolean> {
   }
 }
 
-export async function resetPaperTrading(token: string): Promise<boolean> {
+export async function resetPaperTrading(): Promise<boolean> {
   try {
     const res = await authFetch(`/paper/reset`, { method: "POST" });
     return res.ok;
@@ -62,7 +61,7 @@ export async function resetPaperTrading(token: string): Promise<boolean> {
   }
 }
 
-export async function getPaperStatus(token: string): Promise<PaperStatus | null> {
+export async function getPaperStatus(): Promise<PaperStatus | null> {
   try {
     const res = await authFetch(`/paper/status`);
     if (!res.ok) return null;
@@ -72,7 +71,7 @@ export async function getPaperStatus(token: string): Promise<PaperStatus | null>
   }
 }
 
-export async function getPaperPositions(token: string): Promise<PaperPosition[]> {
+export async function getPaperPositions(): Promise<PaperPosition[]> {
   try {
     const res = await authFetch(`/paper/positions`);
     if (!res.ok) return [];
@@ -82,7 +81,7 @@ export async function getPaperPositions(token: string): Promise<PaperPosition[]>
   }
 }
 
-export async function getPaperTrades(token: string): Promise<PaperTrade[]> {
+export async function getPaperTrades(): Promise<PaperTrade[]> {
   try {
     const res = await authFetch(`/paper/trades`);
     if (!res.ok) return [];
@@ -92,7 +91,7 @@ export async function getPaperTrades(token: string): Promise<PaperTrade[]> {
   }
 }
 
-export async function getPaperOrders(token: string): Promise<PaperOrder[]> {
+export async function getPaperOrders(): Promise<PaperOrder[]> {
   try {
     const res = await authFetch(`/paper/orders`);
     if (!res.ok) return [];
@@ -102,7 +101,7 @@ export async function getPaperOrders(token: string): Promise<PaperOrder[]> {
   }
 }
 
-export async function getPaperEquity(token: string): Promise<PaperEquityPoint[]> {
+export async function getPaperEquity(): Promise<PaperEquityPoint[]> {
   try {
     const res = await authFetch(`/paper/equity`);
     if (!res.ok) return [];
@@ -112,7 +111,7 @@ export async function getPaperEquity(token: string): Promise<PaperEquityPoint[]>
   }
 }
 
-export async function getPaperMetrics(token: string): Promise<PaperMetrics | null> {
+export async function getPaperMetrics(): Promise<PaperMetrics | null> {
   try {
     const res = await authFetch(`/paper/metrics`);
     if (!res.ok) return null;
@@ -122,7 +121,7 @@ export async function getPaperMetrics(token: string): Promise<PaperMetrics | nul
   }
 }
 
-export async function getPaperRiskStatus(token: string): Promise<PaperRiskStatus | null> {
+export async function getPaperRiskStatus(): Promise<PaperRiskStatus | null> {
   try {
     const res = await authFetch(`/paper/risk`);
     if (!res.ok) return null;
@@ -132,7 +131,7 @@ export async function getPaperRiskStatus(token: string): Promise<PaperRiskStatus
   }
 }
 
-export async function getPaperLogs(token: string): Promise<PaperLog[]> {
+export async function getPaperLogs(): Promise<PaperLog[]> {
   try {
     const res = await authFetch(`/paper/logs`);
     if (!res.ok) return [];

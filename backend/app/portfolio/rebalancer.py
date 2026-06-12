@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Dict, Tuple
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models.entities import Allocation, Portfolio, RebalanceEvent
 from app.models.enums import RebalanceStatus, RebalanceTrigger
 
@@ -20,8 +21,9 @@ class PortfolioRebalancer:
         """
         Evaluates trigger conditions for portfolio rebalancing.
         """
-        # 1. Drawdown trigger (e.g. drawdown exceeds 5%)
-        if current_drawdown > Decimal("0.05"):
+        settings = get_settings()
+        # 1. Drawdown trigger
+        if current_drawdown > Decimal(str(settings.portfolio_rebalance_drawdown_pct)):
             return True, RebalanceTrigger.drawdown_threshold
 
         # 2. Volatility spike trigger
@@ -43,9 +45,9 @@ class PortfolioRebalancer:
 
         # Time elapsed since last rebalance
         elapsed = now - last_event.created_at
-        if elapsed >= timedelta(days=30):
+        if elapsed >= timedelta(days=settings.portfolio_rebalance_monthly_days):
             return True, RebalanceTrigger.scheduled_monthly
-        elif elapsed >= timedelta(days=7):
+        elif elapsed >= timedelta(days=settings.portfolio_rebalance_weekly_days):
             return True, RebalanceTrigger.scheduled_weekly
 
         return False, None

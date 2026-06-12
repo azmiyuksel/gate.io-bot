@@ -7,6 +7,12 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+def _redact_url(url: str) -> str:
+    """Strip the bot token from a Telegram API URL for safe logging."""
+    import re
+    return re.sub(r"bot\K[^/]+", "***", url)
+
+
 class TelegramNotifier:
     async def send(self, message: str) -> None:
         settings = get_settings()

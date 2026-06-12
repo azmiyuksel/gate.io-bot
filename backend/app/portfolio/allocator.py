@@ -1,6 +1,8 @@
 from decimal import Decimal
 from typing import Dict, List, Any
 
+from app.core.config import get_settings
+
 
 class CapitalAllocator:
     @staticmethod
@@ -11,14 +13,14 @@ class CapitalAllocator:
         stability_score: Decimal
     ) -> Decimal:
         """
-        Calculates the allocation score using the requested weighted formula:
-        0.4 * strategy_score + 0.3 * risk_adjusted_return + 0.2 * inverse_correlation_penalty + 0.1 * stability_score
+        Calculates the allocation score using configurable weighted formula.
         """
+        s = get_settings()
         score = (
-            Decimal("0.40") * strategy_score +
-            Decimal("0.30") * risk_adjusted_return +
-            Decimal("0.20") * inverse_correlation_penalty +
-            Decimal("0.10") * stability_score
+            Decimal(str(s.alloc_weight_strategy)) * strategy_score +
+            Decimal(str(s.alloc_weight_risk_adj)) * risk_adjusted_return +
+            Decimal(str(s.alloc_weight_correlation)) * inverse_correlation_penalty +
+            Decimal(str(s.alloc_weight_stability)) * stability_score
         )
         return max(Decimal("0.0"), score)
 
@@ -80,13 +82,14 @@ class CapitalAllocator:
             )
 
             # Drawdown Adjustment: high drawdown -> scale down allocation
+            s = get_settings()
             dd = drawdowns.get(name, Decimal("0.0"))
-            if dd > Decimal("0.15"):
-                score *= Decimal("0.30")  # Scale down by 70%
-            elif dd > Decimal("0.08"):
-                score *= Decimal("0.60")  # Scale down by 40%
-            elif dd > Decimal("0.03"):
-                score *= Decimal("0.85")  # Scale down by 15%
+            if dd > Decimal(str(s.alloc_dd_tier_high)):
+                score *= Decimal(str(s.alloc_dd_scale_high))
+            elif dd > Decimal(str(s.alloc_dd_tier_mid)):
+                score *= Decimal(str(s.alloc_dd_scale_mid))
+            elif dd > Decimal(str(s.alloc_dd_tier_low)):
+                score *= Decimal(str(s.alloc_dd_scale_low))
 
             allocation_scores[name] = score
             total_score += score

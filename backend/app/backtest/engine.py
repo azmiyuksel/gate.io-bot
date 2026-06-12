@@ -11,6 +11,7 @@ from app.backtest.models import BacktestConfig, SUPPORTED_TIMEFRAMES, TIMEFRAME_
 from app.backtest.portfolio import Portfolio
 from app.backtest.reports import build_plotly_report
 from app.backtest.strategy_runner import EmaRsiAtrStrategy
+from app.core.config import get_settings
 from app.models.entities import HistoricalCandle
 from app.services.exchange.gateio import GateIOClient
 
@@ -180,7 +181,7 @@ class BacktestEngine:
                 metrics.get("total_return", 0.0) - benchmark["buy_hold_return"]
             )
         charts = build_plotly_report(portfolio.equity_curve, portfolio.closed_trades)
-        mc = monte_carlo(portfolio.closed_trades, config.initial_cash, scenarios=1000)
+        mc = monte_carlo(portfolio.closed_trades, config.initial_cash, scenarios=get_settings().backtest_monte_carlo_scenarios)
         return {
             "metrics": metrics,
             "charts": charts,

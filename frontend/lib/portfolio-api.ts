@@ -1,7 +1,7 @@
 import type { Allocation, Portfolio, PortfolioMetric, RebalanceEvent, RiskSnapshot } from "@/types/portfolio";
 import { authFetch } from "@/lib/auth-api";
 
-export async function getPortfolio(token: string): Promise<Portfolio | null> {
+export async function getPortfolio(): Promise<Portfolio | null> {
   try {
     const res = await authFetch(`/portfolio`);
     if (res.ok) return await res.json();
@@ -11,7 +11,7 @@ export async function getPortfolio(token: string): Promise<Portfolio | null> {
   return null;
 }
 
-export async function getPortfolioMetrics(token: string): Promise<PortfolioMetric[]> {
+export async function getPortfolioMetrics(): Promise<PortfolioMetric[]> {
   try {
     const res = await authFetch(`/portfolio/metrics`);
     if (res.ok) return await res.json();
@@ -21,7 +21,7 @@ export async function getPortfolioMetrics(token: string): Promise<PortfolioMetri
   return [];
 }
 
-export async function getPortfolioAllocations(token: string): Promise<Allocation[]> {
+export async function getPortfolioAllocations(): Promise<Allocation[]> {
   try {
     const res = await authFetch(`/portfolio/allocations`);
     if (res.ok) return await res.json();
@@ -31,7 +31,7 @@ export async function getPortfolioAllocations(token: string): Promise<Allocation
   return [];
 }
 
-export async function triggerRebalance(token: string): Promise<boolean> {
+export async function triggerRebalance(): Promise<boolean> {
   try {
     const res = await authFetch(`/portfolio/rebalance`, {
       method: "POST",
@@ -43,7 +43,7 @@ export async function triggerRebalance(token: string): Promise<boolean> {
   return false;
 }
 
-export async function resetPortfolio(token: string): Promise<boolean> {
+export async function resetPortfolio(): Promise<boolean> {
   try {
     const res = await authFetch(`/portfolio/reset`, {
       method: "POST",
@@ -55,7 +55,7 @@ export async function resetPortfolio(token: string): Promise<boolean> {
   return false;
 }
 
-export async function runStressTest(token: string, scenarioName: string): Promise<RiskSnapshot | null> {
+export async function runStressTest(scenarioName: string): Promise<RiskSnapshot | null> {
   try {
     const res = await authFetch(`/portfolio/stress-test?scenario_name=${scenarioName}`, {
       method: "POST",
@@ -67,7 +67,7 @@ export async function runStressTest(token: string, scenarioName: string): Promis
   return null;
 }
 
-export async function getRebalanceHistory(token: string): Promise<RebalanceEvent[]> {
+export async function getRebalanceHistory(): Promise<RebalanceEvent[]> {
   try {
     const res = await authFetch(`/portfolio/rebalances`);
     if (res.ok) return await res.json();

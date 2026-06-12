@@ -96,11 +96,11 @@ export default function StrategyHealthPage() {
     setLoading(true);
     try {
       const [health, base, metrics, alertList, transList] = await Promise.all([
-        getStrategyHealth(token, strategyName),
-        getStrategyBaseline(token, strategyName),
-        getHealthMetrics(token, strategyName),
-        getStrategyAlerts(token, strategyName),
-        getTransitions(token, strategyName),
+        getStrategyHealth(strategyName),
+        getStrategyBaseline(strategyName),
+        getHealthMetrics(strategyName),
+        getStrategyAlerts(strategyName),
+        getTransitions(strategyName),
       ]);
 
       if (health) setHealthStatus(health);
@@ -126,7 +126,7 @@ export default function StrategyHealthPage() {
     if (!token) return;
     setActionLoading(true);
     try {
-      const result = await recalculateStrategyHealth(token, strategyName);
+      const result = await recalculateStrategyHealth(strategyName);
       if (result) {
         setHealthStatus(result);
         alert("Strateji sağlık parametreleri ve sapma değerleri geçmişe yönelik başarıyla yeniden hesaplandı!");
@@ -141,7 +141,7 @@ export default function StrategyHealthPage() {
     if (!token) return;
     setActionLoading(true);
     try {
-      const success = await pauseStrategy(token, strategyName);
+      const success = await pauseStrategy(strategyName);
       if (success) {
         alert(`Strateji (${strategyName}) başarıyla duraklatıldı.`);
         await refresh();
@@ -155,7 +155,7 @@ export default function StrategyHealthPage() {
     if (!token) return;
     setActionLoading(true);
     try {
-      const success = await resumeStrategy(token, strategyName);
+      const success = await resumeStrategy(strategyName);
       if (success) {
         alert(`Strateji (${strategyName}) başarıyla yeniden aktif edildi.`);
         await refresh();

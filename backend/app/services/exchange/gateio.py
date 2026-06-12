@@ -43,6 +43,9 @@ class GateIOClient:
     async def close(self) -> None:
         await self.client.aclose()
 
+    def __repr__(self) -> str:
+        return f"<GateIOClient base_url={self.base_url!r} api_key=***>"
+
     def _sign(self, method: str, path: str, query: str = "", body: str = "") -> dict[str, str]:
         timestamp = str(int(time.time()))
         body_hash = hashlib.sha512(body.encode()).hexdigest()

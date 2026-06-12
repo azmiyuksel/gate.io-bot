@@ -129,12 +129,13 @@ class ExecutionQualityEngine:
 
         # Record Slippage logs
         slip_category = SlippageAnalyzer.categorize_slippage(slippage_pct)
+        eq_settings = get_settings()
         slippage_log = SlippageLog(
             execution_order_id=execution_order_id,
             slippage_pct=Decimal(str(slippage_pct)),
             slippage_category=slip_category.value,
-            volatility_rolling=Decimal("0.015"),  # nominal default
-            spread=Decimal("0.0002"),
+            volatility_rolling=Decimal(str(eq_settings.eq_default_volatility)),
+            spread=Decimal(str(eq_settings.eq_default_spread)),
         )
         self.db.add(slippage_log)
 
@@ -236,10 +237,11 @@ class ExecutionQualityEngine:
     def detect_anomalies(self, strategy_name: str) -> Tuple[bool, str]:
         """
         Detects execution anomalies:
-        - Latency spike (Z-score on total delay > 3.0)
+        - Latency spike (Z-score on total delay)
         - Slippage spike
         - Partial fill explosion
         """
+        eq_settings = get_settings()
         # Fetch last 30 logs
         orders = (
             self.db.query(ExecutionOrder)
@@ -261,7 +263,7 @@ class ExecutionQualityEngine:
         if std_delay > 0:
             latest_delay = delays[0] if delays else 0
             z_lat = (latest_delay - mean_delay) / std_delay
-            if z_lat > 3.0:
+            if z_lat > eq_settings.eq_latency_zscore_threshold:
                 return True, f"latency_spike_detected (Z-score: {z_lat:.2f})"
 
         # 2. Critical Slippage check
@@ -270,12 +272,12 @@ class ExecutionQualityEngine:
         
         if slippages:
             latest_slip = slippages[0]
-            if latest_slip > 0.0050:  # > 0.5% critical slippage
+            if latest_slip > eq_settings.eq_critical_slippage_pct:
                 return True, f"critical_slippage_anomaly (slippage: {latest_slip * 100:.2f}%)"
 
         # 3. Partial fill explosion
         partial_fills = sum(1 for o in orders[:10] if o.status == "partially_filled")
-        if partial_fills >= 4:  # 40% of the last 10 orders are partially filled
+        if partial_fills >= eq_settings.eq_partial_fill_explosion_threshold:
             return True, f"partial_fill_explosion ({partial_fills} partial fills in last 10 orders)"
 
         return False, "normal"

@@ -8,7 +8,6 @@ import type {
 import { authFetch } from "@/lib/auth-api";
 
 export async function getStrategyHealth(
-  token: string,
   strategyName: string
 ): Promise<StrategyHealthStatus | null> {
   try {
@@ -21,7 +20,6 @@ export async function getStrategyHealth(
 }
 
 export async function getHealthMetrics(
-  token: string,
   strategyName: string
 ): Promise<StrategyHealthLog[]> {
   try {
@@ -34,7 +32,6 @@ export async function getHealthMetrics(
 }
 
 export async function getStrategyAlerts(
-  token: string,
   strategyName: string
 ): Promise<StrategyAlert[]> {
   try {
@@ -47,7 +44,6 @@ export async function getStrategyAlerts(
 }
 
 export async function recalculateStrategyHealth(
-  token: string,
   strategyName: string
 ): Promise<StrategyHealthStatus | null> {
   try {
@@ -62,7 +58,6 @@ export async function recalculateStrategyHealth(
 }
 
 export async function pauseStrategy(
-  token: string,
   strategyName: string
 ): Promise<boolean> {
   try {
@@ -77,7 +72,6 @@ export async function pauseStrategy(
 }
 
 export async function resumeStrategy(
-  token: string,
   strategyName: string
 ): Promise<boolean> {
   try {
@@ -92,7 +86,6 @@ export async function resumeStrategy(
 }
 
 export async function getStrategyBaseline(
-  token: string,
   strategyName: string
 ): Promise<StrategyBaseline | null> {
   try {
@@ -105,7 +98,6 @@ export async function getStrategyBaseline(
 }
 
 export async function getTransitions(
-  token: string,
   strategyName: string
 ): Promise<StrategyStateTransition[]> {
   try {

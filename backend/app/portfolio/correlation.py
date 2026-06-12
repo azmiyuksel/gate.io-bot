@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models.entities import HistoricalCandle
 
 
@@ -9,12 +10,16 @@ class CorrelationEngine:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def calculate_correlation(self, symbols: list[str], timeframe: str = "1h", limit: int = 500) -> dict:
+    def calculate_correlation(self, symbols: list[str], timeframe: str = "1h", limit: int | None = None) -> dict:
         """
         Correlation matrix for the given symbols, computed on RETURNS (not price
         levels — correlating non-stationary prices is spurious and almost always
         near 1). Uses a longer window for a stabler estimate.
         """
+        settings = get_settings()
+        if limit is None:
+            limit = settings.portfolio_correlation_limit
+        corr_threshold = settings.portfolio_correlation_threshold
         if len(symbols) < 2:
             # Return identity matrix for single asset
             return {
@@ -70,7 +75,7 @@ class CorrelationEngine:
                 if s1 in matrix_dict and s2 in matrix_dict[s1]:
                     val = matrix_dict[s1][s2]
                     corr_values.append(val)
-                    if val > 0.8:
+                    if val > corr_threshold:
                         high_corr.append((s1, s2, val))
         
         # Risk score based on average positive correlation

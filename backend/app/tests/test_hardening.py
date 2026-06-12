@@ -6,7 +6,13 @@ from app.core.rate_limit import SlidingWindowRateLimiter
 
 
 def test_production_rejects_default_secret():
-    s = Settings(environment="production", secret_key="change-me")
+    s = Settings(environment="production", secret_key="change-me", fernet_key="x")
+    with pytest.raises(RuntimeError):
+        s.validate_runtime_secrets()
+
+
+def test_production_rejects_missing_fernet_key():
+    s = Settings(environment="production", secret_key="a-strong-unique-secret", fernet_key="")
     with pytest.raises(RuntimeError):
         s.validate_runtime_secrets()
 
@@ -34,8 +40,10 @@ def test_rate_limiter_prunes_stale_keys():
     limiter = SlidingWindowRateLimiter(max_attempts=5, window_seconds=0, prune_every=1)
     for i in range(10):
         limiter.is_allowed(f"key-{i}")
-    # With a zero-length window every prior hit is immediately stale, so the
-    # map must not accumulate one entry per distinct key.
+    # With a zero-length window every prior hit is immediately stale. The prune
+    # runs before the new hit is appended, so at most 2 entries survive: the
+    # current key's just-added hit and the previous key's hit (which becomes
+    # stale on the *next* prune cycle).  Crucially, entries never grow unbounded.
     assert len(limiter._hits) <= 1
 
 
