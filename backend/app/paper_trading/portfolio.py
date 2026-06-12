@@ -7,11 +7,16 @@ from sqlalchemy import func
 
 from app.models.entities import PaperAccount, PaperEquityCurve, PaperPosition
 
+# Minimum interval between equity curve recordings to prevent DB exhaustion.
+# Set to 1 hour (3600 seconds) — equity is sampled once per candle close.
+_EQUITY_RECORD_INTERVAL_SECONDS = 3600
+
 
 class PaperPortfolio:
     def __init__(self, db: Session, account: PaperAccount) -> None:
         self.db = db
         self.account = account
+        self._last_equity_record_ts: datetime | None = None
 
     def equity(self) -> Decimal:
         open_positions = self.open_positions()
@@ -40,7 +45,19 @@ class PaperPortfolio:
             position.unrealized_pnl = (price - position.average_entry_price) * position.quantity
         self.db.commit()
 
-    def record_equity(self) -> PaperEquityCurve:
+    def record_equity(self) -> PaperEquityCurve | None:
+        """Record equity curve point, throttled to once per interval.
+
+        Returns the new ``PaperEquityCurve`` row if recorded, or ``None`` if
+        skipped due to throttling. This prevents DB exhaustion from
+        high-frequency tick data.
+        """
+        now = datetime.now(UTC)
+        if self._last_equity_record_ts is not None:
+            elapsed = (now - self._last_equity_record_ts).total_seconds()
+            if elapsed < _EQUITY_RECORD_INTERVAL_SECONDS:
+                return None
+
         equity = self.equity()
         peak_result = self.db.query(func.max(PaperEquityCurve.equity)).filter(
             PaperEquityCurve.account_id == self.account.id
@@ -50,7 +67,7 @@ class PaperPortfolio:
         unrealized = sum(position.unrealized_pnl for position in self.open_positions())
         point = PaperEquityCurve(
             account_id=self.account.id,
-            timestamp=datetime.now(UTC),
+            timestamp=now,
             cash_balance=self.account.cash_balance,
             equity=equity,
             realized_pnl=self.account.realized_pnl,
@@ -61,4 +78,5 @@ class PaperPortfolio:
         self.db.add(point)
         self.db.commit()
         self.db.refresh(point)
+        self._last_equity_record_ts = now
         return point

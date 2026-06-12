@@ -1,8 +1,8 @@
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from app.models.enums import MarketRegimeType
 from app.market_regime.trend import TrendClassifier
-from app.market_regime.volatility import VolatilityClassifier
 
 
 class RandomForestRegimeClassifier:
@@ -17,31 +17,62 @@ class RandomForestRegimeClassifier:
         ]
 
     def generate_labels(self, df: pd.DataFrame) -> pd.Series:
+        """Generate labels from forward returns instead of rule-based pseudo-labels.
+
+        This avoids circular reasoning where the ML model only learns what the
+        rule-based classifiers already know.  Forward returns provide genuine
+        ground-truth signal about which regime the market was actually in.
+
+        Binning strategy (5 classes):
+            top 20% returns  → trending_bull
+            bottom 20%       → trending_bear
+            high vol quartile with small return → high_volatility
+            low vol quartile with small return  → low_volatility
+            everything else  → sideways
         """
-        Generates silver labels using the rule-based trend and volatility classifiers.
-        """
+        if "close" not in df.columns:
+            return pd.Series(["sideways"] * len(df))
+
+        forward_return = df["close"].pct_change().shift(-1)
+
+        # Use the same forward return for the current bar's features
         labels = []
-        for _, row in df.iterrows():
-            row_dict = row.to_dict()
-            trend = TrendClassifier.classify_trend(row_dict)
-            vol = VolatilityClassifier.classify_volatility(row_dict)
-            
-            # Combine logic: if volatile/breakout, override trend
-            if vol in (MarketRegimeType.high_volatility, MarketRegimeType.low_volatility, MarketRegimeType.breakout_phase):
-                labels.append(vol.value)
+        for i in range(len(df)):
+            fwd = forward_return.iloc[i]
+
+            if np.isnan(fwd):
+                labels.append(MarketRegimeType.sideways.value)
+                continue
+
+            ret_percentile = forward_return.rank(pct=True).iloc[i]
+            vol_percentile = df["realized_vol"].rank(pct=True).iloc[i] if "realized_vol" in df.columns else 0.5
+
+            if ret_percentile >= 0.80:
+                labels.append(MarketRegimeType.trending_bull.value)
+            elif ret_percentile <= 0.20:
+                labels.append(MarketRegimeType.trending_bear.value)
+            elif vol_percentile >= 0.75 and abs(fwd) < 0.005:
+                labels.append(MarketRegimeType.high_volatility.value)
+            elif vol_percentile <= 0.25 and abs(fwd) < 0.005:
+                labels.append(MarketRegimeType.low_volatility.value)
             else:
-                labels.append(trend.value)
+                labels.append(MarketRegimeType.sideways.value)
+
         return pd.Series(labels)
 
     def train(self, df: pd.DataFrame) -> None:
         """
-        Trains the Random Forest model on generated silver labels.
+        Trains the Random Forest model on forward-return based labels.
         """
         if len(df) < 50:
             return
 
         X = df[self.features].fillna(0.0)
         y = self.generate_labels(df)
+
+        # Skip if only one class present (can't train binary/multi-class)
+        if len(y.unique()) < 2:
+            return
 
         self.clf.fit(X, y)
         self.is_trained = True

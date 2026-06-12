@@ -127,6 +127,7 @@ class BacktestEngine:
             maker_fee_rate=config.maker_fee_rate,
         )
         trailing_pct = float(config.parameters.get("trailing_stop_pct", 0.01))
+        breakeven_pct = float(config.parameters.get("breakeven_stop_trigger_pct", 0.02))
         use_limit = config.execution_mode == "limit"
         # Holds the SIGNAL bar's close once a signal fires, else None. The entry
         # is executed on the NEXT bar (no same-bar lookahead): `strategy.current`
@@ -134,7 +135,7 @@ class BacktestEngine:
         pending_signal_close: float | None = None
         for _, candle in prepared.iterrows():
             broker.process_orders(candle)
-            broker.manage_exits(candle, trailing_pct)
+            broker.manage_exits(candle, trailing_pct, breakeven_pct)
             if pending_signal_close is not None and portfolio.can_open(config.max_open_positions):
                 equity = (
                     portfolio.equity_curve[-1]["equity"]

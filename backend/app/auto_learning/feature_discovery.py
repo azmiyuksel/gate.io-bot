@@ -115,7 +115,7 @@ class FeatureDiscovery:
             )
             results.append(spec)
             self._upsert(symbol, timeframe, spec, cycle_id)
-            if abs(corr) >= 0.03 and stability >= 0.5:
+            if abs(corr) >= 0.10 and stability >= 0.5:
                 self.kb.record(
                     KnowledgeType.feature, f"Useful derived feature: {name}",
                     f"{formula} correlates {corr:+.4f} with next-bar return (stability {stability:.2f})",

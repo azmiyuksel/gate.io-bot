@@ -90,4 +90,10 @@ class MarketDataIngestion:
         ]
 
     async def ingest_all(self, symbols: list[str], interval: str | None = None) -> dict[str, int]:
-        return {symbol: await self.ingest(symbol, interval) for symbol in symbols}
+        import asyncio
+
+        async def _ingest_one(sym: str) -> tuple[str, int]:
+            return sym, await self.ingest(sym, interval)
+
+        results = await asyncio.gather(*[_ingest_one(s) for s in symbols])
+        return dict(results)

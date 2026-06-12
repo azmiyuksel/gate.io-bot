@@ -22,6 +22,41 @@ class MarketRegimeEngine:
         self.detector = MarketRegimeDetector()
         self.notifier = TelegramNotifier()
         self._consecutive_different_regime: dict[str, int] = {}
+        self._load_cooldown_state()
+
+    def _load_cooldown_state(self) -> None:
+        """Reconstruct in-memory cooldown counters from the last regime records.
+
+        This ensures that a process restart does not reset an in-progress
+        cooldown window, preventing premature regime transitions.
+        """
+        symbols = (
+            self.db.query(MarketRegimeRecord.symbol)
+            .group_by(MarketRegimeRecord.symbol)
+            .all()
+        )
+        for (symbol,) in symbols:
+            recent = (
+                self.db.query(MarketRegimeRecord)
+                .filter(MarketRegimeRecord.symbol == symbol)
+                .order_by(MarketRegimeRecord.created_at.desc())
+                .limit(self._REGIME_COOLDOWN_BAR_COUNT + 1)
+                .all()
+            )
+            if len(recent) < 2:
+                continue
+            # Walk backwards: count consecutive records where the regime differs
+            # from the *oldest* record in the window (which represents the
+            # "current" regime before any transition was confirmed).
+            current_regime = recent[-1].regime_type
+            consecutive = 0
+            for rec in reversed(recent[:-1]):
+                if rec.regime_type != current_regime:
+                    consecutive += 1
+                else:
+                    break
+            if consecutive > 0:
+                self._consecutive_different_regime[symbol] = consecutive
 
     def update_regime(self, symbol: str, timeframe: str, candles: List[dict]) -> MarketRegimeRecord:
         """

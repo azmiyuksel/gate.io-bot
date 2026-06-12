@@ -77,11 +77,13 @@ class Position(Base):
     status: Mapped[PositionStatus] = mapped_column(
         String(32), default=PositionStatus.open, index=True
     )
+    side: Mapped[OrderSide] = mapped_column(String(16), default=OrderSide.buy)
     entry_price: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     stop_loss: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     take_profit: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     trailing_stop: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    breakeven_stop: Mapped[bool] = mapped_column(Boolean, default=False)
     realized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

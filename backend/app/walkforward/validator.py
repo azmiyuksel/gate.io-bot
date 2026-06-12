@@ -31,7 +31,8 @@ class WalkForwardValidator:
         }
         approved = all(checks.values())
         return {
-            "decision": "AUTO_DEPLOYMENT_APPROVED" if approved else "AUTO_DEPLOYMENT_REJECT",
+            "decision": "REQUIRES_HUMAN_REVIEW" if approved else "AUTO_DEPLOYMENT_REJECT",
             "approved": approved,
             "checks": checks,
+            "note": "Human approval is required before production deployment",
         }

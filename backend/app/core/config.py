@@ -160,6 +160,15 @@ class Settings(BaseSettings):
 
     # --- Backtest ---
     backtest_monte_carlo_scenarios: int = 1000
+    # VaR lookback: number of bars used for historical Value-at-Risk.
+    # 200 ≈ 8 days (hourly); 252 ≈ 1 year (daily). Higher = more stable tail estimate.
+    var_lookback: int = 500
+    # Breakeven stop: move stop-loss to entry price when unrealized profit
+    # reaches this fraction of the entry price (0.02 = 2% profit → BE stop).
+    breakeven_stop_trigger_pct: float = 0.02
+    # Estimated round-trip trading cost (taker fees + spread + slippage)
+    # used when evaluating whether a rebalance is worth executing.
+    rebalance_cost_bps: float = 10.0  # 10 bps = 0.10%
 
     # --- Strategy Health Risk Adjuster ---
     health_drift_tier_low: float = 0.3

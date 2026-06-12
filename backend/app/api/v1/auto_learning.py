@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import DbSession, current_user_role, require_admin
 from app.auto_learning.engine import AutoLearningEngine
@@ -13,6 +13,7 @@ from app.models.entities import (
     PromotionRequest,
     StrategyRanking,
 )
+from app.schemas._common import _validate_symbol, _validate_timeframe
 from app.schemas.auto_learning import (
     DecisionIn,
     DiscoveredFeatureOut,
@@ -66,7 +67,13 @@ def hypotheses(db: DbSession, limit: int = 50) -> List[HypothesisTest]:
 
 
 @router.get("/features", response_model=List[DiscoveredFeatureOut])
-def features(db: DbSession, symbol: str = "BTC_USDT", timeframe: str = "1h") -> List[DiscoveredFeature]:
+def features(
+    db: DbSession,
+    symbol: str = Query("BTC_USDT"),
+    timeframe: str = Query("1h"),
+) -> List[DiscoveredFeature]:
+    _validate_symbol(symbol)
+    _validate_timeframe(timeframe)
     return (
         db.query(DiscoveredFeature)
         .filter(DiscoveredFeature.symbol == symbol)

@@ -79,7 +79,8 @@ class ValidationPipeline:
             StageResult(
                 ValidationStage.paper,
                 result.out_sample_sharpe > 0,
-                f"OOS forward proxy sharpe {result.out_sample_sharpe:.2f} (real paper still required)",
+                f"OOS forward proxy sharpe {result.out_sample_sharpe:.2f} — "
+                f"NOT a substitute for real paper trading",
             ),
         ]
 

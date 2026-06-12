@@ -65,7 +65,8 @@ def compute_metrics(
         "sortino_ratio": float(sortino),
         "calmar_ratio": float(calmar),
         "total_trades": int(len(trades)),
-        "long_trades": int(len(trades)),
+        "long_trades": int(sum(1 for t in trades if getattr(t, "side", "long") == "long")),
+        "short_trades": int(sum(1 for t in trades if getattr(t, "side", "long") == "short")),
         "winning_trades": int(len(wins)),
         "losing_trades": int(len(losses)),
         "net_profit": float(equity.iloc[-1] - equity.iloc[0]),
@@ -102,7 +103,12 @@ def _equity_fraction_returns(pnls: np.ndarray, initial_cash: float) -> np.ndarra
     return returns
 
 
-def monte_carlo(trades: list[BacktestTradeResult], initial_cash: float, scenarios: int = 1000) -> dict:
+def monte_carlo(
+    trades: list[BacktestTradeResult],
+    initial_cash: float,
+    scenarios: int = 1000,
+    seed: int | None = None,
+) -> dict:
     pnls = np.array([trade.pnl for trade in trades], dtype="float64")
     if pnls.size == 0:
         return {"scenarios": scenarios, "worst_case": 0, "best_case": 0, "median_return": 0, "ruin_probability": 0}
@@ -110,7 +116,7 @@ def monte_carlo(trades: list[BacktestTradeResult], initial_cash: float, scenario
     final_returns = []
     ruin_count = 0
     ruin_level = 0.5  # equity falling to 50% of the starting balance
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(seed if seed is not None else 42)
     for _ in range(scenarios):
         sampled = rng.choice(returns, size=returns.size, replace=True)
         path = np.cumprod(1.0 + sampled)  # equity relative to start (starts at 1)

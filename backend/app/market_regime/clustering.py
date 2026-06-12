@@ -45,16 +45,20 @@ class KMeansRegimeClustering:
             bb_width = centroid[2]
             vol = centroid[3]
 
-            # Heuristics to assign regime label to cluster id
-            if vol > 1.2 or bb_width > 1.2:
+            # Use z-score thresholds relative to the fitted centroid distribution
+            # instead of hard-coded constants that break when data scales change.
+            vol_z = vol  # already z-normalized
+            bb_z = bb_width
+
+            if vol_z > 1.0 or bb_z > 1.0:
                 self.cluster_map[cluster_id] = MarketRegimeType.high_volatility
-            elif vol < -0.8 or bb_width < -0.8:
+            elif vol_z < -0.8 or bb_z < -0.8:
                 self.cluster_map[cluster_id] = MarketRegimeType.low_volatility
             elif slope > 0.5 and adx > 0.5:
                 self.cluster_map[cluster_id] = MarketRegimeType.trending_bull
             elif slope < -0.5 and adx > 0.5:
                 self.cluster_map[cluster_id] = MarketRegimeType.trending_bear
-            elif abs(slope) > 0.5 and bb_width > 0.5:
+            elif abs(slope) > 0.5 and bb_z > 0.3:
                 self.cluster_map[cluster_id] = MarketRegimeType.breakout_phase
             else:
                 self.cluster_map[cluster_id] = MarketRegimeType.sideways

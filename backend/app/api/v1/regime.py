@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List
 
 from app.api.deps import DbSession, current_user_role, require_admin
 from app.models.entities import HistoricalCandle, MarketRegimeRecord, RegimeConfidence, RegimePerformance, RegimeTransition
 from app.market_regime.engine import MarketRegimeEngine
+from app.schemas._common import _validate_symbol, _validate_timeframe
 from app.schemas.regime import (
     RegimeConfidenceOut,
     RegimePerformanceOut,
@@ -16,13 +17,25 @@ router = APIRouter(prefix="/regime", tags=["regime"], dependencies=[Depends(curr
 
 
 @router.get("/current", response_model=RegimeStatusOut)
-def get_current_regime(symbol: str = "BTC_USDT", timeframe: str = "1h", db: DbSession = None) -> MarketRegimeRecord:
+def get_current_regime(
+    symbol: str = Query("BTC_USDT"),
+    timeframe: str = Query("1h"),
+    db: DbSession = None,
+) -> MarketRegimeRecord:
+    _validate_symbol(symbol)
+    _validate_timeframe(timeframe)
     engine = MarketRegimeEngine(db)
     return engine.get_current_regime(symbol, timeframe)
 
 
 @router.get("/history", response_model=List[RegimeStatusOut])
-def get_regime_history(symbol: str = "BTC_USDT", timeframe: str = "1h", db: DbSession = None) -> List[MarketRegimeRecord]:
+def get_regime_history(
+    symbol: str = Query("BTC_USDT"),
+    timeframe: str = Query("1h"),
+    db: DbSession = None,
+) -> List[MarketRegimeRecord]:
+    _validate_symbol(symbol)
+    _validate_timeframe(timeframe)
     return (
         db.query(MarketRegimeRecord)
         .filter(MarketRegimeRecord.symbol == symbol, MarketRegimeRecord.timeframe == timeframe)
@@ -33,7 +46,11 @@ def get_regime_history(symbol: str = "BTC_USDT", timeframe: str = "1h", db: DbSe
 
 
 @router.get("/confidence", response_model=List[RegimeConfidenceOut])
-def get_confidence_history(symbol: str = "BTC_USDT", db: DbSession = None) -> List[RegimeConfidence]:
+def get_confidence_history(
+    symbol: str = Query("BTC_USDT"),
+    db: DbSession = None,
+) -> List[RegimeConfidence]:
+    _validate_symbol(symbol)
     return (
         db.query(RegimeConfidence)
         .filter(RegimeConfidence.symbol == symbol)
@@ -119,7 +136,11 @@ async def recalculate_regimes(payload: RegimeRecalculateRequest, db: DbSession) 
 
 
 @router.get("/transitions", response_model=List[RegimeTransitionOut])
-def get_transitions(symbol: str = "BTC_USDT", db: DbSession = None) -> List[RegimeTransition]:
+def get_transitions(
+    symbol: str = Query("BTC_USDT"),
+    db: DbSession = None,
+) -> List[RegimeTransition]:
+    _validate_symbol(symbol)
     return (
         db.query(RegimeTransition)
         .filter(RegimeTransition.symbol == symbol)

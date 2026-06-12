@@ -344,9 +344,22 @@ class TradingEngine:
         new_stop = price * (Decimal("1") - self._trailing_stop_pct())
         if new_stop > position.stop_loss:
             position.stop_loss = new_stop
-            # Track the ratcheted level so the guard above can short-circuit.
             position.trailing_stop = new_stop
             self.db.commit()
+        # Breakeven stop: once unrealized profit exceeds the trigger threshold,
+        # move stop-loss to entry price so the trade cannot become a loss.
+        if not position.breakeven_stop:
+            trigger_pct = Decimal(str(get_settings().breakeven_stop_trigger_pct))
+            if trigger_pct > 0:
+                profit_pct = (price - position.entry_price) / position.entry_price
+                if profit_pct >= trigger_pct and position.stop_loss < position.entry_price:
+                    position.stop_loss = position.entry_price
+                    position.breakeven_stop = True
+                    self._log(
+                        "breakeven_stop",
+                        f"{position.symbol}: stop moved to breakeven ({position.entry_price})",
+                    )
+                    self.db.commit()
 
     def _commit_or_rollback(self, error_detail: str) -> None:
         """Commit; on failure roll back, log, and re-raise (exchange order is live,

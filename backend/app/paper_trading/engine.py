@@ -90,6 +90,13 @@ class PaperTradingEngine:
             # Use high for take-profit check to simulate intra-bar TP trigger.
             if position.stop_loss and low <= position.stop_loss:
                 stop_price = min(position.stop_loss, price)
+                # Check if TP would also trigger on the same bar
+                if position.take_profit and high >= position.take_profit:
+                    self._log(
+                        "sl_tp_same_bar",
+                        f"{data.symbol} both SL ({position.stop_loss}) and TP ({position.take_profit}) "
+                        f"triggered on same bar — SL priority (low={low}, high={high})",
+                    )
                 self.broker.close_position(position, data, "stop_loss")
                 self._log("stop_loss_triggered", f"{data.symbol} stop loss triggered at ~{stop_price}")
             elif position.take_profit and high >= position.take_profit:

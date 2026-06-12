@@ -60,6 +60,9 @@ class PortfolioRebalancer:
     ) -> RebalanceEvent:
         """
         Saves the rebalanced allocation weights to the DB and records a RebalanceEvent.
+
+        Skips the rebalance if the estimated round-trip cost exceeds the
+        maximum allowed deviation — avoiding unnecessary churn.
         """
         # Fetch current allocations
         current_allocs = (
@@ -69,8 +72,37 @@ class PortfolioRebalancer:
         )
         previous_weights = {a.target_name: float(a.weight) for a in current_allocs}
 
-        # Clear existing allocations
-        self.db.query(Allocation).filter(Allocation.portfolio_id == portfolio.id).delete()
+        # Estimate rebalance cost and skip if deviation is trivial
+        cost_bps = get_settings().rebalance_cost_bps
+        total_deviation = sum(
+            abs(target_weights.get(name, 0.0) - w)
+            for name, w in previous_weights.items()
+        )
+        # If total turnover is less than 2x the round-trip cost, skip
+        if total_deviation > 0 and (cost_bps / 10000) * 2 > total_deviation:
+            event = RebalanceEvent(
+                portfolio_id=portfolio.id,
+                trigger_reason=trigger_reason,
+                previous_weights=previous_weights,
+                new_weights=target_weights,
+                execution_log=f"Skipped: total deviation {total_deviation:.4f} < 2x cost ({cost_bps} bps)",
+                status=RebalanceStatus.completed
+            )
+            self.db.add(event)
+            self.db.commit()
+            return event
+
+        # Clear existing allocations and insert new ones atomically
+        # within a single savepoint so a crash between delete and insert
+        # cannot leave the portfolio with zero allocations.
+        old_allocs = (
+            self.db.query(Allocation)
+            .filter(Allocation.portfolio_id == portfolio.id)
+            .all()
+        )
+        for a in old_allocs:
+            self.db.delete(a)
+        self.db.flush()  # stage deletions without committing yet
 
         # Save new allocations
         execution_logs = []
@@ -79,7 +111,7 @@ class PortfolioRebalancer:
             
             alloc = Allocation(
                 portfolio_id=portfolio.id,
-                target_type="strategy",  # Defaulting target type to strategy
+                target_type="strategy",
                 target_name=target_name,
                 weight=Decimal(str(weight)),
                 allocated_amount=allocated_amount

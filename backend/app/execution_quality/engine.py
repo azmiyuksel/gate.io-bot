@@ -34,6 +34,22 @@ class ExecutionQualityEngine:
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    def _estimate_rolling_volatility(self, symbol: str, lookback: int = 50) -> float:
+        """Estimate rolling volatility from recent candle close prices."""
+        candles = (
+            self.db.query(HistoricalCandle)
+            .filter(HistoricalCandle.symbol == symbol)
+            .order_by(HistoricalCandle.timestamp.desc())
+            .limit(lookback)
+            .all()
+        )
+        if len(candles) < 5:
+            return float(get_settings().eq_default_volatility)
+        closes = [float(c.close) for c in reversed(candles)]
+        returns = np.diff(closes) / np.array(closes[:-1])
+        returns = returns[np.isfinite(returns)]
+        return float(np.std(returns)) if len(returns) > 1 else float(get_settings().eq_default_volatility)
+
     def record_order(
         self,
         strategy_name: str,
@@ -129,12 +145,13 @@ class ExecutionQualityEngine:
 
         # Record Slippage logs
         slip_category = SlippageAnalyzer.categorize_slippage(slippage_pct)
+        rolling_volatility = self._estimate_rolling_volatility(exec_order.symbol)
         eq_settings = get_settings()
         slippage_log = SlippageLog(
             execution_order_id=execution_order_id,
             slippage_pct=Decimal(str(slippage_pct)),
             slippage_category=slip_category.value,
-            volatility_rolling=Decimal(str(eq_settings.eq_default_volatility)),
+            volatility_rolling=Decimal(str(rolling_volatility)),
             spread=Decimal(str(eq_settings.eq_default_spread)),
         )
         self.db.add(slippage_log)

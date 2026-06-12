@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import DbSession, current_user_role, require_admin
 from app.core.config import get_settings
@@ -9,6 +9,7 @@ from app.market_data.price_cache import price_cache
 from app.models.entities import HistoricalCandle
 from app.schemas.market_data import CandleOut, IngestionResultOut, LatestPriceOut
 from app.services.exchange.gateio import GateIOClient
+from app.schemas._common import _validate_symbol, _validate_timeframe
 
 router = APIRouter(
     prefix="/market-data", tags=["market-data"], dependencies=[Depends(current_user_role)]
@@ -16,7 +17,14 @@ router = APIRouter(
 
 
 @router.get("/candles", response_model=List[CandleOut])
-def candles(symbol: str, db: DbSession, interval: str = "1h", limit: int = 240) -> List[HistoricalCandle]:
+def candles(
+    symbol: str = Query(..., description="Trading pair symbol (e.g. BTC_USDT)"),
+    db: DbSession = None,
+    interval: str = Query("1h", description="Candle timeframe"),
+    limit: int = Query(240, ge=1, le=1000),
+) -> List[HistoricalCandle]:
+    _validate_symbol(symbol)
+    _validate_timeframe(interval)
     rows = (
         db.query(HistoricalCandle)
         .filter(HistoricalCandle.symbol == symbol)

@@ -76,6 +76,7 @@ class VirtualBroker:
             take_profit=take_profit,
             fee_paid=fee,
             highest_price=fill_price,
+            breakeven_triggered=False,
         )
         self.portfolio.open_position(position, gross_cost)
         return position
@@ -92,7 +93,8 @@ class VirtualBroker:
             self._execute_order(order, candle)
             self.pending_orders.remove(order)
 
-    def manage_exits(self, candle: pd.Series, trailing_stop_pct: float = 0.01) -> None:
+    def manage_exits(self, candle: pd.Series, trailing_stop_pct: float = 0.01,
+                     breakeven_trigger_pct: float = 0.02) -> None:
         high = float(candle["high"])
         low = float(candle["low"])
         for position in list(self.portfolio.positions):
@@ -100,6 +102,12 @@ class VirtualBroker:
             trailing_stop = position.highest_price * (1 - trailing_stop_pct)
             if trailing_stop > position.stop_loss:
                 position.stop_loss = trailing_stop
+            # Breakeven stop: move SL to entry when profit exceeds threshold
+            if not position.breakeven_triggered and breakeven_trigger_pct > 0:
+                profit_pct = (position.highest_price - position.entry_price) / position.entry_price
+                if profit_pct >= breakeven_trigger_pct and position.stop_loss < position.entry_price:
+                    position.stop_loss = position.entry_price
+                    position.breakeven_triggered = True
             if low <= position.stop_loss:
                 # Stop-loss is a market (taker) exit that crosses the spread.
                 self._close(position, candle, position.stop_loss, "stop_loss", maker=False)

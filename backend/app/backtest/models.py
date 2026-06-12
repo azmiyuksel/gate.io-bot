@@ -74,6 +74,7 @@ class BacktestPosition:
     take_profit: float
     fee_paid: float
     highest_price: float
+    breakeven_triggered: bool = False
 
 
 @dataclass

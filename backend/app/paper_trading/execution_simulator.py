@@ -20,7 +20,11 @@ class ExecutionSimulator:
 
     def execute_market(self, order_id: int, side: PaperSide, quantity: float, data: MarketData) -> PaperExecution:
         volatility_factor = self._volatility_factor(data)
-        slippage = self.random.uniform(0.0001, 0.001) * volatility_factor
+        # Slippage can be positive (unfavorable) or negative (price improvement).
+        # Uniform in [-0.001, +0.001] * volatility_factor.
+        raw_slip = self.random.uniform(-0.001, 0.001) * volatility_factor
+        # Ensure slippage is always unfavorable for conservative simulation
+        slippage = abs(raw_slip)
         fill_price = data.price * (1 + slippage if side == PaperSide.buy else 1 - slippage)
         fill_ratio = self.random.uniform(0.95, 1.0) if quantity * data.price > self._light_book_depth(data) else 1.0
         filled = quantity * fill_ratio

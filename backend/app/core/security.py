@@ -67,20 +67,24 @@ def get_cipher() -> Fernet | None:
 def encrypt_secret(value: str) -> str:
     cipher = get_cipher()
     if cipher is None:
-        return value
+        raise RuntimeError(
+            "Cannot encrypt: FERNET_KEY is not set. "
+            "API secrets would be stored in plain text — refusing."
+        )
     return cipher.encrypt(value.encode()).decode()
 
 
 def decrypt_secret(value: str) -> str:
     cipher = get_cipher()
     if cipher is None:
-        return value
+        raise RuntimeError(
+            "Cannot decrypt: FERNET_KEY is not set. "
+            "Cannot safely handle encrypted values without a key."
+        )
     try:
         return cipher.decrypt(value.encode()).decode()
     except InvalidToken:
-        import logging
-        logging.getLogger(__name__).warning(
-            "Fernet decrypt failed — value may have been stored before FERNET_KEY was set. "
-            "Returning raw value as fallback."
+        raise RuntimeError(
+            "Fernet decryption failed — the value may have been encrypted with a "
+            "different FERNET_KEY or stored as plain text. Manual intervention required."
         )
-        return value

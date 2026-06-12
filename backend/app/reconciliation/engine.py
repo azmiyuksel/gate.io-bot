@@ -47,6 +47,22 @@ class ReconciliationEngine:
             .all()
         )
 
+    def recent_orders(self, limit: int = 100) -> list[Order]:
+        """Return recently modified orders — not just open ones.
+
+        This catches orders that were marked ``filled`` locally but may have
+        been cancelled on the exchange (e.g. after a timeout), preventing
+        silent state divergence.
+        """
+        return list(
+            self.db.query(Order)
+            .filter(Order.exchange_order_id.isnot(None))
+            .filter(Order.status.in_([OrderStatus.open, OrderStatus.filled]))
+            .order_by(Order.updated_at.desc())
+            .limit(limit)
+            .all()
+        )
+
     @staticmethod
     def _filled_quantity(remote: dict, original: Decimal, side: str = "buy") -> Decimal:
         # `filled_amount` is the base quantity filled (correct for both sides).
@@ -124,15 +140,31 @@ class ReconciliationEngine:
         if order.position_id is None:
             return
         position = self.db.get(Position, order.position_id)
-        if position is None or order.side.value != "buy":
+        if position is None:
             return
-        position.entry_price = fill_price
-        # A partial buy fill means the position holds only what actually filled.
-        if 0 < filled < original:
-            position.quantity = filled
+        if order.side.value == "buy":
+            position.entry_price = fill_price
+            if 0 < filled < original:
+                position.quantity = filled
+        elif order.side.value == "sell":
+            # Correct the exit price if the actual fill differs from the
+            # locally recorded price.  This fixes PnL drift for closed
+            # positions whose exit fill was partially reconciled.
+            position.realized_pnl = (fill_price - position.entry_price) * position.quantity
 
     async def reconcile_open_orders(self) -> list[ReconciliationLog]:
         logs = [await self.reconcile_order(order) for order in self.open_orders()]
+        self.db.commit()
+        return logs
+
+    async def reconcile_recent_orders(self, limit: int = 100) -> list[ReconciliationLog]:
+        """Reconcile all recent orders (open + recently filled).
+
+        Catches orders that were marked filled locally but got cancelled on
+        the exchange, preventing silent state divergence.
+        """
+        orders = self.recent_orders(limit)
+        logs = [await self.reconcile_order(order) for order in orders]
         self.db.commit()
         return logs
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from decimal import Decimal
 
@@ -16,6 +17,8 @@ import websockets
 
 from app.core.config import get_settings
 from app.market_data.price_cache import price_cache
+
+logger = logging.getLogger(__name__)
 
 
 class GateIOWebSocketClient:
@@ -62,8 +65,19 @@ class GateIOWebSocketClient:
                 ) as ws:
                     await ws.send(self._subscribe_message())
                     backoff = 1
+                    last_message_time = time.monotonic()
                     async for raw in ws:
                         self._handle_message(raw)
+                        last_message_time = time.monotonic()
+
+                    # If the loop exits without exception, the server closed
+                    # the connection cleanly — treat as a reconnectable event.
+                    elapsed = time.monotonic() - last_message_time
+                    if elapsed > 120:
+                        logger.warning(
+                            "WebSocket connection stale (no messages for %.0fs), reconnecting",
+                            elapsed,
+                        )
             except asyncio.CancelledError:
                 self._running = False
                 raise

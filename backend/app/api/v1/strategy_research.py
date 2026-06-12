@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import DbSession, current_user_role, require_admin
 from app.models.entities import (
@@ -11,6 +11,7 @@ from app.models.entities import (
     ResearchStrategy,
     StrategyVersion,
 )
+from app.schemas._common import _validate_symbol, _validate_timeframe
 from app.schemas.strategy_research import (
     ABTestOut,
     ExperimentOut,
@@ -89,7 +90,13 @@ def experiments(db: DbSession, limit: int = 100) -> List[ResearchExperiment]:
 
 
 @router.get("/features", response_model=List[FeatureRecordOut])
-def features(db: DbSession, symbol: str = "BTC_USDT", timeframe: str = "1h") -> List[FeatureRecord]:
+def features(
+    db: DbSession,
+    symbol: str = Query("BTC_USDT"),
+    timeframe: str = Query("1h"),
+) -> List[FeatureRecord]:
+    _validate_symbol(symbol)
+    _validate_timeframe(timeframe)
     return (
         db.query(FeatureRecord)
         .filter(FeatureRecord.symbol == symbol)
@@ -101,7 +108,13 @@ def features(db: DbSession, symbol: str = "BTC_USDT", timeframe: str = "1h") -> 
 
 @router.post("/features/recompute", response_model=List[FeatureRecordOut],
              dependencies=[Depends(require_admin)])
-def recompute_features(db: DbSession, symbol: str = "BTC_USDT", timeframe: str = "1h") -> List[FeatureRecord]:
+def recompute_features(
+    db: DbSession,
+    symbol: str = Query("BTC_USDT"),
+    timeframe: str = Query("1h"),
+) -> List[FeatureRecord]:
+    _validate_symbol(symbol)
+    _validate_timeframe(timeframe)
     FeatureStore(db).compute(symbol, timeframe)
     return (
         db.query(FeatureRecord)
@@ -124,7 +137,13 @@ def hypotheses(db: DbSession, limit: int = 50) -> List[HypothesisTest]:
 
 @router.post("/hypotheses/test", response_model=List[HypothesisTestOut],
              dependencies=[Depends(require_admin)])
-def test_hypotheses(db: DbSession, symbol: str = "BTC_USDT", timeframe: str = "1h") -> List[HypothesisTest]:
+def test_hypotheses(
+    db: DbSession,
+    symbol: str = Query("BTC_USDT"),
+    timeframe: str = Query("1h"),
+) -> List[HypothesisTest]:
+    _validate_symbol(symbol)
+    _validate_timeframe(timeframe)
     return HypothesisBuilder(db).test_all(symbol, timeframe)
 
 
