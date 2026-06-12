@@ -7,9 +7,12 @@ from app.strategy_health.statistical_tests import loss_streak_pvalue
 
 
 class StrategyAnomalyDetector:
+    _RETRAIN_INTERVAL = 50
+
     def __init__(self) -> None:
         self.iso_forest = IsolationForest(n_estimators=50, contamination=0.05, random_state=42)
         self.is_fitted = False
+        self._call_count = 0
 
     def detect_anomalies(self, trades: List[Any]) -> Tuple[bool, str]:
         """
@@ -68,8 +71,10 @@ class StrategyAnomalyDetector:
             df = pd.DataFrame(data, columns=["pnl", "win_rate"])
             
             try:
-                self.iso_forest.fit(df)
-                self.is_fitted = True
+                self._call_count += 1
+                if not self.is_fitted or self._call_count % self._RETRAIN_INTERVAL == 0:
+                    self.iso_forest.fit(df)
+                    self.is_fitted = True
                 
                 # Predict latest trade
                 latest_features = [[pnls[-1], len([p for p in pnls if p > 0]) / len(pnls)]]

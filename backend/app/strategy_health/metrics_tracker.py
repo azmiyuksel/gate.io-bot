@@ -4,7 +4,7 @@ from typing import Dict, List, Any
 
 class StrategyMetricsTracker:
     @staticmethod
-    def calculate_rolling_metrics(trades: List[Any], window: int = 50) -> Dict[str, float]:
+    def calculate_rolling_metrics(trades: List[Any], window: int = 50, initial_equity: float = 10000.0) -> Dict[str, float]:
         """
         Calculates rolling metrics on the last N trades.
         """
@@ -55,7 +55,7 @@ class StrategyMetricsTracker:
         sharpe = (avg_pnl / std_dev) * math.sqrt(252) if std_dev > 0 else 0.0
 
         # 5. Drawdown from equity peaks of this sequence
-        equity = 10000.0  # nominal baseline
+        equity = initial_equity
         equity_curve = [equity]
         for p in pnls:
             equity += p

@@ -44,7 +44,7 @@ def aggregate_results(window_results: list) -> dict:
     worst_drawdown = float(np.min([metric.get("max_drawdown", 0) for metric in test_metrics]))
     best_window = max(window_results, key=lambda item: item.test_metrics.get("net_profit", 0))
     worst_window = min(window_results, key=lambda item: item.test_metrics.get("net_profit", 0))
-    total_return = test_profit / max(abs(train_profit) + 1, 1)
+    total_return = test_profit / max(abs(train_profit), 1)
     annualized_return = float(np.mean([metric.get("annualized_return", 0) for metric in test_metrics]))
     robustness = robustness_score(consistency, wfe, avg_sharpe, worst_drawdown, avg_pf)
     return {

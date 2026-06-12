@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.models.entities import PaperAccount, PaperLog, PaperPosition
 from app.models.enums import LogLevel, PaperBotStatus
+from app.paper_trading.broker import PaperBroker
 from app.paper_trading.market_data_stream import GateIOMarketDataStream
 from app.paper_trading.models import BaseStrategy, MarketData, TradingSignal
 from app.paper_trading.order_manager import PaperOrderManager
 from app.paper_trading.portfolio import PaperPortfolio
 from app.paper_trading.risk_simulator import PaperRiskSimulator
+from app.repositories.trading import StrategySettingsRepository
 from app.services.notifications.telegram import TelegramNotifier
 
 
@@ -21,6 +23,7 @@ class PaperTradingEngine:
         self.order_manager = PaperOrderManager(db, account)
         self.portfolio = PaperPortfolio(db, account)
         self.risk = PaperRiskSimulator(db, account)
+        self.broker = PaperBroker(db, account)
         self.notifier = TelegramNotifier()
         self.stream: GateIOMarketDataStream | None = None
 
@@ -59,15 +62,21 @@ class PaperTradingEngine:
                 await self.notifier.send(f"Paper trading paused: {reason}")
             return
         equity = self.portfolio.equity()
-        quantity = Decimal(str(max(signal.strength, 0) * float(equity) * 0.01 / data.price))
+        price = Decimal(str(data.price))
+        settings = StrategySettingsRepository(self.db).current()
+        max_capital_pct = settings.max_capital_per_trade_pct if settings else Decimal("0.01")
+        notional = equity * max_capital_pct
+        if price > 0:
+            quantity = notional / price
+        else:
+            quantity = Decimal("0")
+        if quantity <= 0:
+            return
         order = self.order_manager.execute_signal(signal, quantity, data)
         if order:
             await self.notifier.send(f"Paper trade opened: {signal.symbol} {signal.side}")
 
     def _handle_position_exits(self, data: MarketData) -> None:
-        from app.paper_trading.broker import PaperBroker
-
-        broker = PaperBroker(self.db, self.account)
         positions = (
             self.db.query(PaperPosition)
             .filter(PaperPosition.account_id == self.account.id, PaperPosition.symbol == data.symbol, PaperPosition.is_open.is_(True))
@@ -81,10 +90,10 @@ class PaperTradingEngine:
             # Use high for take-profit check to simulate intra-bar TP trigger.
             if position.stop_loss and low <= position.stop_loss:
                 stop_price = min(position.stop_loss, price)
-                broker.close_position(position, data, "stop_loss")
+                self.broker.close_position(position, data, "stop_loss")
                 self._log("stop_loss_triggered", f"{data.symbol} stop loss triggered at ~{stop_price}")
             elif position.take_profit and high >= position.take_profit:
-                broker.close_position(position, data, "take_profit")
+                self.broker.close_position(position, data, "take_profit")
                 self._log("take_profit_triggered", f"{data.symbol} take profit triggered")
 
     def _log(self, event: str, message: str, payload: dict | None = None) -> None:

@@ -21,7 +21,7 @@ class MarketRegimeEngine:
         self.db = db
         self.detector = MarketRegimeDetector()
         self.notifier = TelegramNotifier()
-        self._consecutive_same_regime: dict[str, int] = {}
+        self._consecutive_different_regime: dict[str, int] = {}
 
     def update_regime(self, symbol: str, timeframe: str, candles: List[dict]) -> MarketRegimeRecord:
         """
@@ -84,8 +84,8 @@ class MarketRegimeEngine:
             # --- Regime transition cooldown ---
             # Require N consecutive same-regime detections before confirming a
             # switch. This prevents whipsaw from flickering ensemble votes.
-            consecutive = self._consecutive_same_regime.get(symbol, 0) + 1
-            self._consecutive_same_regime[symbol] = consecutive
+            consecutive = self._consecutive_different_regime.get(symbol, 0) + 1
+            self._consecutive_different_regime[symbol] = consecutive
             if consecutive < self._REGIME_COOLDOWN_BAR_COUNT:
                 # Not enough consecutive detections; keep the old regime
                 record = MarketRegimeRecord(
@@ -102,7 +102,7 @@ class MarketRegimeEngine:
                 self.db.commit()
                 return record
             # Cooldown satisfied: confirm transition
-            self._consecutive_same_regime[symbol] = 0
+            self._consecutive_different_regime[symbol] = 0
             transition = RegimeTransition(
                 symbol=symbol,
                 old_regime=last_record.regime_type,
@@ -128,7 +128,7 @@ class MarketRegimeEngine:
         # 4. Save Current Regime Record
         # Reset consecutive counter when regime matches the last recorded one
         if last_record and last_record.regime_type == regime:
-            self._consecutive_same_regime[symbol] = 0
+            self._consecutive_different_regime[symbol] = 0
         record = MarketRegimeRecord(
             symbol=symbol,
             timeframe=timeframe,

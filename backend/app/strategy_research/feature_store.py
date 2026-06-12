@@ -56,7 +56,7 @@ def _build_features(frame: pd.DataFrame) -> dict[str, tuple[FeatureCategory, pd.
         "ema_trend_gap": (FeatureCategory.trend, (ema20 - ema50) / ema50),
         "ema20_slope": (FeatureCategory.trend, ema20.diff() / ema20),
         "close_in_range": (FeatureCategory.order_flow, (close - low) / rng),
-        "signed_volume": (FeatureCategory.order_flow, ((close - opn) / rng) * np.sign(vol)),
+        "signed_volume": (FeatureCategory.order_flow, ((close - opn) / rng).fillna(0) * np.sign(vol)),
     }
 
 

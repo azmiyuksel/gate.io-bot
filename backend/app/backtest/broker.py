@@ -147,9 +147,10 @@ class VirtualBroker:
             take_profit = order.attached_take_profit or fill_price * 1.04
             self.market_buy(candle, order.symbol, order.quantity, stop_loss, take_profit)
             return
-        if self.portfolio.positions:
+        matching = [p for p in self.portfolio.positions if p.symbol == order.symbol]
+        if matching:
             reference = order.limit_price or order.stop_price or float(candle["open"])
-            self._close(self.portfolio.positions[0], candle, reference, f"{order.order_type}_sell")
+            self._close(matching[0], candle, reference, f"{order.order_type}_sell")
 
     def _buy_fill_price(self, price: float) -> float:
         return price * (1 + self.spread_rate / 2 + self.slippage_rate)

@@ -1,3 +1,6 @@
+import tempfile
+from pathlib import Path
+
 import optuna
 import pandas as pd
 from joblib import Memory
@@ -8,7 +11,8 @@ from app.backtest.models import BacktestConfig
 from app.walkforward.metrics import objective_score
 from app.walkforward.models import WalkForwardConfig
 
-memory = Memory(location="/tmp/gatebot_wfa_cache", verbose=0)
+_cache_dir = Path(tempfile.gettempdir()) / "gatebot_wfa_cache"
+memory = Memory(location=str(_cache_dir), verbose=0)
 
 
 class WalkForwardOptimizer:

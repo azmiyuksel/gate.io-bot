@@ -22,7 +22,7 @@ class ExecutionSimulator:
         volatility_factor = self._volatility_factor(data)
         slippage = self.random.uniform(0.0001, 0.001) * volatility_factor
         fill_price = data.price * (1 + slippage if side == PaperSide.buy else 1 - slippage)
-        fill_ratio = self.random.uniform(0.6, 1.0) if quantity * data.price > self._light_book_depth(data) else 1.0
+        fill_ratio = self.random.uniform(0.95, 1.0) if quantity * data.price > self._light_book_depth(data) else 1.0
         filled = quantity * fill_ratio
         fee = filled * fill_price * self.taker_fee
         return PaperExecution(

@@ -145,20 +145,23 @@ class TradingEngine:
         fill_price = Decimal(str(response.get("avg_deal_price") or signal.entry_price))
         if fill_price <= 0:
             fill_price = signal.entry_price
-        # --- Slippage guard: reject if fill deviates too far from signal price ---
+        # --- Slippage guard: log warning if fill deviates too far from signal price ---
+        # Even when slippage exceeds the threshold, the exchange order (IOC) may
+        # have been fully or partially filled.  We MUST persist the position and
+        # order so that reconciliation, stop-management and PnL tracking can
+        # handle it.  Skipping persistence would leave a live exchange position
+        # untracked — no stop-loss, no trailing stop, no PnL.
         max_slippage_pct = Decimal(str(get_settings().eq_critical_slippage_pct))
         if signal.entry_price > 0 and max_slippage_pct > 0:
             slippage_pct = abs(fill_price - signal.entry_price) / signal.entry_price
             if slippage_pct > max_slippage_pct:
-                # Cancel: do NOT open the position.  The exchange order is IOC so
-                # it already expired/cancelled; we just skip persistence.
                 self._log(
                     "slippage_guard",
-                    f"{symbol}: REJECTED fill_price={fill_price} signal={signal.entry_price} "
-                    f"slippage={slippage_pct:.4%} > max={max_slippage_pct:.2%}",
+                    f"{symbol}: HIGH SLIPPAGE fill_price={fill_price} signal={signal.entry_price} "
+                    f"slippage={slippage_pct:.4%} > max={max_slippage_pct:.2%}. "
+                    f"Position will be tracked for reconciliation.",
                     LogLevel.warning,
                 )
-                return
         # Derive the base quantity actually received from the fill, not the
         # pre-order estimate.  quote_amount was the USDT spent; dividing by
         # the real fill price gives the true base amount credited.

@@ -29,23 +29,21 @@ async def _quote_depegged(client: GateIOClient, settings) -> bool:
         # If the depeg check itself fails (network/API error), assume depegged
         # and HALT trading. For a capital preservation bot, this is safer than
         # continuing with potentially corrupted data.
-        from app.models.entities import SystemLog
-        from app.models.enums import LogLevel
-        from app.db.session import SessionLocal
-        
         db = SessionLocal()
-        db.add(
-            SystemLog(
-                level=LogLevel.error,
-                source="stablecoin",
-                message=(
-                    f"Depeg check failed for {settings.quote_depeg_reference_pair}: {exc}. "
-                    f"Assuming depegged and HALTING trading."
-                ),
+        try:
+            db.add(
+                SystemLog(
+                    level=LogLevel.error,
+                    source="stablecoin",
+                    message=(
+                        f"Depeg check failed for {settings.quote_depeg_reference_pair}: {exc}. "
+                        f"Assuming depegged and HALTING trading."
+                    ),
+                )
             )
-        )
-        db.commit()
-        db.close()
+            db.commit()
+        finally:
+            db.close()
         return True
     return is_depegged(price, settings.quote_depeg_threshold_pct)
 

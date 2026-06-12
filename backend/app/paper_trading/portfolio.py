@@ -3,6 +3,8 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
+
 from app.models.entities import PaperAccount, PaperEquityCurve, PaperPosition
 
 
@@ -39,14 +41,11 @@ class PaperPortfolio:
         self.db.commit()
 
     def record_equity(self) -> PaperEquityCurve:
-        points = (
-            self.db.query(PaperEquityCurve)
-            .filter(PaperEquityCurve.account_id == self.account.id)
-            .order_by(PaperEquityCurve.timestamp.asc())
-            .all()
-        )
         equity = self.equity()
-        peak = max([point.equity for point in points] + [equity])
+        peak_result = self.db.query(func.max(PaperEquityCurve.equity)).filter(
+            PaperEquityCurve.account_id == self.account.id
+        ).scalar()
+        peak = max(Decimal(str(peak_result)) if peak_result is not None else Decimal("0"), equity)
         drawdown = (equity - peak) / peak if peak else Decimal("0")
         unrealized = sum(position.unrealized_pnl for position in self.open_positions())
         point = PaperEquityCurve(

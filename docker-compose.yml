@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: gatebot
       POSTGRES_USER: gatebot
-      POSTGRES_PASSWORD: gatebot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gatebot}
     ports:
       - "5432:5432"
     volumes:

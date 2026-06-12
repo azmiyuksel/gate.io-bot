@@ -188,6 +188,22 @@ class PaperBroker:
             existing.quantity = total_qty
             existing.last_price = price
         else:
+            stop_loss = None
+            take_profit = None
+            signal_metadata = order.signal if isinstance(order.signal, dict) else {}
+            atr_str = signal_metadata.get("metadata", {}).get("atr") if isinstance(signal_metadata.get("metadata"), dict) else signal_metadata.get("atr")
+            if atr_str is not None:
+                try:
+                    atr_value = Decimal(str(atr_str))
+                    stop_loss = price - atr_value * Decimal("1.5")
+                    risk_per_unit = price - stop_loss
+                    take_profit = price + risk_per_unit * Decimal("2")
+                except Exception:
+                    pass
+            if stop_loss is None:
+                stop_loss = price * Decimal("0.98")
+            if take_profit is None:
+                take_profit = price * Decimal("1.04")
             self.db.add(
                 PaperPosition(
                     account_id=self.account.id,
@@ -195,8 +211,8 @@ class PaperBroker:
                     quantity=quantity,
                     average_entry_price=price,
                     last_price=price,
-                    stop_loss=price * Decimal("0.98"),
-                    take_profit=price * Decimal("1.04"),
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
                 )
             )
 

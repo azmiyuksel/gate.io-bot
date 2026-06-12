@@ -58,7 +58,7 @@ def compute_metrics(
         "average_drawdown": float(drawdown[drawdown < 0].mean() if (drawdown < 0).any() else 0),
         "drawdown_duration": int(_max_drawdown_duration(drawdown)),
         "win_rate": float(len(wins) / len(trade_pnls) if len(trade_pnls) else 0),
-        "profit_factor": float(gross_profit / gross_loss if gross_loss else gross_profit),
+        "profit_factor": float(min(gross_profit / gross_loss, 5.0) if gross_loss else min(gross_profit, 5.0)),
         "expectancy": float(trade_pnls.mean() if len(trade_pnls) else 0),
         "average_trade": float(trade_pnls.mean() if len(trade_pnls) else 0),
         "sharpe_ratio": float(sharpe),

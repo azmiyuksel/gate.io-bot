@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     vol_targeting_enabled: bool = False
     vol_target_atr_pct: float = 0.02          # target ATR as a fraction of price
     vol_target_min_multiplier: float = 0.25
-    vol_target_max_multiplier: float = 2.0
+    vol_target_max_multiplier: float = 1.5
 
     # --- Live strategy entry thresholds (tunable per market) ---
     strategy_rsi_threshold: float = 35.0

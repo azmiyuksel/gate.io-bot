@@ -46,7 +46,10 @@ def create_refresh_token(subject: str) -> tuple[str, str, datetime]:
 
 
 def decode_access_token(token: str) -> dict:
-    return jwt.decode(token, get_settings().secret_key, algorithms=["HS256"])
+    payload = jwt.decode(token, get_settings().secret_key, algorithms=["HS256"])
+    if payload.get("type") != "access":
+        raise jwt.InvalidTokenError("Token is not an access token")
+    return payload
 
 
 def decode_token(token: str) -> dict:
@@ -75,4 +78,9 @@ def decrypt_secret(value: str) -> str:
     try:
         return cipher.decrypt(value.encode()).decode()
     except InvalidToken:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Fernet decrypt failed — value may have been stored before FERNET_KEY was set. "
+            "Returning raw value as fallback."
+        )
         return value
