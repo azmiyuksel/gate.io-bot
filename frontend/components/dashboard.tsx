@@ -33,10 +33,10 @@ const fallback: DashboardSummary = {
   recent_trades: [],
   strategy: {
     is_enabled: false,
-    max_capital_per_trade_pct: "0.01",
+    max_capital_per_trade_pct: "0.02",
     daily_max_loss_pct: "0.02",
     weekly_max_loss_pct: "0.05",
-    max_open_positions: 3,
+    max_open_positions: 5,
     min_reward_risk: "2",
     atr_multiplier: "1.5",
     trailing_stop_pct: "0.01",
