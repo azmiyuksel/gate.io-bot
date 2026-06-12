@@ -1,0 +1,6 @@
+[phases]
+setup = ["npm ci || npm install"]
+build = ["npm run build"]
+
+[start]
+cmd = "npm run start"
