@@ -143,5 +143,5 @@ def test_strategy_thresholds_loaded_from_config():
     from app.services.strategy.signals import CapitalPreservationStrategy
 
     strat = CapitalPreservationStrategy()
-    assert float(strat.rsi_threshold) == 35.0
-    assert float(strat.max_24h_range_pct) == 0.08
+    assert float(strat.rsi_threshold) == 45.0
+    assert float(strat.max_24h_range_pct) == 0.12

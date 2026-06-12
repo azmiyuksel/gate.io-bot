@@ -7,7 +7,7 @@ from pydantic import BaseModel
 class PaperStartRequest(BaseModel):
     account_name: str = "default"
     initial_balance: Decimal = Decimal("10000")
-    symbols: list[str] = ["BTC_USDT", "ETH_USDT"]
+    symbols: list[str] = ["BTC_USDT", "ETH_USDT", "XRP_USDT", "DOGE_USDT", "SOL_USDT", "ADA_USDT", "LINK_USDT", "AVAX_USDT"]
 
 
 class PaperStatus(BaseModel):

@@ -41,7 +41,7 @@ class CapitalPreservationAdapter(BaseStrategy):
     def position_size(self, equity: float, price: float) -> float:
         if price <= 0:
             return 0.0
-        return equity * 0.01 / price
+        return equity * 0.02 / price
 
     def _aggregate_candle(self, symbol: str, ticks: list[MarketData]) -> None:
         prices = [t.price for t in ticks]

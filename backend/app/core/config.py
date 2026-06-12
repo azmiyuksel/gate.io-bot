@@ -64,20 +64,19 @@ class Settings(BaseSettings):
     vol_target_max_multiplier: float = 1.5
 
     # --- Live strategy entry thresholds (tunable per market) ---
-    strategy_rsi_threshold: float = 35.0
-    strategy_ema20_distance_pct: float = 0.01
-    # Max 24h range as a fraction of price before an entry is rejected. 0.08 is
-    # tight for crypto; raise per pair to allow entries in normal volatility.
-    strategy_max_24h_range_pct: float = 0.08
+    strategy_rsi_threshold: float = 45.0
+    strategy_ema20_distance_pct: float = 0.02
+    # Max 24h range as a fraction of price before an entry is rejected. 0.12
+    # allows normal crypto volatility while still filtering extreme moves.
+    strategy_max_24h_range_pct: float = 0.12
     # Default trailing-stop distance (used when StrategySettings is missing).
     strategy_trailing_stop_pct: float = 0.01
     # Number of candles that represent a "daily" range (depends on candle interval).
     strategy_daily_range_candles: int = 24
-    trading_symbols: str = "BTC_USDT,ETH_USDT"
+    trading_symbols: str = "BTC_USDT,ETH_USDT,XRP_USDT,DOGE_USDT,SOL_USDT,ADA_USDT,LINK_USDT,AVAX_USDT"
     # Minimum volume ratio: reject entries when current volume is below this fraction
-    # of the recent average volume (e.g., 0.5 = 50% of average). Prevents entries
-    # on illiquid bars that are hard to exit at fair price.
-    strategy_min_volume_ratio: float = 0.5
+    # of the recent average volume (e.g., 0.3 = 30% of average).
+    strategy_min_volume_ratio: float = 0.3
     # Maximum absolute dollar loss per trade as a fraction of equity. This provides
     # a hard cap on any single trade's risk, protecting against flash crashes where
     # the stop-loss distance is wide but the trade size is large.
