@@ -29,9 +29,13 @@ import {
 } from "recharts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LastUpdated } from "@/components/ui/last-updated";
+import { Metric } from "@/components/ui/metric";
+import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import { money } from "@/lib/utils";
 import {
@@ -75,10 +79,12 @@ const RECOMMENDATION_SEVERITY_COLORS: Record<string, string> = {
 };
 
 export default function ExecutionQualityPage() {
+  const { toast } = useToast();
   const [token, setToken] = useState("");
   const [strategyName, setStrategyName] = useState("capital_preservation_v1");
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [status, setStatus] = useState<ExecutionQualityStatus | null>(null);
   const [slippageLogs, setSlippageLogs] = useState<ExecutionSlippageLog[]>([]);
@@ -96,16 +102,17 @@ export default function ExecutionQualityPage() {
     setLoading(true);
     try {
       const [statusData, slipData, latData, reportData] = await Promise.all([
-        getStrategyExecutionStatus(token, strategyName),
-        getSlippageLogs(token, strategyName, 50),
-        getLatencyLogs(token, strategyName, 50),
-        getExecutionReport(token, strategyName, 30),
+        getStrategyExecutionStatus(strategyName),
+        getSlippageLogs(strategyName, 50),
+        getLatencyLogs(strategyName, 50),
+        getExecutionReport(strategyName, 30),
       ]);
 
       if (statusData) setStatus(statusData);
       setSlippageLogs(slipData);
       setLatencyLogs(latData);
       if (reportData) setReport(reportData);
+      setLastUpdated(new Date());
     } finally {
       setLoading(false);
     }
@@ -124,10 +131,10 @@ export default function ExecutionQualityPage() {
     if (!token) return;
     setActionLoading(true);
     try {
-      const result = await recalculateExecutionQuality(token, strategyName);
+      const result = await recalculateExecutionQuality(strategyName);
       if (result) {
         setStatus(result);
-        alert("Emir icra kalitesi metrikleri veritabanındaki tüm işlemler taranarak yeniden hesaplandı!");
+        toast("Emir icra kalitesi metrikleri veritabanındaki tüm işlemler taranarak yeniden hesaplandı!", "success");
         await refresh();
       }
     } finally {
@@ -194,6 +201,7 @@ export default function ExecutionQualityPage() {
       <header className="border-b border-[#deded8] bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div>
+            <Breadcrumb items={[{ label: "İcra Kalitesi" }]} />
             <h1 className="text-xl font-semibold text-[#146c5d]">
               Emir İcra Kalitesi Analiz Sistemi (Execution Quality Engine)
             </h1>
@@ -225,6 +233,7 @@ export default function ExecutionQualityPage() {
               </Button>
             </div>
             <div className="flex items-center gap-2">
+              <LastUpdated time={lastUpdated} />
               <span className="text-sm text-muted">İcra Derecesi:</span>
               <span
                 className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold text-white shadow-sm"
@@ -315,7 +324,7 @@ export default function ExecutionQualityPage() {
       </section>
 
       {/* ─── Row 1: Charts (Slippage & Latency) ─── */}
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-2">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 sm:grid-cols-2 lg:grid-cols-2">
         {/* Slippage Area Chart */}
         <Card>
           <div className="mb-4">
@@ -370,7 +379,7 @@ export default function ExecutionQualityPage() {
       </section>
 
       {/* ─── Row 2: Fill statistics & Strategy execution impact ─── */}
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[2fr_1fr]">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 sm:grid-cols-2 lg:grid-cols-[2fr_1fr]">
         {/* Fill statistics / report */}
         <Card>
           <h2 className="mb-4 text-base font-semibold text-[#146c5d]">
@@ -462,7 +471,7 @@ export default function ExecutionQualityPage() {
       </section>
 
       {/* ─── Row 3: Optimizer Recommendations & Spread/Volatility Correlation ─── */}
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-10 lg:grid-cols-2">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-10 sm:grid-cols-2 lg:grid-cols-2">
         {/* Adaptive execution recommendations */}
         <Card>
           <div className="mb-4 flex items-center justify-between">
@@ -505,13 +514,13 @@ export default function ExecutionQualityPage() {
             <p className="text-xs text-muted">Execution kalitesi ile piyasa parametrelerinin ilişkisi</p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table role="table" className="w-full text-left text-xs">
               <thead className="border-b border-[#deded8] text-muted">
                 <tr>
-                  <th className="py-2">Piyasa Göstergesi</th>
-                  <th>Korelasyon Skoru</th>
-                  <th>Execution Etkisi</th>
-                  <th>Durum</th>
+                  <th scope="col" className="py-2">Piyasa Göstergesi</th>
+                  <th scope="col">Korelasyon Skoru</th>
+                  <th scope="col">Execution Etkisi</th>
+                  <th scope="col">Durum</th>
                 </tr>
               </thead>
               <tbody>

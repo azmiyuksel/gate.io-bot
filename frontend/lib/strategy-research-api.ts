@@ -9,7 +9,7 @@ import type {
 } from "@/types/strategy-research";
 import { authFetch } from "@/lib/auth-api";
 
-export async function getStrategies(token: string, status?: string): Promise<ResearchStrategy[]> {
+export async function getStrategies(status?: string): Promise<ResearchStrategy[]> {
   try {
     const qs = status ? `?status=${status}` : "";
     const res = await authFetch(`/research/strategies${qs}`);
@@ -20,7 +20,7 @@ export async function getStrategies(token: string, status?: string): Promise<Res
   return [];
 }
 
-export async function getLeaderboard(token: string, limit = 25): Promise<StrategyVersion[]> {
+export async function getLeaderboard(limit = 25): Promise<StrategyVersion[]> {
   try {
     const res = await authFetch(`/research/leaderboard?limit=${limit}`);
     if (res.ok) return await res.json();
@@ -30,7 +30,7 @@ export async function getLeaderboard(token: string, limit = 25): Promise<Strateg
   return [];
 }
 
-export async function getExperiments(token: string, limit = 100): Promise<ResearchExperiment[]> {
+export async function getExperiments(limit = 100): Promise<ResearchExperiment[]> {
   try {
     const res = await authFetch(`/research/experiments?limit=${limit}`);
     if (res.ok) return await res.json();
@@ -41,7 +41,6 @@ export async function getExperiments(token: string, limit = 100): Promise<Resear
 }
 
 export async function getFeatures(
-  token: string,
   symbol = "BTC_USDT",
   timeframe = "1h"
 ): Promise<FeatureRecord[]> {
@@ -56,7 +55,7 @@ export async function getFeatures(
   return [];
 }
 
-export async function getHypotheses(token: string, limit = 50): Promise<HypothesisTest[]> {
+export async function getHypotheses(limit = 50): Promise<HypothesisTest[]> {
   try {
     const res = await authFetch(`/research/hypotheses?limit=${limit}`);
     if (res.ok) return await res.json();
@@ -67,7 +66,6 @@ export async function getHypotheses(token: string, limit = 50): Promise<Hypothes
 }
 
 export async function runResearch(
-  token: string,
   symbol = "BTC_USDT",
   timeframe = "1h",
   population?: number
@@ -86,7 +84,6 @@ export async function runResearch(
 }
 
 export async function recomputeFeatures(
-  token: string,
   symbol = "BTC_USDT",
   timeframe = "1h"
 ): Promise<FeatureRecord[]> {
@@ -103,7 +100,6 @@ export async function recomputeFeatures(
 }
 
 export async function testHypotheses(
-  token: string,
   symbol = "BTC_USDT",
   timeframe = "1h"
 ): Promise<HypothesisTest[]> {
@@ -120,7 +116,6 @@ export async function testHypotheses(
 }
 
 export async function promoteStrategy(
-  token: string,
   strategyId: number
 ): Promise<PromotionResult | null> {
   try {

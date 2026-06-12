@@ -25,9 +25,13 @@ import {
 } from "recharts";
 import { useCallback, useEffect, useState } from "react";
 
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LastUpdated } from "@/components/ui/last-updated";
+import { Metric } from "@/components/ui/metric";
+import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import {
   getDataQualityAnomalies,
@@ -76,6 +80,9 @@ export default function DataQualityPage() {
   const [anomalies, setAnomalies] = useState<MarketDataAnomaly[]>([]);
   const [healthLogs, setHealthLogs] = useState<MarketDataHealthLog[]>([]);
   const [message, setMessage] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  const { toast } = useToast();
 
   useEffect(() => {
     setToken(getAccessToken());
@@ -86,13 +93,14 @@ export default function DataQualityPage() {
     setLoading(true);
     try {
       const [s, a, h] = await Promise.all([
-        getDataQualityStatus(token, symbol, timeframe),
-        getDataQualityAnomalies(token, symbol, timeframe, 100),
-        getDataQualityHealthLogs(token, symbol, timeframe, 200),
+        getDataQualityStatus(symbol, timeframe),
+        getDataQualityAnomalies(symbol, timeframe, 100),
+        getDataQualityHealthLogs(symbol, timeframe, 200),
       ]);
       setStatus(s);
       setAnomalies(a);
       setHealthLogs(h);
+      setLastUpdated(new Date());
     } finally {
       setLoading(false);
     }
@@ -110,20 +118,22 @@ export default function DataQualityPage() {
     setActionLoading(true);
     setMessage("");
     try {
-      const result = await revalidateDataQuality(token, symbol, timeframe, 240);
+      const result = await revalidateDataQuality(symbol, timeframe, 240);
       if (result) {
         setMessage(
           `Yeniden doğrulandı: ${result.clean_emitted}/${result.total} temiz, ` +
             `${result.anomalies} anomali, skor ${num(result.health_score).toFixed(1)} (${result.trade_status})`
         );
+        toast("Yeniden doğrulama tamamlandı", "success");
         await refresh();
       } else {
         setMessage("Yeniden doğrulama başarısız (yetki/sembol kontrol edin).");
+        toast("Yeniden doğrulama başarısız", "error");
       }
     } finally {
       setActionLoading(false);
     }
-  }, [token, symbol, timeframe, refresh]);
+  }, [token, symbol, timeframe, refresh, toast]);
 
   const score = num(status?.health_score);
   const category = status?.category ?? "—";
@@ -158,11 +168,13 @@ export default function DataQualityPage() {
         <div className="flex items-center gap-3">
           <Database className="h-7 w-7 text-teal-700" />
           <div>
+            <Breadcrumb items={[{ label: "Veri Kalitesi" }]} />
             <h1 className="text-2xl font-semibold">Piyasa Veri Kalite Kontrolü</h1>
             <p className="text-sm text-neutral-500">
               Gelen verinin doğruluğu, tutarlılığı ve güvenilirliği
             </p>
           </div>
+          <LastUpdated time={lastUpdated} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Input className="w-36" placeholder="Sembol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
@@ -189,7 +201,7 @@ export default function DataQualityPage() {
 
       {status && (
         <>
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
             <Card className="p-5">
               <div className="flex items-center gap-2 text-sm text-neutral-500">
                 <Gauge className="h-4 w-4" /> Veri Sağlık Skoru
@@ -230,7 +242,7 @@ export default function DataQualityPage() {
             </Card>
           </section>
 
-          <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-2">
             <Card className="p-5">
               <h2 className="mb-3 text-sm font-semibold text-neutral-700">Skor Bileşenleri</h2>
               <ResponsiveContainer width="100%" height={220}>
@@ -289,15 +301,15 @@ export default function DataQualityPage() {
           <Card className="p-5">
             <h2 className="mb-3 text-sm font-semibold text-neutral-700">Son Anomaliler</h2>
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table role="table" className="w-full text-left text-sm">
                 <thead className="text-neutral-500">
                   <tr className="border-b">
-                    <th className="py-2 pr-4">Zaman</th>
-                    <th className="py-2 pr-4">Tür</th>
-                    <th className="py-2 pr-4">Önem</th>
-                    <th className="py-2 pr-4">Yöntem</th>
-                    <th className="py-2 pr-4">Onarım</th>
-                    <th className="py-2">Detay</th>
+                    <th scope="col" className="py-2 pr-4">Zaman</th>
+                    <th scope="col" className="py-2 pr-4">Tür</th>
+                    <th scope="col" className="py-2 pr-4">Önem</th>
+                    <th scope="col" className="py-2 pr-4">Yöntem</th>
+                    <th scope="col" className="py-2 pr-4">Onarım</th>
+                    <th scope="col" className="py-2">Detay</th>
                   </tr>
                 </thead>
                 <tbody>

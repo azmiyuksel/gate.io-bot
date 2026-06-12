@@ -16,9 +16,13 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LastUpdated } from "@/components/ui/last-updated";
+import { Metric } from "@/components/ui/metric";
+import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import {
   approvePromotion,
@@ -53,10 +57,12 @@ function num(v: string | number | null | undefined): number {
 }
 
 export default function LearningPage() {
+  const { toast } = useToast();
   const [token, setToken] = useState("");
   const [approver, setApprover] = useState("admin@example.com");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [status, setStatus] = useState<LearningStatus | null>(null);
   const [knowledge, setKnowledge] = useState<KnowledgeEntry[]>([]);
@@ -67,17 +73,18 @@ export default function LearningPage() {
   const refresh = useCallback(async () => {
     if (!token) return;
     const [st, kb, f, r, pr] = await Promise.all([
-      getLearningStatus(token),
-      getKnowledge(token, 40),
-      getDiscoveredFeatures(token),
-      getRankings(token, 25),
-      getPromotionRequests(token),
+      getLearningStatus(),
+      getKnowledge(40),
+      getDiscoveredFeatures(),
+      getRankings(25),
+      getPromotionRequests(),
     ]);
     setStatus(st);
     setKnowledge(kb);
     setFeatures(f);
     setRankings(r);
     setRequests(pr);
+    setLastUpdated(new Date());
   }, [token]);
 
   useEffect(() => {
@@ -93,44 +100,48 @@ export default function LearningPage() {
     setBusy(true);
     setMessage("");
     try {
-      const res = await startLearning(token);
+      const res = await startLearning();
       if (res) {
         setMessage(
           `Öğrenme turu #${res.cycle_id}: ${res.strategies_validated} doğrulandı, ` +
             `${res.promotion_requests} terfi talebi (insan onayı bekliyor). ` +
             `Güvenlik korundu: ${res.safety_invariants_held ? "EVET" : "HAYIR"}`
         );
+        toast("Öğrenme turu başarıyla başlatıldı", "success");
         await refresh();
       } else {
         setMessage("Öğrenme turu başarısız (yetki/veri).");
+        toast("Öğrenme turu başarısız", "error");
       }
     } finally {
       setBusy(false);
     }
-  }, [token, refresh]);
+  }, [token, refresh, toast]);
 
   const onApprove = useCallback(
     async (strategyId: number) => {
       if (!token) return;
-      const res = await approvePromotion(token, strategyId, approver, "approved via dashboard");
+      const res = await approvePromotion(strategyId, approver, "approved via dashboard");
       if (res) {
         setMessage(`Strateji #${strategyId} ONAYLANDI (production'a alındı, canlı trading değişmedi).`);
+        toast(`Strateji #${strategyId} onaylandı`, "success");
         await refresh();
       }
     },
-    [token, approver, refresh]
+    [token, approver, refresh, toast]
   );
 
   const onReject = useCallback(
     async (requestId: number) => {
       if (!token) return;
-      const res = await rejectPromotion(token, requestId, approver, "rejected via dashboard");
+      const res = await rejectPromotion(requestId, approver, "rejected via dashboard");
       if (res) {
         setMessage(`Talep #${requestId} reddedildi.`);
+        toast(`Talep #${requestId} reddedildi`, "info");
         await refresh();
       }
     },
-    [token, approver, refresh]
+    [token, approver, refresh, toast]
   );
 
   const pending = requests.filter((r) => r.status === "AWAITING_APPROVAL");
@@ -141,6 +152,7 @@ export default function LearningPage() {
         <div className="flex items-center gap-3">
           <Brain className="h-7 w-7 text-teal-700" />
           <div>
+            <Breadcrumb items={[{ label: "Otomatik Öğrenme" }]} />
             <h1 className="text-2xl font-semibold">Otomatik Öğrenme & Sürekli Evrim</h1>
             <p className="text-sm text-neutral-500">
               Araştırma → Doğrulama → Paper → <strong>İnsan Onayı</strong> → Production
@@ -148,6 +160,7 @@ export default function LearningPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <LastUpdated time={lastUpdated} onRefresh={refresh} loading={busy} />
           <Input className="w-52" placeholder="Onaylayan e-posta" value={approver} onChange={(e) => setApprover(e.target.value)} />
           <Button onClick={refresh}>
             <RefreshCw className="mr-1 h-4 w-4" /> Yenile
@@ -167,7 +180,7 @@ export default function LearningPage() {
       {message && <div className="rounded-md bg-teal-50 px-4 py-2 text-sm text-teal-800">{message}</div>}
 
       {status && (
-        <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
           <Card className="p-5">
             <div className="flex items-center gap-2 text-sm text-neutral-500">
               <Sparkles className="h-4 w-4" /> Onay Bekleyen
@@ -200,15 +213,15 @@ export default function LearningPage() {
           <Rocket className="h-4 w-4" /> Terfi Adayları (İnsan Onayı Gerekli)
         </h2>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table role="table" className="w-full text-left text-sm">
             <thead className="text-neutral-500">
               <tr className="border-b">
-                <th className="py-2 pr-3">Talep</th>
-                <th className="py-2 pr-3">Strateji</th>
-                <th className="py-2 pr-3">Skor</th>
-                <th className="py-2 pr-3">Sharpe</th>
-                <th className="py-2 pr-3">Tutarlılık</th>
-                <th className="py-2">Karar</th>
+                <th scope="col" className="py-2 pr-3">Talep</th>
+                <th scope="col" className="py-2 pr-3">Strateji</th>
+                <th scope="col" className="py-2 pr-3">Skor</th>
+                <th scope="col" className="py-2 pr-3">Sharpe</th>
+                <th scope="col" className="py-2 pr-3">Tutarlılık</th>
+                <th scope="col" className="py-2">Karar</th>
               </tr>
             </thead>
             <tbody>
@@ -251,20 +264,20 @@ export default function LearningPage() {
         </div>
       </Card>
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Card className="p-5">
           <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-700">
             <CheckCircle2 className="h-4 w-4" /> Strateji Sıralaması (0-100)
           </h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table role="table" className="w-full text-left text-sm">
               <thead className="text-neutral-500">
                 <tr className="border-b">
-                  <th className="py-2 pr-3">Strateji</th>
-                  <th className="py-2 pr-3">Skor</th>
-                  <th className="py-2 pr-3">Robust.</th>
-                  <th className="py-2 pr-3">WF</th>
-                  <th className="py-2">Stab.</th>
+                  <th scope="col" className="py-2 pr-3">Strateji</th>
+                  <th scope="col" className="py-2 pr-3">Skor</th>
+                  <th scope="col" className="py-2 pr-3">Robust.</th>
+                  <th scope="col" className="py-2 pr-3">WF</th>
+                  <th scope="col" className="py-2">Stab.</th>
                 </tr>
               </thead>
               <tbody>
@@ -294,13 +307,13 @@ export default function LearningPage() {
             <Lightbulb className="h-4 w-4" /> Keşfedilen Feature'lar
           </h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table role="table" className="w-full text-left text-sm">
               <thead className="text-neutral-500">
                 <tr className="border-b">
-                  <th className="py-2 pr-3">Feature</th>
-                  <th className="py-2 pr-3">Formül</th>
-                  <th className="py-2 pr-3">Korelasyon</th>
-                  <th className="py-2">Stabilite</th>
+                  <th scope="col" className="py-2 pr-3">Feature</th>
+                  <th scope="col" className="py-2 pr-3">Formül</th>
+                  <th scope="col" className="py-2 pr-3">Korelasyon</th>
+                  <th scope="col" className="py-2">Stabilite</th>
                 </tr>
               </thead>
               <tbody>

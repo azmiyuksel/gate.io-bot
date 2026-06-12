@@ -9,7 +9,7 @@ import type {
 } from "@/types/learning";
 import { authFetch } from "@/lib/auth-api";
 
-async function getJson<T>(token: string, path: string, fallback: T): Promise<T> {
+async function getJson<T>(path: string, fallback: T): Promise<T> {
   try {
     const res = await authFetch(path);
     if (res.ok) return (await res.json()) as T;
@@ -19,30 +19,28 @@ async function getJson<T>(token: string, path: string, fallback: T): Promise<T> 
   return fallback;
 }
 
-export const getLearningStatus = (token: string) =>
-  getJson<LearningStatus | null>(token, "/learning/status", null);
+export const getLearningStatus = () =>
+  getJson<LearningStatus | null>("/learning/status", null);
 
-export const getKnowledge = (token: string, limit = 50) =>
-  getJson<KnowledgeEntry[]>(token, `/learning/knowledge?limit=${limit}`, []);
+export const getKnowledge = (limit = 50) =>
+  getJson<KnowledgeEntry[]>(`/learning/knowledge?limit=${limit}`, []);
 
-export const getDiscoveredFeatures = (token: string, symbol = "BTC_USDT", timeframe = "1h") =>
-  getJson<DiscoveredFeature[]>(token, `/learning/features?symbol=${symbol}&timeframe=${timeframe}`, []);
+export const getDiscoveredFeatures = (symbol = "BTC_USDT", timeframe = "1h") =>
+  getJson<DiscoveredFeature[]>(`/learning/features?symbol=${symbol}&timeframe=${timeframe}`, []);
 
-export const getRankings = (token: string, limit = 25) =>
-  getJson<StrategyRanking[]>(token, `/learning/rankings?limit=${limit}`, []);
+export const getRankings = (limit = 25) =>
+  getJson<StrategyRanking[]>(`/learning/rankings?limit=${limit}`, []);
 
-export const getPromotionRequests = (token: string, status?: string) =>
+export const getPromotionRequests = (status?: string) =>
   getJson<PromotionRequest[]>(
-    token,
     `/learning/promotion-requests${status ? `?status=${status}` : ""}`,
     []
   );
 
-export const getLearningHypotheses = (token: string, limit = 30) =>
-  getJson<LearningHypothesis[]>(token, `/learning/hypotheses?limit=${limit}`, []);
+export const getLearningHypotheses = (limit = 30) =>
+  getJson<LearningHypothesis[]>(`/learning/hypotheses?limit=${limit}`, []);
 
 export async function startLearning(
-  token: string,
   symbol = "BTC_USDT",
   timeframe = "1h",
   population?: number
@@ -61,7 +59,6 @@ export async function startLearning(
 }
 
 export async function approvePromotion(
-  token: string,
   strategyId: number,
   decidedBy: string,
   note?: string
@@ -80,7 +77,6 @@ export async function approvePromotion(
 }
 
 export async function rejectPromotion(
-  token: string,
   requestId: number,
   decidedBy: string,
   note?: string

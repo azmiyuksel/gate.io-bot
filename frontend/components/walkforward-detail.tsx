@@ -1,10 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Download } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, Download } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Metric } from "@/components/ui/metric";
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { money } from "@/lib/utils";
 import { authFetch, getAccessToken } from "@/lib/auth-api";
 import type { WalkForwardDetail as WalkForwardDetailType } from "@/types/walkforward";
@@ -43,18 +46,33 @@ export function WalkForwardDetail({ id }: { id: string }) {
   return (
     <main className="min-h-screen">
       <header className="border-b border-border bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div>
-            <h1 className="text-xl font-semibold">WFA Sonucu #{id}</h1>
-            <p className="text-sm text-muted">{run ? `${run.symbol} · ${run.mode} · ${run.deployment_decision.decision}` : "Panelden giriş yapın ve sonucu yükleyin"}</p>
+            <Breadcrumb
+              items={[
+                { label: "Walk-Forward", href: "/walk-forward" },
+                { label: `Sonucu #${id}` },
+              ]}
+            />
+            <h1 className="mt-2 text-xl font-semibold">WFA Sonucu #{id}</h1>
+            <p className="text-sm text-muted">
+              {run ? `${run.symbol} · ${run.mode} · ${run.deployment_decision.decision}` : "Panelden giriş yapın ve sonucu yükleyin"}
+            </p>
           </div>
           <div className="flex items-center gap-3">
-            <a href={`${apiUrl}/walkforward/${id}/report`}><Button><Download size={16} /> PDF</Button></a>
+            <Link href="/walk-forward">
+              <Button className="bg-transparent text-foreground hover:bg-border/60">
+                <ArrowLeft size={16} /> Geri
+              </Button>
+            </Link>
+            <a href={`${apiUrl}/walkforward/${id}/report`}>
+              <Button><Download size={16} /> PDF</Button>
+            </a>
           </div>
         </div>
       </header>
 
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 lg:grid-cols-5">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-3 lg:grid-cols-5">
         <Metric label="Robustness" value={String(run?.aggregated_metrics.robustness_score ?? 0)} />
         <Metric label="WFE" value={`${Number(run?.aggregated_metrics.wfe ?? 0) * 100}%`} />
         <Metric label="Consistency" value={`${Number(run?.aggregated_metrics.consistency_score ?? 0) * 100}%`} />
@@ -65,11 +83,19 @@ export function WalkForwardDetail({ id }: { id: string }) {
       <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-2">
         <Card>
           <h2 className="mb-4 text-base font-semibold">Combined Equity Curve</h2>
-          {equityFigure ? <Plot data={equityFigure.data} layout={{ ...equityFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} /> : <p className="text-sm text-muted">Grafik yok.</p>}
+          {equityFigure ? (
+            <Plot data={equityFigure.data} layout={{ ...equityFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} />
+          ) : (
+            <p className="text-sm text-muted">Grafik yok.</p>
+          )}
         </Card>
         <Card>
           <h2 className="mb-4 text-base font-semibold">Window Performance</h2>
-          {windowFigure ? <Plot data={windowFigure.data} layout={{ ...windowFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} /> : <p className="text-sm text-muted">Grafik yok.</p>}
+          {windowFigure ? (
+            <Plot data={windowFigure.data} layout={{ ...windowFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} />
+          ) : (
+            <p className="text-sm text-muted">Grafik yok.</p>
+          )}
         </Card>
       </section>
 
@@ -78,7 +104,16 @@ export function WalkForwardDetail({ id }: { id: string }) {
           <h2 className="mb-4 text-base font-semibold">Pencereler</h2>
           <div className="grid gap-2">
             {(run?.windows ?? []).map((item) => (
-              <button key={item.window_id} className="rounded-md border border-border px-3 py-2 text-left text-sm" onClick={() => setSelectedWindow(item.window_id)}>
+              <button
+                key={item.window_id}
+                className={`rounded-md border px-3 py-2 text-left text-sm transition ${
+                  selectedWindow === item.window_id
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border hover:bg-border/60"
+                }`}
+                onClick={() => setSelectedWindow(item.window_id)}
+                aria-pressed={selectedWindow === item.window_id}
+              >
                 Window {item.window_id} · WFE {(item.wfe * 100).toFixed(1)}%
               </button>
             ))}
@@ -114,10 +149,11 @@ function parseFigure(raw?: string) {
   }
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return <Card><div className="text-sm text-muted">{label}</div><div className="mt-2 text-2xl font-semibold">{value}</div></Card>;
-}
-
 function Info({ label, value }: { label: string; value: string }) {
-  return <div><div className="text-muted">{label}</div><div className="font-medium">{value}</div></div>;
+  return (
+    <div>
+      <div className="text-muted">{label}</div>
+      <div className="font-medium">{value}</div>
+    </div>
+  );
 }

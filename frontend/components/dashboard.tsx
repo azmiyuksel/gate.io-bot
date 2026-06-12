@@ -16,6 +16,10 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Metric } from "@/components/ui/metric";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { LastUpdated } from "@/components/ui/last-updated";
+import { useToast } from "@/components/ui/toast";
 import { money } from "@/lib/utils";
 import { authFetch, getAccessToken, login, logout } from "@/lib/auth-api";
 import type { DashboardSummary } from "@/types/dashboard";
@@ -77,6 +81,7 @@ interface EconomicsData {
 }
 
 export function Dashboard() {
+  const { toast } = useToast();
   const [summary, setSummary] = useState<DashboardSummary>(fallback);
   const [charts, setCharts] = useState<ChartsData>({
     equity_curve: [],
@@ -90,41 +95,58 @@ export function Dashboard() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [confirmClose, setConfirmClose] = useState<{ id: number; symbol: string } | null>(null);
 
   async function refresh() {
     if (!token) return;
     setLoading(true);
     try {
       const response = await authFetch(`/dashboard/summary`);
-      if (response.ok) setSummary(await response.json());
-      else if (response.status === 401) {
+      if (response.ok) {
+        setSummary(await response.json());
+        setLastUpdated(new Date());
+      } else if (response.status === 401) {
         setToken("");
         setAuthError("Oturum süresi doldu, tekrar giriş yapın.");
         return;
+      } else {
+        toast("Dashboard verisi alınamadı", "error");
       }
       const chartsResponse = await authFetch(`/dashboard/charts`);
       if (chartsResponse.ok) setCharts(await chartsResponse.json());
       const econResponse = await authFetch(`/dashboard/economics`);
       if (econResponse.ok) setEconomics(await econResponse.json());
+    } catch {
+      toast("Sunucuya ulaşılamadı", "error");
     } finally {
       setLoading(false);
     }
   }
 
   async function saveRisk() {
-    await authFetch(`/dashboard/strategy`, {
+    const res = await authFetch(`/dashboard/strategy`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(summary.strategy),
     });
-    await refresh();
+    if (res.ok) {
+      toast("Risk ayarları kaydedildi", "success");
+      await refresh();
+    } else {
+      toast("Risk ayarları kaydedilemedi", "error");
+    }
   }
 
-  async function closePosition(id: number, symbol: string) {
-    // Closing a position is irreversible — confirm first.
-    if (!window.confirm(`${symbol} pozisyonunu kapatmak istediğinize emin misiniz?`)) return;
-    await authFetch(`/dashboard/positions/${id}/close`, { method: "POST" });
-    await refresh();
+  async function closePosition(id: number, _symbol: string) {
+    const res = await authFetch(`/dashboard/positions/${id}/close`, { method: "POST" });
+    if (res.ok) {
+      toast("Pozisyon kapatıldı", "success");
+      await refresh();
+    } else {
+      toast("Pozisyon kapatılamadı", "error");
+    }
+    setConfirmClose(null);
   }
 
   async function handleLogin() {
@@ -133,6 +155,7 @@ export function Dashboard() {
       const tokens = await login(email, password);
       setToken(tokens.access_token);
       setPassword("");
+      toast("Giriş başarılı", "success");
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Giriş başarısız");
     }
@@ -142,9 +165,9 @@ export function Dashboard() {
     await logout();
     setToken("");
     setSummary(fallback);
+    toast("Çıkış yapıldı", "info");
   }
 
-  // Restore an existing session from storage on first mount.
   useEffect(() => {
     const stored = getAccessToken();
     if (stored) setToken(stored);
@@ -157,7 +180,7 @@ export function Dashboard() {
   return (
     <main className="min-h-screen">
       <header className="border-b border-border bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div>
             <h1 className="text-xl font-semibold">Gate.io Spot Capital Bot</h1>
             <p className="text-sm text-muted">Düşük riskli spot strateji kontrol paneli</p>
@@ -165,21 +188,26 @@ export function Dashboard() {
           <div className="flex items-center gap-3">
             {token ? (
               <>
-                <Button onClick={refresh} disabled={loading}>
-                  <Activity size={16} /> Yenile
-                </Button>
+                <LastUpdated time={lastUpdated} onRefresh={refresh} loading={loading} />
                 <Button onClick={handleLogout}>
                   <Lock size={16} /> Çıkış
                 </Button>
               </>
             ) : (
-              <>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleLogin();
+                }}
+                className="flex items-center gap-3"
+              >
                 <Input
                   className="w-48"
                   placeholder="E-posta"
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
+                  aria-label="E-posta adresi"
                 />
                 <Input
                   className="w-48"
@@ -187,12 +215,12 @@ export function Dashboard() {
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  onKeyDown={(event) => event.key === "Enter" && handleLogin()}
+                  aria-label="Parola"
                 />
-                <Button onClick={handleLogin}>
+                <Button type="submit">
                   <Lock size={16} /> Giriş
                 </Button>
-              </>
+              </form>
             )}
           </div>
         </div>
@@ -200,13 +228,13 @@ export function Dashboard() {
 
       {authError && (
         <div className="mx-auto max-w-7xl px-6 pt-4">
-          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700" role="alert">
             {authError}
           </div>
         </div>
       )}
 
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 lg:grid-cols-4">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-4">
         <Metric label="Toplam bakiye" value={`$${money(summary.total_balance)}`} icon={<ShieldCheck size={18} />} />
         <Metric label="Günlük PnL" value={`$${money(summary.daily_pnl)}`} icon={<Activity size={18} />} />
         <Metric label="Haftalık PnL" value={`$${money(summary.weekly_pnl)}`} icon={<Activity size={18} />} />
@@ -254,7 +282,7 @@ export function Dashboard() {
       </section>
 
       {economics && economics.edge.trades > 0 && (
-        <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-4">
+        <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 sm:grid-cols-2 lg:grid-cols-4">
           <Metric
             label="İşlem başı beklenen değer (EV)"
             value={`$${economics.edge.expectancy.toFixed(2)}`}
@@ -287,15 +315,15 @@ export function Dashboard() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Açık Pozisyonlar</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full text-left text-sm" role="table">
               <thead className="border-b border-border text-muted">
                 <tr>
-                  <th className="py-2">Sembol</th>
-                  <th>Giriş</th>
-                  <th>Miktar</th>
-                  <th>Stop</th>
-                  <th>Hedef</th>
-                  <th />
+                  <th className="py-2" scope="col">Sembol</th>
+                  <th scope="col">Giriş</th>
+                  <th scope="col">Miktar</th>
+                  <th scope="col">Stop</th>
+                  <th scope="col">Hedef</th>
+                  <th scope="col"><span className="sr-only">İşlem</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -307,7 +335,11 @@ export function Dashboard() {
                     <td>{money(position.stop_loss)}</td>
                     <td>{money(position.take_profit)}</td>
                     <td className="text-right">
-                      <Button className="bg-danger px-3" onClick={() => closePosition(position.id, position.symbol)}>
+                      <Button
+                        className="bg-danger px-3"
+                        onClick={() => setConfirmClose({ id: position.id, symbol: position.symbol })}
+                        aria-label={`${position.symbol} pozisyonunu kapat`}
+                      >
                         <XCircle size={16} /> Kapat
                       </Button>
                     </td>
@@ -335,19 +367,17 @@ export function Dashboard() {
           <Button className="mt-4 w-full" onClick={saveRisk}>Kaydet</Button>
         </Card>
       </section>
-    </main>
-  );
-}
 
-function Metric({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
-  return (
-    <Card>
-      <div className="mb-3 flex items-center justify-between text-muted">
-        <span className="text-sm">{label}</span>
-        {icon}
-      </div>
-      <div className="text-2xl font-semibold">{value}</div>
-    </Card>
+      <ConfirmDialog
+        open={!!confirmClose}
+        title="Pozisyonu Kapat"
+        message={`${confirmClose?.symbol} pozisyonunu kapatmak istediğinize emin misiniz? Bu işlem geri alınamaz.`}
+        confirmLabel="Kapat"
+        danger
+        onConfirm={() => confirmClose && closePosition(confirmClose.id, confirmClose.symbol)}
+        onCancel={() => setConfirmClose(null)}
+      />
+    </main>
   );
 }
 

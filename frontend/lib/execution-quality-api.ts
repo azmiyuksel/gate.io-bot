@@ -7,7 +7,6 @@ import type {
 import { authFetch } from "@/lib/auth-api";
 
 export async function getStrategyExecutionStatus(
-  token: string,
   strategyName: string
 ): Promise<ExecutionQualityStatus | null> {
   try {
@@ -20,7 +19,6 @@ export async function getStrategyExecutionStatus(
 }
 
 export async function getSlippageLogs(
-  token: string,
   strategyName: string = "capital_preservation_v1",
   limit: number = 100
 ): Promise<ExecutionSlippageLog[]> {
@@ -36,7 +34,6 @@ export async function getSlippageLogs(
 }
 
 export async function getLatencyLogs(
-  token: string,
   strategyName: string = "capital_preservation_v1",
   limit: number = 100
 ): Promise<ExecutionLatencyLog[]> {
@@ -52,7 +49,6 @@ export async function getLatencyLogs(
 }
 
 export async function getExecutionReport(
-  token: string,
   strategyName: string = "capital_preservation_v1",
   days: number = 30
 ): Promise<ExecutionReport | null> {
@@ -68,15 +64,12 @@ export async function getExecutionReport(
 }
 
 export async function recalculateExecutionQuality(
-  token: string,
   strategyName: string = "capital_preservation_v1"
 ): Promise<ExecutionQualityStatus | null> {
   try {
     const res = await authFetch(
       `/execution-quality/recalculate?strategy_name=${strategyName}`,
-      {
-        method: "POST",
-      }
+      { method: "POST" }
     );
     if (res.ok) return await res.json();
   } catch (err) {

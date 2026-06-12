@@ -26,9 +26,13 @@ import {
 } from "recharts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LastUpdated } from "@/components/ui/last-updated";
+import { Metric } from "@/components/ui/metric";
+import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import { money } from "@/lib/utils";
 import {
@@ -50,10 +54,10 @@ import type {
 } from "@/types/health";
 
 const STATE_COLORS: Record<string, string> = {
-  ACTIVE: "#146c5d", // Green
-  WARNING: "#d97706", // Amber
-  CRITICAL: "#b42318", // Red
-  PAUSED: "#6b7280", // Gray
+  ACTIVE: "#146c5d",
+  WARNING: "#d97706",
+  CRITICAL: "#b42318",
+  PAUSED: "#6b7280",
 };
 
 const STATE_LABELS: Record<string, string> = {
@@ -71,6 +75,7 @@ const ALERT_COLORS: Record<string, string> = {
 };
 
 export default function StrategyHealthPage() {
+  const { toast } = useToast();
   const [token, setToken] = useState("");
   const [strategyName, setStrategyName] = useState("capital_preservation_v1");
   const [loading, setLoading] = useState(false);
@@ -78,6 +83,7 @@ export default function StrategyHealthPage() {
   const [activeChartMetric, setActiveChartMetric] = useState<
     "sharpe" | "win_rate" | "profit_factor" | "drawdown"
   >("sharpe");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [healthStatus, setHealthStatus] = useState<StrategyHealthStatus | null>(null);
   const [baseline, setBaseline] = useState<StrategyBaseline | null>(null);
@@ -108,6 +114,7 @@ export default function StrategyHealthPage() {
       setMetricsHistory(metrics);
       setAlerts(alertList);
       setTransitions(transList);
+      setLastUpdated(new Date());
     } finally {
       setLoading(false);
     }
@@ -116,7 +123,7 @@ export default function StrategyHealthPage() {
   useEffect(() => {
     if (!token || !strategyName) return;
     refresh();
-    intervalRef.current = setInterval(refresh, 5000); // 5s auto-refresh
+    intervalRef.current = setInterval(refresh, 5000);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
@@ -129,7 +136,7 @@ export default function StrategyHealthPage() {
       const result = await recalculateStrategyHealth(strategyName);
       if (result) {
         setHealthStatus(result);
-        alert("Strateji sağlık parametreleri ve sapma değerleri geçmişe yönelik başarıyla yeniden hesaplandı!");
+        toast("Strateji sağlık parametreleri ve sapma değerleri geçmişe yönelik başarıyla yeniden hesaplandı!", "success");
         await refresh();
       }
     } finally {
@@ -143,7 +150,7 @@ export default function StrategyHealthPage() {
     try {
       const success = await pauseStrategy(strategyName);
       if (success) {
-        alert(`Strateji (${strategyName}) başarıyla duraklatıldı.`);
+        toast(`Strateji (${strategyName}) başarıyla duraklatıldı.`, "success");
         await refresh();
       }
     } finally {
@@ -157,7 +164,7 @@ export default function StrategyHealthPage() {
     try {
       const success = await resumeStrategy(strategyName);
       if (success) {
-        alert(`Strateji (${strategyName}) başarıyla yeniden aktif edildi.`);
+        toast(`Strateji (${strategyName}) başarıyla yeniden aktif edildi.`, "success");
         await refresh();
       }
     } finally {
@@ -165,7 +172,6 @@ export default function StrategyHealthPage() {
     }
   }
 
-  // Format charts for Expected vs Actual comparison
   const chartData = metricsHistory.map((m) => {
     const time = new Date(m.created_at).toLocaleTimeString("tr-TR", {
       hour: "2-digit",
@@ -217,11 +223,9 @@ export default function StrategyHealthPage() {
   const currentFailureMode = healthStatus?.failure_mode ?? "None";
   const currentAnomaly = healthStatus?.anomaly ?? "NORMAL";
 
-  // State Badge Component style selector
   const stateColor = STATE_COLORS[currentState] ?? "#6b7280";
   const stateLabel = STATE_LABELS[currentState] ?? currentState;
 
-  // Failure Mode localized mapper
   const getFailureModeLabel = (mode: string) => {
     switch (mode) {
       case "Gradual Decay":
@@ -244,6 +248,7 @@ export default function StrategyHealthPage() {
       <header className="border-b border-[#deded8] bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div>
+            <Breadcrumb items={[{ label: "Strateji Sağlık" }]} />
             <h1 className="text-xl font-semibold text-[#146c5d]">
               Strateji Sağlık İzleme Sistemi (Strategy Health Monitor)
             </h1>
@@ -252,6 +257,7 @@ export default function StrategyHealthPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <LastUpdated time={lastUpdated} />
             <Input
               className="w-48"
               placeholder="Strateji Adı"
@@ -378,7 +384,7 @@ export default function StrategyHealthPage() {
       </section>
 
       {/* ─── Row 1: Charts & Expected vs Actual selector ─── */}
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[2fr_1fr]">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 sm:grid-cols-2 lg:grid-cols-[2fr_1fr]">
         <Card className="flex flex-col justify-between">
           <div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
@@ -507,7 +513,7 @@ export default function StrategyHealthPage() {
       </section>
 
       {/* ─── Row 2: Alert List & Transitions Timeline ─── */}
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-10 lg:grid-cols-2">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-10 sm:grid-cols-2 lg:grid-cols-2">
         {/* Alert Logs */}
         <Card>
           <div className="mb-4 flex items-center justify-between">
@@ -515,13 +521,13 @@ export default function StrategyHealthPage() {
             <span className="text-xs text-muted">Son 100 kayıt</span>
           </div>
           <div className="max-h-[300px] overflow-y-auto">
-            <table className="w-full text-left text-xs">
+            <table role="table" className="w-full text-left text-xs">
               <thead className="border-b border-[#deded8] text-muted">
                 <tr>
-                  <th className="py-2">Zaman</th>
-                  <th>Seviye</th>
-                  <th>Mesaj</th>
-                  <th>Alınan Aksiyon</th>
+                  <th scope="col" className="py-2">Zaman</th>
+                  <th scope="col">Seviye</th>
+                  <th scope="col">Mesaj</th>
+                  <th scope="col">Alınan Aksiyon</th>
                 </tr>
               </thead>
               <tbody>
@@ -560,14 +566,14 @@ export default function StrategyHealthPage() {
             <span className="text-xs text-muted">Durum Değişikliği Tarihçesi</span>
           </div>
           <div className="max-h-[300px] overflow-y-auto">
-            <table className="w-full text-left text-xs">
+            <table role="table" className="w-full text-left text-xs">
               <thead className="border-b border-[#deded8] text-muted">
                 <tr>
-                  <th className="py-2">Zaman</th>
-                  <th>Eski Durum</th>
-                  <th className="px-2" />
-                  <th>Yeni Durum</th>
-                  <th>Neden / Tetikleyici</th>
+                  <th scope="col" className="py-2">Zaman</th>
+                  <th scope="col">Eski Durum</th>
+                  <th scope="col" className="px-2" />
+                  <th scope="col">Yeni Durum</th>
+                  <th scope="col">Neden / Tetikleyici</th>
                 </tr>
               </thead>
               <tbody>

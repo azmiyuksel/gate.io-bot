@@ -29,6 +29,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Metric } from "@/components/ui/metric";
+import { Breadcrumb } from "@/components/ui/breadcrumb";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { LastUpdated } from "@/components/ui/last-updated";
+import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import { money } from "@/lib/utils";
 import {
@@ -51,12 +56,13 @@ import type {
   PaperTrade,
 } from "@/types/paper";
 
-/* ───────────────────────────── Page ───────────────────────────── */
-
 export default function PaperTradingPage() {
+  const { toast } = useToast();
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const [status, setStatus] = useState<PaperStatus | null>(null);
   const [positions, setPositions] = useState<PaperPosition[]>([]);
@@ -86,6 +92,7 @@ export default function PaperTradingPage() {
       setTrades(t);
       setEquity(e);
       if (r) setRisk(r);
+      setLastUpdated(new Date());
     } finally {
       setLoading(false);
     }
@@ -100,23 +107,23 @@ export default function PaperTradingPage() {
     };
   }, [token, refresh]);
 
-  async function action(fn: () => Promise<boolean>) {
+  async function action(fn: () => Promise<boolean>, successMsg: string) {
     setActionLoading(true);
-    await fn();
+    const ok = await fn();
+    if (ok) toast(successMsg, "success");
+    else toast("İşlem başarısız", "error");
     await refresh();
     setActionLoading(false);
   }
 
   const botStatus = status?.status ?? "STOPPED";
 
-  /* ── Equity chart data ── */
   const equityChartData = equity.map((p) => ({
     time: new Date(p.timestamp).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
     equity: p.equity,
     drawdown: Math.abs(p.drawdown) * 100,
   }));
 
-  /* ── Daily PnL from trades ── */
   const dailyPnl = trades.reduce((acc, t) => {
     const day = new Date(t.traded_at).toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" });
     acc[day] = (acc[day] || 0) + Number(t.realized_pnl);
@@ -128,73 +135,58 @@ export default function PaperTradingPage() {
 
   return (
     <main className="min-h-screen">
-      {/* ─── Header ─── */}
       <header className="border-b border-border bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div>
-            <h1 className="text-xl font-semibold">Paper Trading</h1>
+            <Breadcrumb items={[{ label: "Paper Trading" }]} />
+            <h1 className="mt-2 text-xl font-semibold">Paper Trading</h1>
             <p className="text-sm text-muted">Sanal canlı işlem simülasyonu</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <StatusBadge status={botStatus} />
-            <Button onClick={refresh} disabled={loading || !token}>
-              <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Yenile
-            </Button>
+            <LastUpdated time={lastUpdated} onRefresh={refresh} loading={loading} />
           </div>
         </div>
-        {/* Action buttons */}
         {token && (
           <div className="mx-auto flex max-w-7xl flex-wrap gap-2 px-6 pb-4">
             {botStatus === "STOPPED" && (
-              <Button onClick={() => action(startPaperTrading)} disabled={actionLoading}>
+              <Button onClick={() => action(startPaperTrading, "Paper trading başlatıldı")} disabled={actionLoading}>
                 <Play size={15} /> Başlat
               </Button>
             )}
             {botStatus === "RUNNING" && (
               <>
-                <Button onClick={() => action(pausePaperTrading)} disabled={actionLoading} className="bg-amber-600">
+                <Button onClick={() => action(pausePaperTrading, "Duraklatıldı")} disabled={actionLoading} className="bg-amber-600">
                   <CirclePause size={15} /> Duraklat
                 </Button>
-                <Button onClick={() => action(stopPaperTrading)} disabled={actionLoading} className="bg-danger">
+                <Button onClick={() => action(stopPaperTrading, "Durduruldu")} disabled={actionLoading} className="bg-danger">
                   <Square size={15} /> Durdur
                 </Button>
               </>
             )}
             {botStatus === "PAUSED" && (
               <>
-                <Button onClick={() => action(resumePaperTrading)} disabled={actionLoading}>
+                <Button onClick={() => action(resumePaperTrading, "Devam ediliyor")} disabled={actionLoading}>
                   <Play size={15} /> Devam Et
                 </Button>
-                <Button onClick={() => action(stopPaperTrading)} disabled={actionLoading} className="bg-danger">
+                <Button onClick={() => action(stopPaperTrading, "Durduruldu")} disabled={actionLoading} className="bg-danger">
                   <Square size={15} /> Durdur
                 </Button>
               </>
             )}
-            <Button
-              onClick={() => {
-                if (confirm("Tüm paper trading verileri sıfırlanacak. Emin misiniz?")) action(resetPaperTrading);
-              }}
-              disabled={actionLoading}
-              className="bg-foreground/80"
-            >
+            <Button onClick={() => setConfirmReset(true)} disabled={actionLoading} className="bg-foreground/80">
               <RotateCcw size={15} /> Sıfırla
             </Button>
           </div>
         )}
       </header>
 
-      {/* ─── Metric Cards ─── */}
       <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric
-          label="Equity"
-          value={`$${money(status?.equity ?? 0)}`}
-          icon={<Activity size={18} />}
-        />
+        <Metric label="Equity" value={`$${money(status?.equity ?? 0)}`} icon={<Activity size={18} />} />
         <Metric
           label="Realized PnL"
           value={`$${money(status?.realized_pnl ?? 0)}`}
           icon={Number(status?.realized_pnl ?? 0) >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
-          color={Number(status?.realized_pnl ?? 0) >= 0 ? "#146c5d" : "#b42318"}
         />
         <Metric
           label="Win Rate"
@@ -205,11 +197,9 @@ export default function PaperTradingPage() {
           label="Max Drawdown"
           value={`${(Math.abs(status?.metrics?.drawdown ?? 0) * 100).toFixed(2)}%`}
           icon={<ShieldAlert size={18} />}
-          color="#b42318"
         />
       </section>
 
-      {/* ─── Charts ─── */}
       <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[2fr_1fr]">
         <Card>
           <div className="mb-4 flex items-center justify-between">
@@ -262,22 +252,20 @@ export default function PaperTradingPage() {
         </Card>
       </section>
 
-      {/* ─── Positions + Risk ─── */}
       <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[2fr_1fr]">
-        {/* Open Positions */}
         <Card>
           <h2 className="mb-4 text-base font-semibold">Açık Pozisyonlar</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full text-left text-sm" role="table">
               <thead className="border-b border-border text-muted">
                 <tr>
-                  <th className="py-2">Sembol</th>
-                  <th>Miktar</th>
-                  <th>Giriş</th>
-                  <th>Güncel</th>
-                  <th>PnL</th>
-                  <th>Stop</th>
-                  <th>Hedef</th>
+                  <th className="py-2" scope="col">Sembol</th>
+                  <th scope="col">Miktar</th>
+                  <th scope="col">Giriş</th>
+                  <th scope="col">Güncel</th>
+                  <th scope="col">PnL</th>
+                  <th scope="col">Stop</th>
+                  <th scope="col">Hedef</th>
                 </tr>
               </thead>
               <tbody>
@@ -299,9 +287,7 @@ export default function PaperTradingPage() {
                 })}
                 {positions.length === 0 && (
                   <tr>
-                    <td className="py-6 text-muted" colSpan={7}>
-                      Açık pozisyon yok.
-                    </td>
+                    <td className="py-6 text-muted" colSpan={7}>Açık pozisyon yok.</td>
                   </tr>
                 )}
               </tbody>
@@ -309,7 +295,6 @@ export default function PaperTradingPage() {
           </div>
         </Card>
 
-        {/* Risk Status */}
         <Card>
           <div className="mb-4 flex items-center gap-2">
             <ShieldAlert size={17} />
@@ -317,34 +302,10 @@ export default function PaperTradingPage() {
           </div>
           {risk ? (
             <div className="space-y-5">
-              <RiskItem
-                label="Günlük Zarar"
-                current={risk.current_daily_loss_pct * 100}
-                max={risk.max_daily_loss_pct * 100}
-                unit="%"
-                color={risk.current_daily_loss_pct / risk.max_daily_loss_pct > 0.7 ? "#b42318" : "#146c5d"}
-              />
-              <RiskItem
-                label="Drawdown"
-                current={risk.current_drawdown * 100}
-                max={risk.max_drawdown_pct * 100}
-                unit="%"
-                color={risk.current_drawdown / risk.max_drawdown_pct > 0.7 ? "#b42318" : "#146c5d"}
-              />
-              <RiskItem
-                label="Exposure"
-                current={risk.current_exposure * 100}
-                max={risk.max_exposure_pct * 100}
-                unit="%"
-                color={risk.current_exposure / risk.max_exposure_pct > 0.7 ? "#b42318" : "#146c5d"}
-              />
-              <RiskItem
-                label="Açık Pozisyon"
-                current={risk.current_open_positions}
-                max={risk.max_open_positions}
-                unit=""
-                color={risk.current_open_positions >= risk.max_open_positions ? "#b42318" : "#146c5d"}
-              />
+              <RiskItem label="Günlük Zarar" current={risk.current_daily_loss_pct * 100} max={risk.max_daily_loss_pct * 100} unit="%" color={risk.current_daily_loss_pct / risk.max_daily_loss_pct > 0.7 ? "#b42318" : "#146c5d"} />
+              <RiskItem label="Drawdown" current={risk.current_drawdown * 100} max={risk.max_drawdown_pct * 100} unit="%" color={risk.current_drawdown / risk.max_drawdown_pct > 0.7 ? "#b42318" : "#146c5d"} />
+              <RiskItem label="Exposure" current={risk.current_exposure * 100} max={risk.max_exposure_pct * 100} unit="%" color={risk.current_exposure / risk.max_exposure_pct > 0.7 ? "#b42318" : "#146c5d"} />
+              <RiskItem label="Açık Pozisyon" current={risk.current_open_positions} max={risk.max_open_positions} unit="" color={risk.current_open_positions >= risk.max_open_positions ? "#b42318" : "#146c5d"} />
             </div>
           ) : (
             <p className="text-sm text-muted">Risk verisi yok.</p>
@@ -352,21 +313,20 @@ export default function PaperTradingPage() {
         </Card>
       </section>
 
-      {/* ─── Recent Trades ─── */}
       <section className="mx-auto max-w-7xl px-6 pb-10">
         <Card>
           <h2 className="mb-4 text-base font-semibold">Son İşlemler</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full text-left text-sm" role="table">
               <thead className="border-b border-border text-muted">
                 <tr>
-                  <th className="py-2">Zaman</th>
-                  <th>Sembol</th>
-                  <th>Yön</th>
-                  <th>Fiyat</th>
-                  <th>Miktar</th>
-                  <th>Ücret</th>
-                  <th>PnL</th>
+                  <th className="py-2" scope="col">Zaman</th>
+                  <th scope="col">Sembol</th>
+                  <th scope="col">Yön</th>
+                  <th scope="col">Fiyat</th>
+                  <th scope="col">Miktar</th>
+                  <th scope="col">Ücret</th>
+                  <th scope="col">PnL</th>
                 </tr>
               </thead>
               <tbody>
@@ -375,20 +335,11 @@ export default function PaperTradingPage() {
                   return (
                     <tr key={trade.id} className="border-b border-border">
                       <td className="py-3 text-muted">
-                        {new Date(trade.traded_at).toLocaleString("tr-TR", {
-                          day: "2-digit",
-                          month: "2-digit",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                        {new Date(trade.traded_at).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
                       </td>
                       <td className="font-medium">{trade.symbol}</td>
                       <td>
-                        <span
-                          className={`inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase text-white ${
-                            trade.side === "buy" ? "bg-primary" : "bg-danger"
-                          }`}
-                        >
+                        <span className={`inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase text-white ${trade.side === "buy" ? "bg-primary" : "bg-danger"}`}>
                           {trade.side === "buy" ? "AL" : "SAT"}
                         </span>
                       </td>
@@ -403,9 +354,7 @@ export default function PaperTradingPage() {
                 })}
                 {trades.length === 0 && (
                   <tr>
-                    <td className="py-6 text-muted" colSpan={7}>
-                      İşlem geçmişi yok.
-                    </td>
+                    <td className="py-6 text-muted" colSpan={7}>İşlem geçmişi yok.</td>
                   </tr>
                 )}
               </tbody>
@@ -413,11 +362,22 @@ export default function PaperTradingPage() {
           </div>
         </Card>
       </section>
+
+      <ConfirmDialog
+        open={confirmReset}
+        title="Paper Trading'i Sıfırla"
+        message="Tüm paper trading verileri sıfırlanacak. Emin misiniz?"
+        confirmLabel="Sıfırla"
+        danger
+        onConfirm={() => {
+          setConfirmReset(false);
+          action(resetPaperTrading, "Sıfırlandı");
+        }}
+        onCancel={() => setConfirmReset(false)}
+      />
     </main>
   );
 }
-
-/* ───────────────────── Sub-components ───────────────────── */
 
 function StatusBadge({ status }: { status: string }) {
   const config = {
@@ -434,43 +394,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function Metric({
-  label,
-  value,
-  icon,
-  color,
-}: {
-  label: string;
-  value: string;
-  icon: React.ReactNode;
-  color?: string;
-}) {
-  return (
-    <Card>
-      <div className="mb-3 flex items-center justify-between text-muted">
-        <span className="text-sm">{label}</span>
-        {icon}
-      </div>
-      <div className="text-2xl font-semibold" style={color ? { color } : undefined}>
-        {value}
-      </div>
-    </Card>
-  );
-}
-
-function RiskItem({
-  label,
-  current,
-  max,
-  unit,
-  color,
-}: {
-  label: string;
-  current: number;
-  max: number;
-  unit: string;
-  color: string;
-}) {
+function RiskItem({ label, current, max, unit, color }: { label: string; current: number; max: number; unit: string; color: string }) {
   const pct = max > 0 ? Math.min((current / max) * 100, 100) : 0;
   return (
     <div>
@@ -481,10 +405,7 @@ function RiskItem({
         </span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-border">
-        <div
-          className="h-2 rounded-full transition-all duration-500"
-          style={{ width: `${pct}%`, backgroundColor: color }}
-        />
+        <div className="h-2 rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: color }} />
       </div>
     </div>
   );

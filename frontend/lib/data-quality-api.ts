@@ -8,7 +8,6 @@ import type {
 import { authFetch } from "@/lib/auth-api";
 
 export async function getDataQualityStatus(
-  token: string,
   symbol: string,
   timeframe: string = "1h"
 ): Promise<DataQualityStatus | null> {
@@ -24,7 +23,6 @@ export async function getDataQualityStatus(
 }
 
 export async function getDataQualityAnomalies(
-  token: string,
   symbol: string,
   timeframe: string = "1h",
   limit: number = 100
@@ -41,7 +39,6 @@ export async function getDataQualityAnomalies(
 }
 
 export async function getDataQualityHealthLogs(
-  token: string,
   symbol: string,
   timeframe: string = "1h",
   limit: number = 200
@@ -58,7 +55,6 @@ export async function getDataQualityHealthLogs(
 }
 
 export async function getDataQualityReport(
-  token: string,
   symbol: string,
   timeframe: string = "1h",
   hours: number = 24
@@ -75,7 +71,6 @@ export async function getDataQualityReport(
 }
 
 export async function revalidateDataQuality(
-  token: string,
   symbol: string,
   timeframe: string = "1h",
   limit: number = 240

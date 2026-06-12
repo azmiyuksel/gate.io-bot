@@ -29,10 +29,13 @@ import {
 } from "recharts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { LastUpdated } from "@/components/ui/last-updated";
 import { getAccessToken } from "@/lib/auth-api";
 import { money } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast";
 import {
   getCurrentRegime,
   getRegimeHistory,
@@ -61,9 +64,11 @@ const REGIME_LABELS: Record<string, string> = {
 };
 
 export default function MarketRegimePage() {
+  const { toast } = useToast();
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [currentRegime, setCurrentRegime] = useState<RegimeStatus | null>(null);
   const [history, setHistory] = useState<RegimeStatus[]>([]);
@@ -90,6 +95,7 @@ export default function MarketRegimePage() {
       setHistory(hist);
       setPerformance(perf);
       setTransitions(trans);
+      setLastUpdated(new Date());
     } finally {
       setLoading(false);
     }
@@ -108,8 +114,10 @@ export default function MarketRegimePage() {
     setActionLoading(true);
         const success = await recalculateRegime();
     if (success) {
-      alert("Piyasa rejimi geçmişi başarıyla hesaplandı ve modeller eğitildi!");
+      toast("Piyasa rejimi geçmişi başarıyla hesaplandı ve modeller eğitildi!", "success");
       await refresh();
+    } else {
+      toast("Piyasa rejimi hesaplama başarısız oldu.", "error");
     }
     setActionLoading(false);
   }
@@ -154,10 +162,12 @@ export default function MarketRegimePage() {
       <header className="border-b border-border bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div>
+            <Breadcrumb items={[{ label: "Piyasa Rejimi" }]} />
             <h1 className="text-xl font-semibold">Piyasa Rejim Analizi (Market Regime)</h1>
             <p className="text-sm text-muted">Makine öğrenimi ve kurallı analiz ile piyasa koşulu tespiti</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <LastUpdated time={lastUpdated} />
             <Button onClick={refresh} disabled={loading || !token}>
               <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Yenile
             </Button>
@@ -215,7 +225,7 @@ export default function MarketRegimePage() {
       </section>
 
       {/* ─── Row 1: Charts ─── */}
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[2fr_1fr]">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 sm:grid-cols-2 lg:grid-cols-[2fr_1fr]">
         <Card>
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-base font-semibold">Regime Tahmin Güven Geçmişi</h2>
@@ -272,16 +282,16 @@ export default function MarketRegimePage() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Rejim Bazlı Strateji Performans Matrisi</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table role="table" className="w-full text-left text-sm">
               <thead className="border-b border-border text-muted">
                 <tr>
-                  <th className="py-2">Piyasa Rejimi</th>
-                  <th>Strateji</th>
-                  <th>Toplam İşlem</th>
-                  <th>Kazanma Oranı (Win Rate)</th>
-                  <th>Profit Factor</th>
-                  <th>Toplam PnL</th>
-                  <th>Maks Drawdown</th>
+                  <th scope="col" className="py-2">Piyasa Rejimi</th>
+                  <th scope="col">Strateji</th>
+                  <th scope="col">Toplam İşlem</th>
+                  <th scope="col">Kazanma Oranı (Win Rate)</th>
+                  <th scope="col">Profit Factor</th>
+                  <th scope="col">Toplam PnL</th>
+                  <th scope="col">Maks Drawdown</th>
                 </tr>
               </thead>
               <tbody>
@@ -318,7 +328,7 @@ export default function MarketRegimePage() {
       </section>
 
       {/* ─── Row 3: Votes breakdown & Transitions ─── */}
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-10 lg:grid-cols-[1fr_1fr]">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-10 sm:grid-cols-2 lg:grid-cols-[1fr_1fr]">
         {/* Model Votes Breakdown */}
         <Card>
           <h2 className="mb-4 text-base font-semibold">Ensemble Model Karar Dağılımı</h2>
@@ -354,13 +364,13 @@ export default function MarketRegimePage() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Rejim Geçiş Günlüğü (Transition Timeline)</h2>
           <div className="overflow-y-auto max-h-[220px]">
-            <table className="w-full text-left text-xs">
+            <table role="table" className="w-full text-left text-xs">
               <thead className="border-b border-border text-muted">
                 <tr>
-                  <th className="py-2">Zaman</th>
-                  <th>Eski Rejim</th>
-                  <th>Yeni Rejim</th>
-                  <th>Güven</th>
+                  <th scope="col" className="py-2">Zaman</th>
+                  <th scope="col">Eski Rejim</th>
+                  <th scope="col">Yeni Rejim</th>
+                  <th scope="col">Güven</th>
                 </tr>
               </thead>
               <tbody>

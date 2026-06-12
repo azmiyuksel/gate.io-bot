@@ -23,9 +23,13 @@ import {
 } from "recharts";
 import { useCallback, useEffect, useState } from "react";
 
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LastUpdated } from "@/components/ui/last-updated";
+import { Metric } from "@/components/ui/metric";
+import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import {
   getExperiments,
@@ -66,11 +70,13 @@ function num(v: string | number | null | undefined): number {
 }
 
 export default function StrategyResearchPage() {
+  const { toast } = useToast();
   const [token, setToken] = useState("");
   const [symbol, setSymbol] = useState("BTC_USDT");
   const [timeframe, setTimeframe] = useState("1h");
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [strategies, setStrategies] = useState<ResearchStrategy[]>([]);
   const [leaderboard, setLeaderboard] = useState<StrategyVersion[]>([]);
@@ -81,17 +87,18 @@ export default function StrategyResearchPage() {
   const refresh = useCallback(async () => {
     if (!token) return;
     const [s, lb, f, h, e] = await Promise.all([
-      getStrategies(token),
-      getLeaderboard(token, 25),
-      getFeatures(token, symbol, timeframe),
-      getHypotheses(token, 20),
-      getExperiments(token, 30),
+      getStrategies(),
+      getLeaderboard(25),
+      getFeatures(symbol, timeframe),
+      getHypotheses(20),
+      getExperiments(30),
     ]);
     setStrategies(s);
     setLeaderboard(lb);
     setFeatures(f);
     setHypotheses(h);
     setExperiments(e);
+    setLastUpdated(new Date());
   }, [token, symbol, timeframe]);
 
   useEffect(() => {
@@ -107,58 +114,65 @@ export default function StrategyResearchPage() {
     setBusy("run");
     setMessage("");
     try {
-      const result = await runResearch(token, symbol, timeframe);
+      const result = await runResearch(symbol, timeframe);
       if (result) {
-        setMessage(
-          result.evaluated
-            ? `Tur tamamlandı: ${result.evaluated} strateji denendi, ${result.promoted} terfi, en iyi fitness ${result.best_fitness}`
-            : `Yetersiz veri: ${result.reason ?? "historical candle yok"}`
-        );
+        const msg = result.evaluated
+          ? `Tur tamamlandı: ${result.evaluated} strateji denendi, ${result.promoted} terfi, en iyi fitness ${result.best_fitness}`
+          : `Yetersiz veri: ${result.reason ?? "historical candle yok"}`;
+        setMessage(msg);
+        toast(msg, "success");
         await refresh();
       } else {
         setMessage("Araştırma turu başarısız (yetki/sembol).");
+        toast("Araştırma turu başarısız (yetki/sembol).", "error");
       }
     } finally {
       setBusy("");
     }
-  }, [token, symbol, timeframe, refresh]);
+  }, [token, symbol, timeframe, refresh, toast]);
 
   const onRecomputeFeatures = useCallback(async () => {
     if (!token) return;
     setBusy("features");
     try {
-      const f = await recomputeFeatures(token, symbol, timeframe);
+      const f = await recomputeFeatures(symbol, timeframe);
       setFeatures(f);
-      setMessage(`${f.length} feature yeniden hesaplandı.`);
+      const msg = `${f.length} feature yeniden hesaplandı.`;
+      setMessage(msg);
+      toast(msg, "success");
     } finally {
       setBusy("");
     }
-  }, [token, symbol, timeframe]);
+  }, [token, symbol, timeframe, toast]);
 
   const onTestHypotheses = useCallback(async () => {
     if (!token) return;
     setBusy("hypotheses");
     try {
-      const h = await testHypotheses(token, symbol, timeframe);
+      const h = await testHypotheses(symbol, timeframe);
       setHypotheses(h);
-      setMessage(`${h.length} hipotez test edildi.`);
+      const msg = `${h.length} hipotez test edildi.`;
+      setMessage(msg);
+      toast(msg, "success");
     } finally {
       setBusy("");
     }
-  }, [token, symbol, timeframe]);
+  }, [token, symbol, timeframe, toast]);
 
   const onPromote = useCallback(
     async (strategyId: number) => {
       if (!token) return;
-      const result = await promoteStrategy(token, strategyId);
+      const result = await promoteStrategy(strategyId);
       if (result) {
-        setMessage(
-          `Strateji #${strategyId}: ${result.decision} — ${result.reasons.join("; ")}`
-        );
+        const msg = `Strateji #${strategyId}: ${result.decision} — ${result.reasons.join("; ")}`;
+        setMessage(msg);
+        toast(msg, "success");
         await refresh();
+      } else {
+        toast("Terfi işlemi başarısız.", "error");
       }
     },
-    [token, refresh]
+    [token, refresh, toast]
   );
 
   const counts = strategies.reduce<Record<string, number>>((acc, s) => {
@@ -176,16 +190,20 @@ export default function StrategyResearchPage() {
   return (
     <main className="mx-auto max-w-7xl space-y-6 p-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <FlaskConical className="h-7 w-7 text-teal-700" />
-          <div>
-            <h1 className="text-2xl font-semibold">Strateji Araştırma Laboratuvarı</h1>
-            <p className="text-sm text-neutral-500">
-              Strateji üretimi, evrimsel optimizasyon, A/B test ve production terfisi
-            </p>
+        <div>
+          <Breadcrumb items={[{ label: "Araştırma Lab" }]} />
+          <div className="mt-2 flex items-center gap-3">
+            <FlaskConical className="h-7 w-7 text-teal-700" />
+            <div>
+              <h1 className="text-2xl font-semibold">Strateji Araştırma Laboratuvarı</h1>
+              <p className="text-sm text-neutral-500">
+                Strateji üretimi, evrimsel optimizasyon, A/B test ve production terfisi
+              </p>
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <LastUpdated time={lastUpdated} onRefresh={refresh} loading={!!busy} />
           <Input className="w-36" placeholder="Sembol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} />
           <Input className="w-20" placeholder="TF" value={timeframe} onChange={(e) => setTimeframe(e.target.value)} />
           <Button onClick={refresh}>
@@ -208,33 +226,28 @@ export default function StrategyResearchPage() {
 
       {message && <div className="rounded-md bg-teal-50 px-4 py-2 text-sm text-teal-800">{message}</div>}
 
-      <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {(["PROMOTED", "CANDIDATE", "REJECTED", "ARCHIVED"] as const).map((st) => (
-          <Card key={st} className="p-5">
-            <div className="text-sm text-neutral-500">{st}</div>
-            <div className="mt-1 text-3xl font-bold" style={{ color: STATUS_COLORS[st] }}>
-              {counts[st] ?? 0}
-            </div>
-          </Card>
+          <Metric key={st} label={st} value={String(counts[st] ?? 0)} />
         ))}
       </section>
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Card className="p-5">
           <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-neutral-700">
             <Trophy className="h-4 w-4" /> Strateji Lider Tablosu (fitness)
           </h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table role="table" className="w-full text-left text-sm">
               <thead className="text-neutral-500">
                 <tr className="border-b">
-                  <th className="py-2 pr-3">Strateji</th>
-                  <th className="py-2 pr-3">Fitness</th>
-                  <th className="py-2 pr-3">Sharpe</th>
-                  <th className="py-2 pr-3">DD</th>
-                  <th className="py-2 pr-3">Stab.</th>
-                  <th className="py-2 pr-3">Overfit</th>
-                  <th className="py-2">Aksiyon</th>
+                  <th scope="col" className="py-2 pr-3">Strateji</th>
+                  <th scope="col" className="py-2 pr-3">Fitness</th>
+                  <th scope="col" className="py-2 pr-3">Sharpe</th>
+                  <th scope="col" className="py-2 pr-3">DD</th>
+                  <th scope="col" className="py-2 pr-3">Stab.</th>
+                  <th scope="col" className="py-2 pr-3">Overfit</th>
+                  <th scope="col" className="py-2">Aksiyon</th>
                 </tr>
               </thead>
               <tbody>
@@ -297,15 +310,15 @@ export default function StrategyResearchPage() {
           <Lightbulb className="h-4 w-4" /> Hipotez Testleri
         </h2>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table role="table" className="w-full text-left text-sm">
             <thead className="text-neutral-500">
               <tr className="border-b">
-                <th className="py-2 pr-3">Hipotez</th>
-                <th className="py-2 pr-3">Koşul</th>
-                <th className="py-2 pr-3">Edge</th>
-                <th className="py-2 pr-3">p-değeri</th>
-                <th className="py-2 pr-3">Örnek</th>
-                <th className="py-2">Durum</th>
+                <th scope="col" className="py-2 pr-3">Hipotez</th>
+                <th scope="col" className="py-2 pr-3">Koşul</th>
+                <th scope="col" className="py-2 pr-3">Edge</th>
+                <th scope="col" className="py-2 pr-3">p-değeri</th>
+                <th scope="col" className="py-2 pr-3">Örnek</th>
+                <th scope="col" className="py-2">Durum</th>
               </tr>
             </thead>
             <tbody>
@@ -341,14 +354,14 @@ export default function StrategyResearchPage() {
       <Card className="p-5">
         <h2 className="mb-3 text-sm font-semibold text-neutral-700">Son Deneyler</h2>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table role="table" className="w-full text-left text-sm">
             <thead className="text-neutral-500">
               <tr className="border-b">
-                <th className="py-2 pr-3">Zaman</th>
-                <th className="py-2 pr-3">Tür</th>
-                <th className="py-2 pr-3">Strateji</th>
-                <th className="py-2 pr-3">Fitness</th>
-                <th className="py-2">Durum</th>
+                <th scope="col" className="py-2 pr-3">Zaman</th>
+                <th scope="col" className="py-2 pr-3">Tür</th>
+                <th scope="col" className="py-2 pr-3">Strateji</th>
+                <th scope="col" className="py-2 pr-3">Fitness</th>
+                <th scope="col" className="py-2">Durum</th>
               </tr>
             </thead>
             <tbody>

@@ -29,9 +29,13 @@ import {
 } from "recharts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { getAccessToken } from "@/lib/auth-api";
+import { LastUpdated } from "@/components/ui/last-updated";
+import { Metric } from "@/components/ui/metric";
 import { money } from "@/lib/utils";
 import {
   getPortfolio,
@@ -42,14 +46,18 @@ import {
   runStressTest,
   triggerRebalance,
 } from "@/lib/portfolio-api";
+import { useToast } from "@/components/ui/toast";
 import type { Allocation, Portfolio, PortfolioMetric, RebalanceEvent, RiskSnapshot } from "@/types/portfolio";
 
 const COLORS = ["#146c5d", "#15b79e", "#e5e5e0", "#b42318"];
 
 export default function PortfolioPage() {
+  const { toast } = useToast();
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [metrics, setMetrics] = useState<PortfolioMetric[]>([]);
@@ -77,6 +85,7 @@ export default function PortfolioPage() {
       setMetrics(m);
       setAllocations(a);
       setRebalances(r);
+      setLastUpdated(new Date());
     } finally {
       setLoading(false);
     }
@@ -95,22 +104,24 @@ export default function PortfolioPage() {
     setActionLoading(true);
     const success = await triggerRebalance();
     if (success) {
-      alert("Portföy başarıyla yeniden dengelendi!");
+      toast("Portföy başarıyla yeniden dengelendi!", "success");
       await refresh();
     }
     setActionLoading(false);
   }
 
   async function handleReset() {
-    if (confirm("Portföy verileri ve metrikleri sıfırlanacak. Emin misiniz?")) {
-      setActionLoading(true);
-      const success = await resetPortfolio();
-      if (success) {
-        setStressResult(null);
-        await refresh();
-      }
-      setActionLoading(false);
+    setConfirmReset(true);
+  }
+
+  async function handleResetConfirm() {
+    setActionLoading(true);
+    const success = await resetPortfolio();
+    if (success) {
+      setStressResult(null);
+      await refresh();
     }
+    setActionLoading(false);
   }
 
   async function handleStressTest(scenario: string) {
@@ -150,14 +161,25 @@ export default function PortfolioPage() {
 
   return (
     <main className="min-h-screen">
+      <ConfirmDialog
+        open={confirmReset}
+        title="Portföyü Sıfırla"
+        message="Portföy verileri ve metrikleri sıfırlanacak. Emin misiniz?"
+        confirmLabel="Sıfırla"
+        danger
+        onConfirm={handleResetConfirm}
+        onCancel={() => setConfirmReset(false)}
+      />
       {/* ─── Header ─── */}
       <header className="border-b border-border bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div>
+            <Breadcrumb items={[{ label: "Portföy" }]} />
             <h1 className="text-xl font-semibold">Portföy Yönetimi</h1>
             <p className="text-sm text-muted">Çoklu strateji ve sermaye dağıtım kontrol merkezi</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <LastUpdated time={lastUpdated} />
             <Button onClick={refresh} disabled={loading || !token}>
               <RefreshCw size={16} className={loading ? "animate-spin" : ""} /> Yenile
             </Button>
@@ -285,15 +307,15 @@ export default function PortfolioPage() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Aktif Portföy Varlıkları</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table role="table" className="w-full text-left text-sm">
               <thead className="border-b border-border text-muted">
                 <tr>
-                  <th className="py-2">Varlık</th>
-                  <th>Miktar</th>
-                  <th>Giriş Fiyatı</th>
-                  <th>Güncel Fiyat</th>
-                  <th>Unrealized PnL</th>
-                  <th>Risk Katkısı</th>
+                  <th scope="col" className="py-2">Varlık</th>
+                  <th scope="col">Miktar</th>
+                  <th scope="col">Giriş Fiyatı</th>
+                  <th scope="col">Güncel Fiyat</th>
+                  <th scope="col">Unrealized PnL</th>
+                  <th scope="col">Risk Katkısı</th>
                 </tr>
               </thead>
               <tbody>
@@ -328,12 +350,12 @@ export default function PortfolioPage() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Rolling Korelasyon Matrisi</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-center text-xs">
+            <table role="table" className="w-full text-center text-xs">
               <thead>
                 <tr>
-                  <th className="py-2 text-left text-muted">Varlık</th>
+                  <th scope="col" className="py-2 text-left text-muted">Varlık</th>
                   {symbols.map((s) => (
-                    <th key={s} className="font-semibold text-muted">{s.replace("_USDT", "")}</th>
+                    <th scope="col" key={s} className="font-semibold text-muted">{s.replace("_USDT", "")}</th>
                   ))}
                 </tr>
               </thead>
@@ -413,13 +435,13 @@ export default function PortfolioPage() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Dengeleme Geçmişi (Rebalance History)</h2>
           <div className="overflow-y-auto max-h-[300px]">
-            <table className="w-full text-left text-sm">
+            <table role="table" className="w-full text-left text-sm">
               <thead className="border-b border-border text-muted">
                 <tr>
-                  <th className="py-2">Zaman</th>
-                  <th>Sebep</th>
-                  <th>Detaylar</th>
-                  <th>Durum</th>
+                  <th scope="col" className="py-2">Zaman</th>
+                  <th scope="col">Sebep</th>
+                  <th scope="col">Detaylar</th>
+                  <th scope="col">Durum</th>
                 </tr>
               </thead>
               <tbody>
@@ -458,29 +480,5 @@ export default function PortfolioPage() {
         </Card>
       </section>
     </main>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  icon,
-  color,
-}: {
-  label: string;
-  value: string;
-  icon: React.ReactNode;
-  color?: string;
-}) {
-  return (
-    <Card>
-      <div className="mb-3 flex items-center justify-between text-muted">
-        <span className="text-sm font-medium">{label}</span>
-        {icon}
-      </div>
-      <div className="text-2xl font-bold" style={color ? { color } : undefined}>
-        {value}
-      </div>
-    </Card>
   );
 }
