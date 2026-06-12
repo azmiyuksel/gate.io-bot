@@ -122,9 +122,13 @@ class ResearchBacktestRunner:
             is_sharpe > 0 and oos_sharpe < 0
         )
 
+        metrics_with_split = dict(metrics)
+        metrics_with_split["in_sample_sharpe"] = round(is_sharpe, 6)
+        metrics_with_split["out_sample_sharpe"] = round(oos_sharpe, 6)
+
         return EvaluationResult(
             genome=genome,
-            metrics=metrics,
+            metrics=metrics_with_split,
             monte_carlo=full["monte_carlo"],
             walk_forward=wf,
             sharpe=sharpe,

@@ -22,6 +22,7 @@ from app.services.notifications.telegram import TelegramNotifier
 from app.services.risk.circuit_breaker import CircuitBreaker
 from app.services.risk.manager import RiskManager, drawdown_risk_multiplier
 from app.services.strategy.signals import CapitalPreservationStrategy
+from app.strategy_health.anomaly_detector import StrategyAnomalyDetector
 from app.strategy_health.engine import StrategyHealthEngine
 
 
@@ -50,6 +51,7 @@ class TradingEngine:
         self.positions = PositionRepository(db)
         self.orders = OrderRepository(db)
         self.notifier = TelegramNotifier()
+        self._health_anomaly_detector = StrategyAnomalyDetector()
 
     async def scan_symbol(self, symbol: str, equity: Decimal) -> None:
         signal_time = datetime.now(UTC)
@@ -62,7 +64,7 @@ class TradingEngine:
 
         # Market Data Quality gate: run the feed through the quality pipeline and
         # block trading on unreliable data, de-risk on degraded data.
-        mdq_result = MarketDataQualityEngine(self.db).ingest(candles, symbol, "1h", source="gateio")
+        mdq_result = MarketDataQualityEngine(self.db).ingest(candles, symbol, get_settings().market_data_interval, source="gateio")
         data_status = mdq_result.trade_status
         if data_status == DataTradeStatus.invalid and get_settings().mdq_pause_on_invalid:
             self._log(
@@ -94,7 +96,7 @@ class TradingEngine:
             for c in candles
         ]
         
-        regime_engine.update_regime(symbol, "1h", candles_list)
+        regime_engine.update_regime(symbol, get_settings().market_data_interval, candles_list)
         strategy_name = self.strategy.name
         allowed, reason, risk_mult = regime_engine.should_trade(strategy_name, symbol)
         
@@ -103,7 +105,7 @@ class TradingEngine:
             return
 
         # Strategy Health Filter
-        health_engine = StrategyHealthEngine(self.db)
+        health_engine = StrategyHealthEngine(self.db, anomaly_detector=self._health_anomaly_detector)
         health_status = health_engine.update_health(strategy_name) or {}
 
         health_state = health_status.get("state")
@@ -274,12 +276,19 @@ class TradingEngine:
         response = await self.client.place_market_sell(position.symbol, position.quantity)
         ack_time = datetime.now(UTC)
 
+        filled_qty = Decimal(str(response.get("filled_total") or position.quantity))
         exit_price = Decimal(str(response.get("avg_deal_price") or position.entry_price))
         fee = _fee_in_quote(response, exit_price, position.symbol)
-        pnl = (exit_price - position.entry_price) * position.quantity - fee
-        position.status = PositionStatus.closed
+        pnl = (exit_price - position.entry_price) * filled_qty - fee
+
+        if filled_qty < position.quantity:
+            position.quantity = position.quantity - filled_qty
+            position.status = PositionStatus.open
+        else:
+            position.status = PositionStatus.closed
         position.closed_at = datetime.now(UTC)
         position.realized_pnl = pnl
+
         order = Order(
             exchange_order_id=str(response.get("id")),
             position_id=position.id,
@@ -287,7 +296,7 @@ class TradingEngine:
             side=OrderSide.sell,
             status=OrderStatus.open,
             price=exit_price,
-            quantity=position.quantity,
+            quantity=filled_qty,
             raw_response=json.dumps(response),
         )
         self.db.add(order)
@@ -298,7 +307,7 @@ class TradingEngine:
             symbol=position.symbol,
             side=OrderSide.sell,
             price=exit_price,
-            quantity=position.quantity,
+            quantity=filled_qty,
             fee=fee,
             realized_pnl=pnl,
         )
@@ -318,7 +327,7 @@ class TradingEngine:
             submission_time=submission_time,
             order_id=order.id,
             fill_price=exit_price,
-            fill_quantity=Decimal(str(response.get("filled_total") or position.quantity)),
+            fill_quantity=filled_qty,
             fee=fee,
             ack_time=ack_time,
         )

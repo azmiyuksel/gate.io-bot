@@ -35,6 +35,26 @@ class TelegramNotifier:
         except Exception as exc:  # noqa: BLE001 - alerts are non-critical
             logger.warning("Telegram notification failed: %s", exc)
 
+    def send_sync(self, message: str) -> None:
+        """Synchronous version of send() for use in non-async contexts."""
+        settings = get_settings()
+        if not settings.telegram_bot_token or not settings.telegram_chat_id:
+            return
+        url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+        try:
+            with httpx.Client(timeout=10) as client:
+                response = client.post(
+                    url,
+                    json={
+                        "chat_id": settings.telegram_chat_id,
+                        "text": message,
+                        "parse_mode": "Markdown",
+                    },
+                )
+                response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - alerts are non-critical
+            logger.warning("Telegram notification failed: %s", exc)
+
     async def send_trade_opened(self, symbol: str, side: str, quantity: float, price: float) -> None:
         emoji = "\U0001f4c8" if side == "buy" else "\U0001f4c9"
         msg = (

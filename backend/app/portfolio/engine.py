@@ -137,6 +137,7 @@ class PortfolioEngine:
         trades = (
             self.db.query(Trade)
             .filter(Trade.status == PositionStatus.closed)
+            .filter(Trade.strategy_name == name)
             .order_by(Trade.closed_at.desc())
             .limit(500)
             .all()

@@ -25,11 +25,11 @@ logger = logging.getLogger(__name__)
 
 
 class StrategyHealthEngine:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, anomaly_detector: StrategyAnomalyDetector | None = None) -> None:
         self.db = db
         self.baseline_manager = StrategyBaselineManager(db)
         self.drift_detector = StrategyDriftDetector()
-        self.anomaly_detector = StrategyAnomalyDetector()
+        self.anomaly_detector = anomaly_detector or StrategyAnomalyDetector()
         self.alert_manager = StrategyAlertManager(db)
         self.notifier = TelegramNotifier()
 
@@ -94,15 +94,10 @@ class StrategyHealthEngine:
                 settings.is_enabled = False
                 self.db.commit()
                 # Send critical alert
-                import asyncio
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(self.notifier.send_strategy_paused(
-                        strategy_name,
-                        f"performansı kritik seviyede bozuldu (drift={drift_score:.2f})",
-                    ))
-                except RuntimeError:
-                    logger.warning("Strategy-health alert skipped (no running event loop)", exc_info=True)
+                self.notifier.send_sync(
+                    f"🔴 Strateji duraklatıldı: {strategy_name} — "
+                    f"performansı kritik seviyede bozuldu (drift={drift_score:.2f})"
+                )
         elif action == "block_new_trades":
             new_state = StrategyHealthState.degraded
         elif action == "risk_reduced_50":
