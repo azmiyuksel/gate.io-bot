@@ -30,6 +30,9 @@ class CapitalPreservationStrategy:
         self.ema20_distance_pct = Decimal(str(settings.strategy_ema20_distance_pct))
         self.max_24h_range_pct = Decimal(str(settings.strategy_max_24h_range_pct))
         self.daily_range_candles = settings.strategy_daily_range_candles
+        # Volume filter: reject entries when current volume is below this fraction
+        # of the recent average volume. Default 50%.
+        self.min_volume_ratio = Decimal(str(getattr(settings, "strategy_min_volume_ratio", "0.5")))
 
     def evaluate(self, candles: list[dict]) -> Signal:
         if len(candles) < 210:
@@ -48,6 +51,30 @@ class CapitalPreservationStrategy:
         # the ratio checks below raise ZeroDivisionError and crash the scan.
         if last_price <= 0 or ema_20 <= 0 or ema_200 <= 0:
             return Signal(False, "invalid_price_data")
+
+        # --- Volume filter: reject low-volume entries ---
+        # Extract base volumes from candles (index 6 in GateIO v4 response, or derived from quote_volume/close)
+        base_volumes: list[Decimal] = []
+        for candle in candles:
+            # GateIOClient.candles() returns dicts with "volume" key (base volume)
+            if "volume" in candle and candle["volume"] is not None:
+                base_volumes.append(Decimal(str(candle["volume"])))
+            elif "quote_volume" in candle and candle["quote_volume"] is not None:
+                # Fallback: derive base volume from quote volume / close
+                close = Decimal(str(candle["close"])) if candle["close"] is not None else Decimal("0")
+                if close > 0:
+                    base_volumes.append(Decimal(str(candle["quote_volume"])) / close)
+                else:
+                    base_volumes.append(Decimal("0"))
+            else:
+                base_volumes.append(Decimal("0"))
+
+        if len(base_volumes) >= 20:  # Need enough samples for meaningful average
+            recent_volumes = base_volumes[-20:]
+            avg_volume = sum(recent_volumes) / Decimal(len(recent_volumes))
+            current_volume = base_volumes[-1]
+            if avg_volume > 0 and current_volume / avg_volume < self.min_volume_ratio:
+                return Signal(False, "low_volume")
 
         if last_price <= ema_200:
             return Signal(False, "below_200_ema")

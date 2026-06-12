@@ -1,7 +1,17 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -110,6 +120,28 @@ class Trade(Base):
 
 class StrategySettings(Base):
     __tablename__ = "strategy_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "max_capital_per_trade_pct > 0 AND max_capital_per_trade_pct <= 0.20",
+            name="ck_max_capital_per_trade_pct",
+        ),
+        CheckConstraint(
+            "daily_max_loss_pct > 0 AND daily_max_loss_pct <= 0.10",
+            name="ck_daily_max_loss_pct",
+        ),
+        CheckConstraint(
+            "weekly_max_loss_pct > 0 AND weekly_max_loss_pct <= 0.30",
+            name="ck_weekly_max_loss_pct",
+        ),
+        CheckConstraint(
+            "trailing_stop_pct > 0 AND trailing_stop_pct < 1",
+            name="ck_trailing_stop_pct",
+        ),
+        CheckConstraint(
+            "atr_multiplier > 0 AND atr_multiplier <= 10",
+            name="ck_atr_multiplier",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True, default="capital_preservation_v1")
@@ -128,10 +160,10 @@ class SystemLog(Base):
     __tablename__ = "system_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    level: Mapped[LogLevel] = mapped_column(String(16), default=LogLevel.info)
-    source: Mapped[str] = mapped_column(String(64))
+    level: Mapped[LogLevel] = mapped_column(String(16), default=LogLevel.info, index=True)
+    source: Mapped[str] = mapped_column(String(64), index=True)
     message: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
 
 
 class HistoricalCandle(Base):

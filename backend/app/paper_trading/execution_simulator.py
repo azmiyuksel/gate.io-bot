@@ -10,7 +10,7 @@ class ExecutionSimulator:
         taker_fee: float = 0.001,
         min_latency_ms: int = 100,
         max_latency_ms: int = 1000,
-        seed: int = 42,
+        seed: int | None = None,
     ) -> None:
         self.maker_fee = maker_fee
         self.taker_fee = taker_fee

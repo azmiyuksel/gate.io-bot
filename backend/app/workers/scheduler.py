@@ -25,8 +25,28 @@ async def _quote_depegged(client: GateIOClient, settings) -> bool:
 
     try:
         price = await client.last_price(settings.quote_depeg_reference_pair)
-    except Exception:
-        return False  # never halt on a transient lookup failure
+    except Exception as exc:
+        # If the depeg check itself fails (network/API error), assume depegged
+        # and HALT trading. For a capital preservation bot, this is safer than
+        # continuing with potentially corrupted data.
+        from app.models.entities import SystemLog
+        from app.models.enums import LogLevel
+        from app.db.session import SessionLocal
+        
+        db = SessionLocal()
+        db.add(
+            SystemLog(
+                level=LogLevel.error,
+                source="stablecoin",
+                message=(
+                    f"Depeg check failed for {settings.quote_depeg_reference_pair}: {exc}. "
+                    f"Assuming depegged and HALTING trading."
+                ),
+            )
+        )
+        db.commit()
+        db.close()
+        return True
     return is_depegged(price, settings.quote_depeg_threshold_pct)
 
 
@@ -100,7 +120,17 @@ async def run_cycle() -> None:
             return
 
         for symbol in settings.symbols:
-            await engine.scan_symbol(symbol, equity)
+            try:
+                await engine.scan_symbol(symbol, equity)
+            except Exception as exc:
+                db.add(
+                    SystemLog(
+                        level=LogLevel.error,
+                        source="scan_symbol",
+                        message=f"{symbol}: scan failed, continuing with other symbols — {exc}",
+                    )
+                )
+                db.commit()
     except Exception:
         # Never leave uncommitted/partial state behind for the next cycle.
         db.rollback()

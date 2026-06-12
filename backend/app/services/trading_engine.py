@@ -145,6 +145,20 @@ class TradingEngine:
         fill_price = Decimal(str(response.get("avg_deal_price") or signal.entry_price))
         if fill_price <= 0:
             fill_price = signal.entry_price
+        # --- Slippage guard: reject if fill deviates too far from signal price ---
+        max_slippage_pct = Decimal(str(get_settings().eq_critical_slippage_pct))
+        if signal.entry_price > 0 and max_slippage_pct > 0:
+            slippage_pct = abs(fill_price - signal.entry_price) / signal.entry_price
+            if slippage_pct > max_slippage_pct:
+                # Cancel: do NOT open the position.  The exchange order is IOC so
+                # it already expired/cancelled; we just skip persistence.
+                self._log(
+                    "slippage_guard",
+                    f"{symbol}: REJECTED fill_price={fill_price} signal={signal.entry_price} "
+                    f"slippage={slippage_pct:.4%} > max={max_slippage_pct:.2%}",
+                    LogLevel.warning,
+                )
+                return
         # Derive the base quantity actually received from the fill, not the
         # pre-order estimate.  quote_amount was the USDT spent; dividing by
         # the real fill price gives the true base amount credited.
@@ -196,25 +210,69 @@ class TradingEngine:
 
     async def manage_open_positions(self) -> None:
         for position in self.positions.open_positions():
-            candles = await self.client.candles(position.symbol, limit=2)
-            price = Decimal(str(candles[-1]["close"]))
-            if price <= position.stop_loss:
-                await self.close_position(position, "stop_loss")
-            elif price >= position.take_profit:
-                await self.close_position(position, "take_profit")
-            else:
-                self._update_trailing_stop(position, price)
+            try:
+                candles = await self.client.candles(position.symbol, limit=2)
+                if not candles:
+                    self._log(
+                        "empty_candle",
+                        f"{position.symbol}: no candle data, skipping stop management",
+                        LogLevel.warning,
+                    )
+                    continue
+                price = Decimal(str(candles[-1]["close"]))
+                if price <= position.stop_loss:
+                    await self.close_position(position, "stop_loss")
+                elif price >= position.take_profit:
+                    await self.close_position(position, "take_profit")
+                else:
+                    self._update_trailing_stop(position, price)
+            except Exception as exc:
+                self._log(
+                    "position_manage_error",
+                    f"{position.symbol}: {exc}",
+                    LogLevel.error,
+                )
 
-    async def close_position(self, position: Position, reason: str) -> Order:
+    async def close_position(self, position: Position, reason: str, _retry: int = 3) -> Order:
+        last_exc: Exception | None = None
+        for attempt in range(_retry):
+            try:
+                return await self._close_position_inner(position, reason, attempt)
+            except Exception as exc:
+                last_exc = exc
+                if attempt < _retry - 1:
+                    self._log(
+                        "close_retry",
+                        f"{position.symbol}: attempt {attempt + 1} failed ({exc}), retrying",
+                        LogLevel.warning,
+                    )
+                    await self.notifier.send(
+                        f"⚠️ {position.symbol} close attempt {attempt + 1} failed: {exc}"
+                    )
+                    import asyncio
+                    await asyncio.sleep(1)
+        # All retries exhausted — position is still open; alert and let reconciliation recover.
+        self._log(
+            "close_failed",
+            f"{position.symbol}: FAILED to close after {_retry} attempts ({reason}): {last_exc}",
+            LogLevel.error,
+        )
+        await self.notifier.send(
+            f"🔴 CRITICAL: {position.symbol} FAILED to close ({reason}) after {_retry} attempts! "
+            f"Manual intervention may be required. Last error: {last_exc}"
+        )
+        raise last_exc  # type: ignore[misc]
+
+    async def _close_position_inner(
+        self, position: Position, reason: str, attempt: int
+    ) -> Order:
         signal_time = datetime.now(UTC)
         submission_time = datetime.now(UTC)
         response = await self.client.place_market_sell(position.symbol, position.quantity)
         ack_time = datetime.now(UTC)
 
         exit_price = Decimal(str(response.get("avg_deal_price") or position.entry_price))
-        # Normalize the fee to quote currency (a base-denominated fee is converted).
         fee = _fee_in_quote(response, exit_price, position.symbol)
-        # Realized PnL must be net of fees, otherwise reported PnL is systematically optimistic.
         pnl = (exit_price - position.entry_price) * position.quantity - fee
         position.status = PositionStatus.closed
         position.closed_at = datetime.now(UTC)
@@ -230,7 +288,7 @@ class TradingEngine:
             raw_response=json.dumps(response),
         )
         self.db.add(order)
-        self.db.flush()  # assign order.id so the trade can reference it
+        self.db.flush()
         trade = Trade(
             order_id=order.id,
             strategy_name=self.strategy.name,
@@ -314,7 +372,9 @@ class TradingEngine:
         ack_time: datetime,
     ) -> None:
         """Best-effort TCA recording shared by entry and exit. A failure here must
-        never abort the trade, so it rolls back only its own partial writes."""
+        never abort the trade, so it uses a savepoint (nested transaction) and only
+        rolls back its own writes without affecting the already-committed trade."""
+        savepoint = self.db.begin_nested()
         try:
             eq_engine = ExecutionQualityEngine(self.db)
             exec_order = eq_engine.record_order(
@@ -335,8 +395,9 @@ class TradingEngine:
                 fill_time=datetime.now(UTC),
                 ack_time=ack_time,
             )
+            savepoint.commit()
         except Exception as e:
-            self.db.rollback()
+            savepoint.rollback()
             self._log("execution_quality_error", f"Failed to record execution quality ({side} {symbol}): {e}")
 
     def _log(self, source: str, message: str, level: LogLevel = LogLevel.info) -> None:

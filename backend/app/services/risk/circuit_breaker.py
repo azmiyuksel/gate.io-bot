@@ -1,14 +1,7 @@
-"""Global kill-switch.
-
-A single authority that can halt all live trading. It trips automatically when
-a daily/weekly realized-loss limit or an account drawdown threshold is breached,
-and can be tripped/reset manually by an admin. Tripping disables the strategy so
-no new entries are taken; the latest ``CircuitBreakerEvent`` row is the current
-state.
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -106,6 +99,27 @@ class CircuitBreaker:
         return event
 
     def reset(self, triggered_by: str = "system", reason: str = "manual reset") -> CircuitBreakerEvent:
+        # Before resetting, check if enough time has passed since the last reset
+        # to prevent immediate re-enabling of the strategy.
+        last_event = self.current()
+        if last_event and last_event.state == CircuitBreakerState.tripped:
+            # Find the last reset event (armed state)
+            last_reset = (
+                self.db.query(CircuitBreakerEvent)
+                .filter(CircuitBreakerEvent.state == CircuitBreakerState.armed)
+                .order_by(CircuitBreakerEvent.created_at.desc(), CircuitBreakerEvent.id.desc())
+                .first()
+            )
+            if last_reset:
+                time_since_reset = datetime.now(UTC) - last_reset.created_at
+                # Require a minimum cooldown of 1 hour before allowing re-enable
+                from datetime import timedelta
+                if time_since_reset < timedelta(hours=1):
+                    raise RuntimeError(
+                        f"Circuit breaker reset cooldown active. "
+                        f"Reset {time_since_reset} ago, minimum 1 hour required."
+                    )
+        
         event = CircuitBreakerEvent(
             state=CircuitBreakerState.armed,
             scope=CircuitBreakerScope.manual,

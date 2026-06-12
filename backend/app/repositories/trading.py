@@ -19,6 +19,13 @@ class PositionRepository(Repository[Position]):
     def open_count(self) -> int:
         return self.db.query(Position).filter(Position.status == PositionStatus.open).count()
 
+    def open_notional(self) -> Decimal:
+        """Total notional value of all open positions (entry_price * quantity)."""
+        value = self.db.query(
+            func.coalesce(func.sum(Position.entry_price * Position.quantity), 0)
+        ).filter(Position.status == PositionStatus.open).scalar()
+        return Decimal(str(value))
+
 
 class OrderRepository(Repository[Order]):
     def __init__(self, db: Session) -> None:

@@ -25,8 +25,14 @@ def test_local_warns_but_allows_default_secret():
 
 
 def test_production_with_strong_secret_passes():
-    s = Settings(environment="production", secret_key="a-strong-unique-secret", fernet_key="x")
+    s = Settings(environment="production", secret_key="a-strong-unique-secret", fernet_key="x", cors_origins="https://dashboard.example.com")
     assert s.validate_runtime_secrets() == []
+
+
+def test_production_rejects_localhost_cors():
+    s = Settings(environment="production", secret_key="a-strong-unique-secret", fernet_key="x", cors_origins="http://localhost:3000")
+    with pytest.raises(RuntimeError, match="CORS"):
+        s.validate_runtime_secrets()
 
 
 def test_rate_limiter_blocks_after_limit():

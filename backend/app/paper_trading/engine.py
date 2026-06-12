@@ -75,11 +75,17 @@ class PaperTradingEngine:
         )
         for position in positions:
             price = Decimal(str(data.price))
-            if position.stop_loss and price <= position.stop_loss:
+            low = Decimal(str(data.low)) if data.low is not None else price
+            high = Decimal(str(data.high)) if data.high is not None else price
+            # Use low for stop-loss check to simulate gap-down / intra-bar stop trigger.
+            # Use high for take-profit check to simulate intra-bar TP trigger.
+            if position.stop_loss and low <= position.stop_loss:
+                stop_price = min(position.stop_loss, price)
                 broker.close_position(position, data, "stop_loss")
-                self._log("stop_loss_triggered", f"{data.symbol} stop loss triggered")
-            elif position.take_profit and price >= position.take_profit:
+                self._log("stop_loss_triggered", f"{data.symbol} stop loss triggered at ~{stop_price}")
+            elif position.take_profit and high >= position.take_profit:
                 broker.close_position(position, data, "take_profit")
+                self._log("take_profit_triggered", f"{data.symbol} take profit triggered")
 
     def _log(self, event: str, message: str, payload: dict | None = None) -> None:
         self.db.add(

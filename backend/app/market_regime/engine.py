@@ -15,10 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 class MarketRegimeEngine:
+    _REGIME_COOLDOWN_BAR_COUNT = 3
+
     def __init__(self, db: Session) -> None:
         self.db = db
         self.detector = MarketRegimeDetector()
         self.notifier = TelegramNotifier()
+        self._consecutive_same_regime: dict[str, int] = {}
 
     def update_regime(self, symbol: str, timeframe: str, candles: List[dict]) -> MarketRegimeRecord:
         """
@@ -78,7 +81,28 @@ class MarketRegimeEngine:
         )
 
         if last_record and last_record.regime_type != regime:
-            # Trigger regime transition
+            # --- Regime transition cooldown ---
+            # Require N consecutive same-regime detections before confirming a
+            # switch. This prevents whipsaw from flickering ensemble votes.
+            consecutive = self._consecutive_same_regime.get(symbol, 0) + 1
+            self._consecutive_same_regime[symbol] = consecutive
+            if consecutive < self._REGIME_COOLDOWN_BAR_COUNT:
+                # Not enough consecutive detections; keep the old regime
+                record = MarketRegimeRecord(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    regime_type=last_record.regime_type,
+                    confidence=Decimal(str(confidence)),
+                    rule_based_vote=votes["rule_based"],
+                    clustering_vote=votes["clustering"],
+                    ml_vote=votes["ml_model"],
+                    created_at=datetime.now(UTC),
+                )
+                self.db.add(record)
+                self.db.commit()
+                return record
+            # Cooldown satisfied: confirm transition
+            self._consecutive_same_regime[symbol] = 0
             transition = RegimeTransition(
                 symbol=symbol,
                 old_regime=last_record.regime_type,
@@ -102,6 +126,9 @@ class MarketRegimeEngine:
                 logger.warning("Regime-transition alert skipped (no running event loop)", exc_info=True)
 
         # 4. Save Current Regime Record
+        # Reset consecutive counter when regime matches the last recorded one
+        if last_record and last_record.regime_type == regime:
+            self._consecutive_same_regime[symbol] = 0
         record = MarketRegimeRecord(
             symbol=symbol,
             timeframe=timeframe,

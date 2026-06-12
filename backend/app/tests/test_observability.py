@@ -51,8 +51,16 @@ def test_trailing_stop_uses_configured_pct(db_session):
 
 
 def test_trailing_stop_clamps_invalid_pct(db_session):
-    db_session.add(StrategySettings(name="capital_preservation_v1", trailing_stop_pct=Decimal("1.5")))
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    # The CHECK constraint now prevents storing invalid trailing_stop_pct (>=1).
+    with pytest.raises(IntegrityError):
+        db_session.add(StrategySettings(name="capital_preservation_v1", trailing_stop_pct=Decimal("1.5")))
+        db_session.commit()
+    db_session.rollback()
+    # Valid edge-case: code-level clamping still works as defense-in-depth.
+    db_session.add(StrategySettings(name="capital_preservation_v1", trailing_stop_pct=Decimal("0.01")))
     db_session.commit()
     engine = TradingEngine(db_session, client=None)
-    # Invalid (>=1) pct falls back to the 1% default.
     assert engine._trailing_stop_pct() == Decimal("0.01")

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -13,6 +14,8 @@ class PaperRiskSimulator:
         self.db = db
         self.account = account
         self.portfolio = PaperPortfolio(db, account)
+        self._daily_start_equity: Decimal | None = None
+        self._daily_start_date: datetime | None = None
 
     def approve_signal(self, signal: TradingSignal, data: MarketData) -> tuple[bool, str]:
         if self.account.status != PaperBotStatus.running:
@@ -46,7 +49,11 @@ class PaperRiskSimulator:
 
     def _daily_loss_pct(self) -> Decimal:
         equity = self.portfolio.equity()
-        if self.account.initial_balance <= 0:
+        today = datetime.now(UTC).date()
+        if self._daily_start_date != today or self._daily_start_equity is None:
+            self._daily_start_equity = equity
+            self._daily_start_date = today
+        if self._daily_start_equity <= 0:
             return Decimal("0")
-        loss = max(self.account.initial_balance - equity, Decimal("0"))
-        return loss / self.account.initial_balance
+        loss = max(self._daily_start_equity - equity, Decimal("0"))
+        return loss / self._daily_start_equity

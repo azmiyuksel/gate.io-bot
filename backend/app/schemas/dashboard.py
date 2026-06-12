@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class PositionOut(BaseModel):
@@ -48,6 +48,48 @@ class StrategySettingsUpdate(BaseModel):
     max_open_positions: int | None = None
     atr_multiplier: Decimal | None = None
     trailing_stop_pct: Decimal | None = None
+
+    @field_validator("max_capital_per_trade_pct")
+    @classmethod
+    def validate_max_capital_pct(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and (v <= 0 or v > Decimal("0.20")):
+            raise ValueError("max_capital_per_trade_pct must be between 0 (exclusive) and 20%")
+        return v
+
+    @field_validator("daily_max_loss_pct")
+    @classmethod
+    def validate_daily_loss_pct(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and (v <= 0 or v > Decimal("0.10")):
+            raise ValueError("daily_max_loss_pct must be between 0 (exclusive) and 10%")
+        return v
+
+    @field_validator("weekly_max_loss_pct")
+    @classmethod
+    def validate_weekly_loss_pct(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and (v <= 0 or v > Decimal("0.30")):
+            raise ValueError("weekly_max_loss_pct must be between 0 (exclusive) and 30%")
+        return v
+
+    @field_validator("max_open_positions")
+    @classmethod
+    def validate_max_open_positions(cls, v: int | None) -> int | None:
+        if v is not None and (v < 1 or v > 20):
+            raise ValueError("max_open_positions must be between 1 and 20")
+        return v
+
+    @field_validator("atr_multiplier")
+    @classmethod
+    def validate_atr_multiplier(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and (v <= 0 or v > Decimal("10")):
+            raise ValueError("atr_multiplier must be between 0 (exclusive) and 10")
+        return v
+
+    @field_validator("trailing_stop_pct")
+    @classmethod
+    def validate_trailing_stop_pct(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and (v <= 0 or v >= Decimal("1")):
+            raise ValueError("trailing_stop_pct must be between 0 (exclusive) and 100% (exclusive)")
+        return v
 
 
 class DashboardSummary(BaseModel):

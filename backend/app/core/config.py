@@ -74,6 +74,17 @@ class Settings(BaseSettings):
     # Number of candles that represent a "daily" range (depends on candle interval).
     strategy_daily_range_candles: int = 24
     trading_symbols: str = "BTC_USDT,ETH_USDT"
+    # Minimum volume ratio: reject entries when current volume is below this fraction
+    # of the recent average volume (e.g., 0.5 = 50% of average). Prevents entries
+    # on illiquid bars that are hard to exit at fair price.
+    strategy_min_volume_ratio: float = 0.5
+    # Maximum absolute dollar loss per trade as a fraction of equity. This provides
+    # a hard cap on any single trade's risk, protecting against flash crashes where
+    # the stop-loss distance is wide but the trade size is large.
+    max_risk_per_trade_pct: float = 0.02
+    # Maximum total portfolio exposure as a fraction of equity. Prevents over-allocation
+    # when max_open_positions is set too high.
+    max_total_exposure_pct: float = 0.30
 
     # Equity used when the exchange balance cannot be fetched (no keys / offline).
     fallback_equity: float = 10000.0
@@ -217,6 +228,13 @@ class Settings(BaseSettings):
                     "would otherwise be persisted in plain text."
                 )
             warnings.append("FERNET_KEY is unset; stored API secrets are not encrypted.")
+        if self.is_production:
+            for origin in self.cors_origin_list:
+                if "localhost" in origin or "127.0.0.1" in origin:
+                    raise RuntimeError(
+                        f"CORS origin '{origin}' is not allowed in production. "
+                        f"Set CORS_ORIGINS to your production domain."
+                    )
         return warnings
 
 

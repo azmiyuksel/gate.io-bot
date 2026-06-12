@@ -6,7 +6,10 @@ def objective_score(metrics: dict) -> float:
     profit_factor = min(float(metrics.get("profit_factor", 0)), 5)
     cagr = float(metrics.get("cagr", 0))
     drawdown = abs(float(metrics.get("max_drawdown", 0)))
-    return sharpe + profit_factor + cagr - drawdown
+    total_trades = float(metrics.get("total_trades", 0))
+    # Penalize strategies with very few trades — they lack statistical significance.
+    trade_penalty = max(0, (20 - total_trades)) * 0.1
+    return sharpe + profit_factor + cagr - drawdown - trade_penalty
 
 
 def walk_forward_efficiency(train_profit: float, test_profit: float) -> float:
