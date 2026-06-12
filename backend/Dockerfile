@@ -14,7 +14,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY pyproject.toml ./
 COPY app ./app
-RUN pip install -e .
+RUN pip install --no-cache-dir .
 
 # --- Runtime stage: slim, non-root, with a healthcheck ---
 FROM python:3.12-slim AS runtime
