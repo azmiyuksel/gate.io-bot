@@ -1,7 +1,3 @@
-[build]
-builder = "DOCKERFILE"
-dockerfilePath = "frontend/Dockerfile"
-
 [deploy]
 startCommand = "npm run start"
 healthcheckPath = "/"

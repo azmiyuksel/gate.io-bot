@@ -1,7 +1,3 @@
-[build]
-builder = "DOCKERFILE"
-dockerfilePath = "backend/Dockerfile"
-
 [deploy]
 startCommand = "python -m app.workers.scheduler"
 restartPolicyType = "ON_FAILURE"
