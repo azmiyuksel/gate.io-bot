@@ -98,6 +98,7 @@ class Trade(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
+    strategy_name: Mapped[str] = mapped_column(String(128), default="capital_preservation_v1", index=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     side: Mapped[OrderSide] = mapped_column(String(16))
     price: Mapped[Decimal] = mapped_column(Numeric(24, 10))
@@ -364,6 +365,7 @@ class Portfolio(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     total_equity: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("10000"))
     cash_balance: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("10000"))
+    peak_equity: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("10000"))
     daily_max_risk_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.02"))
     weekly_max_risk_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.05"))
     monthly_max_risk_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.10"))

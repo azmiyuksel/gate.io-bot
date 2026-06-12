@@ -59,9 +59,15 @@ class PortfolioEngine:
     def update_positions(self, active_positions: List[Dict[str, Any]]) -> None:
         """
         Syncs open positions to the PortfolioAsset table.
+        Merges with existing assets to preserve metadata from other sources.
         """
-        # Delete existing assets to re-sync
-        self.db.query(PortfolioAsset).filter(PortfolioAsset.portfolio_id == self.portfolio.id).delete()
+        existing = {
+            a.symbol: a
+            for a in self.db.query(PortfolioAsset)
+            .filter(PortfolioAsset.portfolio_id == self.portfolio.id)
+            .all()
+        }
+        seen_symbols = set()
 
         for pos in active_positions:
             symbol = pos["symbol"]
@@ -69,28 +75,48 @@ class PortfolioEngine:
             entry = Decimal(str(pos["entry_price"]))
             curr = Decimal(str(pos.get("last_price", pos["entry_price"])))
             pnl = (curr - entry) * qty
+            seen_symbols.add(symbol)
 
-            asset = PortfolioAsset(
-                portfolio_id=self.portfolio.id,
-                symbol=symbol,
-                position_size=qty,
-                average_entry_price=entry,
-                current_price=curr,
-                unrealized_pnl=pnl,
-                risk_contribution=Decimal("0.0")  # Updated during metrics update
-            )
-            self.db.add(asset)
-        
+            if symbol in existing:
+                asset = existing[symbol]
+                asset.position_size = qty
+                asset.average_entry_price = entry
+                asset.current_price = curr
+                asset.unrealized_pnl = pnl
+                asset.updated_at = datetime.now(UTC)
+            else:
+                asset = PortfolioAsset(
+                    portfolio_id=self.portfolio.id,
+                    symbol=symbol,
+                    position_size=qty,
+                    average_entry_price=entry,
+                    current_price=curr,
+                    unrealized_pnl=pnl,
+                    risk_contribution=Decimal("0.0"),
+                )
+                self.db.add(asset)
+
+        # Zero out assets for symbols that are no longer open
+        for symbol, asset in existing.items():
+            if symbol not in seen_symbols:
+                asset.position_size = Decimal("0")
+                asset.unrealized_pnl = Decimal("0")
+                asset.updated_at = datetime.now(UTC)
+
         self.db.commit()
         self.calculate_equity()
 
     def calculate_equity(self) -> Decimal:
         """
         Recalculates total equity: cash_balance + sum of position values.
+        Updates peak_equity when a new high is reached.
         """
         assets = self.db.query(PortfolioAsset).filter(PortfolioAsset.portfolio_id == self.portfolio.id).all()
         position_value = sum((a.position_size * a.current_price for a in assets), Decimal("0"))
         self.portfolio.total_equity = self.portfolio.cash_balance + position_value
+        # Track peak equity for drawdown calculation
+        if self.portfolio.total_equity > self.portfolio.peak_equity:
+            self.portfolio.peak_equity = self.portfolio.total_equity
         self.portfolio.updated_at = datetime.now(UTC)
         self.db.commit()
         return self.portfolio.total_equity
@@ -163,11 +189,10 @@ class PortfolioEngine:
         strat_exps = ExposureManager.calculate_strategy_exposures(allocs, asset_exps)
 
         # 4. Sharpe, Win Rate, Drawdown
-        # Simple calculations based on historical values
-        # Drawdown is calculated using total equity vs initial capital
+        # Drawdown is calculated as peak-to-trough from tracked peak equity
         drawdown_pct = Decimal("0")
-        if self.portfolio.total_equity < self.portfolio.cash_balance:
-            drawdown_pct = (self.portfolio.cash_balance - self.portfolio.total_equity) / self.portfolio.cash_balance
+        if self.portfolio.peak_equity > 0 and self.portfolio.total_equity < self.portfolio.peak_equity:
+            drawdown_pct = (self.portfolio.peak_equity - self.portfolio.total_equity) / self.portfolio.peak_equity
 
         metric = PortfolioMetric(
             portfolio_id=self.portfolio.id,

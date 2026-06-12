@@ -56,6 +56,8 @@ class RiskManager:
         # as the strategy's own enable flag (defense-in-depth alongside scheduler).
         if not get_settings().bot_enabled:
             return RiskDecision(False, "bot_disabled")
+        if entry <= 0 or atr_value <= 0:
+            return RiskDecision(False, "invalid_price_data")
         settings = self.settings.current()
         if not settings.is_enabled:
             return RiskDecision(False, "strategy_disabled")

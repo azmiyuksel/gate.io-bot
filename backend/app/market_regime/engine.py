@@ -91,14 +91,15 @@ class MarketRegimeEngine:
             # Send Telegram Alert asynchronously
             import asyncio
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(self.notifier.send_portfolio_rebalance(
-                        f"{symbol} Piyasa Rejimi Değişti: {last_record.regime_type} -> {regime}",
-                        {}, {}
-                    ))
-            except Exception:
-                logger.warning("Regime-transition alert failed", exc_info=True)
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.notifier.send_regime_transition(
+                    symbol,
+                    str(last_record.regime_type.value),
+                    str(regime.value),
+                    float(confidence),
+                ))
+            except RuntimeError:
+                logger.warning("Regime-transition alert skipped (no running event loop)", exc_info=True)
 
         # 4. Save Current Regime Record
         record = MarketRegimeRecord(

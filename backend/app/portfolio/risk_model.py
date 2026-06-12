@@ -36,18 +36,14 @@ class PortfolioRiskModel:
     def check_risk_limits(self, portfolio: Portfolio) -> Tuple[bool, str]:
         """
         Validates portfolio drawdown/loss limits against the daily, weekly, and monthly budgets.
+        Drawdown is calculated from peak_equity (peak-to-trough), not vs cash_balance.
         """
-        initial = portfolio.total_equity + abs(portfolio.cash_balance - portfolio.total_equity) # Fallback to equity baseline
-        if initial <= 0:
+        if portfolio.peak_equity <= 0:
             return True, "valid"
 
-        # Check peak-to-trough drawdown or simple losses
-        # Here we check limits against the metrics. If limits are exceeded, flag it.
-        # Check portfolio metrics (e.g. from the last day/week/month metric points)
-        # For simplicity and robust real-time checks, we look at equity vs starting targets
         drawdown_pct = Decimal("0")
-        if portfolio.total_equity < portfolio.cash_balance:
-            drawdown_pct = (portfolio.cash_balance - portfolio.total_equity) / portfolio.cash_balance
+        if portfolio.total_equity < portfolio.peak_equity:
+            drawdown_pct = (portfolio.peak_equity - portfolio.total_equity) / portfolio.peak_equity
 
         if drawdown_pct >= portfolio.daily_max_risk_pct:
             return False, f"daily_risk_limit_exceeded (drawdown {drawdown_pct:.2%})"

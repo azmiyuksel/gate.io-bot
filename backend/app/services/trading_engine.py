@@ -145,10 +145,14 @@ class TradingEngine:
         fill_price = Decimal(str(response.get("avg_deal_price") or signal.entry_price))
         if fill_price <= 0:
             fill_price = signal.entry_price
+        # Derive the base quantity actually received from the fill, not the
+        # pre-order estimate.  quote_amount was the USDT spent; dividing by
+        # the real fill price gives the true base amount credited.
+        actual_base_qty = (quote_amount / fill_price) if fill_price > 0 else final_quantity
         position = Position(
             symbol=symbol,
             entry_price=fill_price,
-            quantity=final_quantity,
+            quantity=actual_base_qty,
             stop_loss=decision.stop_loss,
             take_profit=decision.take_profit,
         )
@@ -161,7 +165,7 @@ class TradingEngine:
             side=OrderSide.buy,
             status=OrderStatus.open,
             price=fill_price,
-            quantity=final_quantity,
+            quantity=actual_base_qty,
             raw_response=json.dumps(response),
         )
         self.db.add(order)
@@ -177,17 +181,17 @@ class TradingEngine:
             symbol=symbol,
             side="buy",
             expected_price=signal.entry_price,
-            expected_quantity=final_quantity,
+            expected_quantity=actual_base_qty,
             signal_time=signal_time,
             submission_time=submission_time,
             order_id=order.id,
             fill_price=fill_price,
-            fill_quantity=Decimal(str(response.get("filled_total") or final_quantity)),
+            fill_quantity=Decimal(str(response.get("filled_total") or actual_base_qty)),
             fee=_fee_in_quote(response, fill_price, symbol),
             ack_time=ack_time,
         )
 
-        await self.notifier.send(f"Opened {symbol}: qty={final_quantity} entry={signal.entry_price}")
+        await self.notifier.send(f"Opened {symbol}: qty={actual_base_qty} entry={fill_price}")
 
 
     async def manage_open_positions(self) -> None:
@@ -229,6 +233,7 @@ class TradingEngine:
         self.db.flush()  # assign order.id so the trade can reference it
         trade = Trade(
             order_id=order.id,
+            strategy_name=self.strategy.name,
             symbol=position.symbol,
             side=OrderSide.sell,
             price=exit_price,
@@ -261,12 +266,15 @@ class TradingEngine:
         return order
 
     def _trailing_stop_pct(self) -> Decimal:
-        """Configured trailing-stop distance from StrategySettings (default 1%)."""
+        """Configured trailing-stop distance from StrategySettings, falling back
+        to the app-level default (default 1%)."""
         settings = StrategySettingsRepository(self.db).current()
-        pct = settings.trailing_stop_pct if settings is not None else Decimal("0.01")
+        pct = settings.trailing_stop_pct if settings is not None else None
+        if pct is None:
+            pct = Decimal(str(get_settings().strategy_trailing_stop_pct))
         # Clamp to a sane (0, 1) range so a misconfiguration cannot widen the stop.
         if pct <= 0 or pct >= 1:
-            return Decimal("0.01")
+            pct = Decimal(str(get_settings().strategy_trailing_stop_pct))
         return Decimal(str(pct))
 
     def _update_trailing_stop(self, position: Position, price: Decimal) -> None:

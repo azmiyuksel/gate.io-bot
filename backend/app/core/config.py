@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     # Max 24h range as a fraction of price before an entry is rejected. 0.08 is
     # tight for crypto; raise per pair to allow entries in normal volatility.
     strategy_max_24h_range_pct: float = 0.08
+    # Default trailing-stop distance (used when StrategySettings is missing).
+    strategy_trailing_stop_pct: float = 0.01
+    # Number of candles that represent a "daily" range (depends on candle interval).
+    strategy_daily_range_candles: int = 24
     trading_symbols: str = "BTC_USDT,ETH_USDT"
 
     # Equity used when the exchange balance cannot be fetched (no keys / offline).

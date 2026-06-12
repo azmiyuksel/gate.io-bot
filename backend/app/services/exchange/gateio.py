@@ -37,7 +37,8 @@ class GateIOClient:
         self.api_secret = settings.gateio_api_secret
         self.limiter = RateLimiter(settings.gateio_requests_per_second)
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=15)
-        self._pair_cache: dict[str, dict] = {}
+        self._pair_cache: dict[str, tuple[dict, float]] = {}
+        self._pair_cache_ttl: float = 3600.0  # 1 hour
 
     async def close(self) -> None:
         await self.client.aclose()
@@ -130,12 +131,14 @@ class GateIOClient:
         return await self.request("GET", "/spot/accounts")
 
     async def currency_pair_info(self, symbol: str) -> dict:
-        """Cached pair metadata: precision and min base/quote amounts."""
+        """Cached pair metadata with TTL: precision and min base/quote amounts."""
         cached = self._pair_cache.get(symbol)
         if cached is not None:
-            return cached
+            info, ts = cached
+            if time.monotonic() - ts < self._pair_cache_ttl:
+                return info
         info = await self.request("GET", f"/spot/currency_pairs/{symbol}") or {}
-        self._pair_cache[symbol] = info
+        self._pair_cache[symbol] = (info, time.monotonic())
         return info
 
     @staticmethod

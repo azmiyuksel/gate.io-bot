@@ -14,14 +14,17 @@ def ema(values: list[Decimal], period: int) -> Decimal | None:
 def rsi(values: list[Decimal], period: int = 14) -> Decimal | None:
     if len(values) <= period:
         return None
-    gains: list[Decimal] = []
-    losses: list[Decimal] = []
-    for previous, current in zip(values[-period - 1 : -1], values[-period:]):
-        change = current - previous
-        gains.append(max(change, Decimal("0")))
-        losses.append(abs(min(change, Decimal("0"))))
-    avg_gain = sum(gains) / Decimal(period)
-    avg_loss = sum(losses) / Decimal(period)
+    # Compute all price changes
+    changes = [values[i] - values[i - 1] for i in range(1, len(values))]
+    gains = [max(c, Decimal("0")) for c in changes]
+    losses = [abs(min(c, Decimal("0"))) for c in changes]
+    # Seed with SMA of first `period` values, then apply Wilder smoothing
+    avg_gain = sum(gains[:period]) / Decimal(period)
+    avg_loss = sum(losses[:period]) / Decimal(period)
+    alpha = Decimal("1") / Decimal(period)
+    for g, loss_val in zip(gains[period:], losses[period:]):
+        avg_gain = avg_gain * (Decimal("1") - alpha) + g * alpha
+        avg_loss = avg_loss * (Decimal("1") - alpha) + loss_val * alpha
     if avg_loss == 0:
         return Decimal("100")
     rs = avg_gain / avg_loss

@@ -42,6 +42,7 @@ class StrategyHealthEngine:
         if trades_list is None:
             trades_list = (
                 self.db.query(Trade)
+                .filter(Trade.strategy_name == strategy_name)
                 .order_by(Trade.traded_at.asc())
                 .all()
             )
@@ -95,14 +96,13 @@ class StrategyHealthEngine:
                 # Send critical alert
                 import asyncio
                 try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        loop.create_task(self.notifier.send_portfolio_rebalance(
-                            f"🔴 STRATEJİ DURDURULDU: {strategy_name} performansı kritik seviyede bozuldu!",
-                            {}, {}
-                        ))
-                except Exception:
-                    logger.warning("Strategy-health alert failed", exc_info=True)
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.notifier.send_strategy_paused(
+                        strategy_name,
+                        f"performansı kritik seviyede bozuldu (drift={drift_score:.2f})",
+                    ))
+                except RuntimeError:
+                    logger.warning("Strategy-health alert skipped (no running event loop)", exc_info=True)
         elif action == "block_new_trades":
             new_state = StrategyHealthState.degraded
         elif action == "risk_reduced_50":

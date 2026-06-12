@@ -29,6 +29,7 @@ class CapitalPreservationStrategy:
         self.rsi_threshold = Decimal(str(settings.strategy_rsi_threshold))
         self.ema20_distance_pct = Decimal(str(settings.strategy_ema20_distance_pct))
         self.max_24h_range_pct = Decimal(str(settings.strategy_max_24h_range_pct))
+        self.daily_range_candles = settings.strategy_daily_range_candles
 
     def evaluate(self, candles: list[dict]) -> Signal:
         if len(candles) < 210:
@@ -57,7 +58,8 @@ class CapitalPreservationStrategy:
         if distance_to_ema20 > self.ema20_distance_pct:
             return Signal(False, "not_near_20_ema")
 
-        daily_range = max(closes[-24:]) - min(closes[-24:])
+        n = min(self.daily_range_candles, len(closes))
+        daily_range = max(closes[-n:]) - min(closes[-n:])
         if daily_range / last_price > self.max_24h_range_pct:
             return Signal(False, "excessive_24h_volatility")
 
