@@ -47,6 +47,21 @@ export async function login(email: string, password: string): Promise<TokenPair>
   return tokens;
 }
 
+export async function register(email: string, password: string): Promise<TokenPair> {
+  const res = await fetch(`${apiUrl}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const detail = res.status === 409 ? "Email already registered" : "Registration failed";
+    throw new Error(detail);
+  }
+  const tokens: TokenPair = await res.json();
+  storeTokens(tokens);
+  return tokens;
+}
+
 export async function refreshAccessToken(): Promise<string | null> {
   const refresh_token = getRefreshToken();
   if (!refresh_token) return null;

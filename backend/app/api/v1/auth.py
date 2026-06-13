@@ -15,8 +15,8 @@ from app.core.security import (
     verify_password,
 )
 from app.models.entities import RefreshToken, User
-from app.schemas.auth import LoginRequest, RefreshRequest, TokenResponse
-
+from app.models.enums import UserRole
+from app.schemas.auth import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _settings = get_settings()
@@ -34,6 +34,23 @@ def _issue_tokens(db: DbSession, user: User) -> TokenResponse:
     db.add(RefreshToken(jti=jti, user_id=user.id, expires_at=expires))
     db.commit()
     return TokenResponse(access_token=access, refresh_token=refresh)
+
+
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, db: DbSession) -> TokenResponse:
+    existing = db.scalar(select(User).where(User.email == payload.email))
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Email already registered")
+    first_user = db.scalar(select(User).limit(1)) is None
+    user = User(
+        email=payload.email,
+        password_hash=hash_password(payload.password),
+        role=UserRole.admin if first_user else UserRole.viewer,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return _issue_tokens(db, user)
 
 
 @router.post("/login", response_model=TokenResponse)

@@ -21,7 +21,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LastUpdated } from "@/components/ui/last-updated";
 import { useToast } from "@/components/ui/toast";
 import { money } from "@/lib/utils";
-import { authFetch, getAccessToken, login, logout } from "@/lib/auth-api";
+import { authFetch, getAccessToken, login, logout, register } from "@/lib/auth-api";
 import type { DashboardSummary } from "@/types/dashboard";
 
 const fallback: DashboardSummary = {
@@ -161,6 +161,18 @@ export function Dashboard() {
     }
   }
 
+  async function handleRegister() {
+    setAuthError("");
+    try {
+      const tokens = await register(email, password);
+      setToken(tokens.access_token);
+      setPassword("");
+      toast("Kayıt başarılı", "success");
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Kayıt başarısız");
+    }
+  }
+
   async function handleLogout() {
     await logout();
     setToken("");
@@ -219,6 +231,9 @@ export function Dashboard() {
                 />
                 <Button type="submit">
                   <Lock size={16} /> Giriş
+                </Button>
+                <Button type="button" onClick={handleRegister}>
+                  Kayıt Ol
                 </Button>
               </form>
             )}
