@@ -54,8 +54,13 @@ export async function register(email: string, password: string): Promise<TokenPa
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
-    const detail = res.status === 409 ? "Email already registered" : "Registration failed";
-    throw new Error(detail);
+    if (res.status === 409) throw new Error("Email already registered");
+    if (res.status === 422) {
+      const data = await res.json();
+      const msg = data.detail?.[0]?.msg ?? data.detail ?? "Validation error";
+      throw new Error(String(msg));
+    }
+    throw new Error("Registration failed");
   }
   const tokens: TokenPair = await res.json();
   storeTokens(tokens);
