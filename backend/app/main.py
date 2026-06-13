@@ -87,19 +87,27 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     """
     request_id = correlation_id.get()
     logger.exception("unhandled_exception", extra={"path": request.url.path})
+    detail = "Internal server error"
+    if not settings.is_production:
+        detail = f"{type(exc).__name__}: {exc}"
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error", "request_id": request_id},
+        content={"detail": detail, "request_id": request_id},
         headers={"X-Request-ID": request_id} if request_id else None,
     )
 
 
 @app.get("/health")
 def health() -> dict:
-    """Liveness probe: process is up. Always cheap, no external dependencies."""
+    """Liveness probe: process is up."""
+    status = "ok"
+    detail = None
     if _init_error:
-        return {"status": "degraded", "detail": _init_error}
-    return {"status": "ok"}
+        status = "degraded"
+        detail = _init_error
+    elif not _initialized:
+        status = "starting"
+    return {"status": status, "detail": detail}
 
 
 @app.get("/health/ready")
@@ -122,6 +130,19 @@ def metrics() -> Response:
     """Prometheus scrape endpoint."""
     payload, content_type = render_latest()
     return Response(content=payload, media_type=content_type)
+
+
+@app.get("/debug/config")
+def debug_config() -> dict:
+    """Return initialization status for debugging deployments."""
+    return {
+        "initialized": _initialized,
+        "init_error": _init_error,
+        "environment": settings.environment,
+        "database_url_redacted": settings.database_url.split("@")[-1] if "@" in settings.database_url else "unknown",
+        "secret_key_set": settings.secret_key not in ("", "change-me"),
+        "fernet_key_set": bool(settings.fernet_key),
+    }
 
 
 # All application endpoints are served under a single /api/v1 prefix.
