@@ -248,8 +248,9 @@ class Settings(BaseSettings):
         if self.is_production:
             for origin in self.cors_origin_list:
                 if "localhost" in origin or "127.0.0.1" in origin:
-                    raise RuntimeError(
-                        f"CORS origin '{origin}' is not allowed in production. "
+                    warnings.append(
+                        f"CORS origin '{origin}' includes localhost — "
+                        f"requests from the browser will be blocked. "
                         f"Set CORS_ORIGINS to your production domain."
                     )
         return warnings

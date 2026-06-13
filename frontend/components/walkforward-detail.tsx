@@ -13,7 +13,7 @@ import { authFetch, getAccessToken } from "@/lib/auth-api";
 import type { WalkForwardDetail as WalkForwardDetailType } from "@/types/walkforward";
 
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+const apiUrl = "/api/v1";
 
 export function WalkForwardDetail({ id }: { id: string }) {
   const [token, setToken] = useState("");

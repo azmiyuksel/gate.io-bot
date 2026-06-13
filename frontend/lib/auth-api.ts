@@ -2,7 +2,7 @@
 // localStorage so a session survives page reloads. Access tokens are short-lived;
 // refresh() rotates them using the long-lived (revocable) refresh token.
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+const apiUrl = "/api/v1";
 
 const ACCESS_KEY = "gatebot.access_token";
 const REFRESH_KEY = "gatebot.refresh_token";
