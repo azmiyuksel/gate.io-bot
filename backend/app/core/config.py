@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -196,6 +196,15 @@ class Settings(BaseSettings):
     alloc_dd_scale_high: float = 0.30
     alloc_dd_scale_mid: float = 0.60
     alloc_dd_scale_low: float = 0.85
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, v: str) -> str:
+        if v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql+psycopg://", 1)
+        if v.startswith("postgresql://") and not v.startswith("postgresql+psycopg://"):
+            return v.replace("postgresql://", "postgresql+psycopg://", 1)
+        return v
 
     @property
     def symbols(self) -> list[str]:
