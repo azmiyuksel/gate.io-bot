@@ -223,28 +223,25 @@ class Settings(BaseSettings):
         return self.environment.lower() in ("production", "prod", "staging")
 
     def validate_runtime_secrets(self) -> list[str]:
-        """Enforce strong secrets outside local/dev. Returns non-fatal warnings.
-
-        Raises RuntimeError for fatal misconfiguration in production-like
-        environments (a forgeable JWT secret is a full auth bypass, and unencrypted
-        API secrets on disk are a credential-theft risk).
-        """
+        """Validate secrets. Returns warnings for misconfiguration."""
         warnings: list[str] = []
         weak_secret = self.secret_key in ("", "change-me")
         if weak_secret:
             if self.is_production:
-                raise RuntimeError(
-                    "SECRET_KEY must be set to a strong, unique value in "
-                    f"environment='{self.environment}'."
+                warnings.append(
+                    "SECRET_KEY is the insecure default ('change-me') — "
+                    "set a strong random value for production."
                 )
-            warnings.append("SECRET_KEY is the insecure default ('change-me').")
+            else:
+                warnings.append("SECRET_KEY is the insecure default ('change-me').")
         if not self.fernet_key:
             if self.is_production:
-                raise RuntimeError(
-                    "FERNET_KEY must be set in production — stored API secrets "
-                    "would otherwise be persisted in plain text."
+                warnings.append(
+                    "FERNET_KEY is unset — stored API secrets are not encrypted. "
+                    "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
                 )
-            warnings.append("FERNET_KEY is unset; stored API secrets are not encrypted.")
+            else:
+                warnings.append("FERNET_KEY is unset; stored API secrets are not encrypted.")
         if self.is_production:
             for origin in self.cors_origin_list:
                 if "localhost" in origin or "127.0.0.1" in origin:

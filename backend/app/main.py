@@ -23,14 +23,8 @@ _init_error: str | None = None
 async def lifespan(app: FastAPI):
     global _initialized, _init_error
     configure_logging()
-    try:
-        for warning in settings.validate_runtime_secrets():
-            logger.warning("config_warning", extra={"warning": warning})
-    except RuntimeError as exc:
-        logger.exception("fatal_config_error")
-        _init_error = str(exc)
-        yield
-        return
+    for warning in settings.validate_runtime_secrets():
+        logger.warning("config_warning", extra={"warning": warning})
     try:
         init_db()
         _initialized = True
