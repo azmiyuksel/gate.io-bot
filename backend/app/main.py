@@ -15,13 +15,28 @@ from app.db.init_db import init_db
 settings = get_settings()
 logger = get_logger("app.request")
 
+_initialized = False
+_init_error: str | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _initialized, _init_error
     configure_logging()
-    for warning in settings.validate_runtime_secrets():
-        logger.warning("config_warning", extra={"warning": warning})
-    init_db()
+    try:
+        for warning in settings.validate_runtime_secrets():
+            logger.warning("config_warning", extra={"warning": warning})
+    except RuntimeError as exc:
+        logger.exception("fatal_config_error")
+        _init_error = str(exc)
+        yield
+        return
+    try:
+        init_db()
+        _initialized = True
+    except Exception as exc:
+        logger.exception("database_init_failed")
+        _init_error = f"Database init failed: {exc}"
     yield
 
 
@@ -88,6 +103,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 @app.get("/health")
 def health() -> dict:
     """Liveness probe: process is up. Always cheap, no external dependencies."""
+    if _init_error:
+        return {"status": "degraded", "detail": _init_error}
     return {"status": "ok"}
 
 
