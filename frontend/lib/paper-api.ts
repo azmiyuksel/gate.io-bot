@@ -10,7 +10,29 @@ import type {
   PaperStatus,
   PaperTrade,
 } from "@/types/paper";
-import { authFetch } from "@/lib/auth-api";
+import { authFetch, getAccessToken } from "@/lib/auth-api";
+
+export function createPaperStream(onData: (data: PaperStatus) => void): EventSource | null {
+  const token = getAccessToken();
+  if (!token) return null;
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const url = `${baseUrl}/api/v1/paper/stream?token=${encodeURIComponent(token)}`;
+  const es = new EventSource(url);
+  es.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.status !== "error") {
+        onData(data as PaperStatus);
+      }
+    } catch {
+      // ignore parse errors
+    }
+  };
+  es.onerror = () => {
+    es.close();
+  };
+  return es;
+}
 
 export async function startPaperTrading(
   config?: { account_name?: string; initial_balance?: number; symbols?: string[] },

@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     # Correlation-aware entry filter (opt-in): skip a new entry whose returns are
     # too correlated with an already-open position, so "8 positions" don't collapse
     # into one concentrated directional bet.
-    correlation_filter_enabled: bool = False
+    correlation_filter_enabled: bool = True
     max_position_correlation: float = 0.85
 
     # --- Volatility targeting (opt-in): scale size inversely to volatility ---
@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     # allows normal crypto volatility while still filtering extreme moves.
     strategy_max_24h_range_pct: float = 0.12
     # Default trailing-stop distance (used when StrategySettings is missing).
-    strategy_trailing_stop_pct: float = 0.01
+    strategy_trailing_stop_pct: float = 0.03
     # Number of candles that represent a "daily" range (depends on candle interval).
     strategy_daily_range_candles: int = 24
     # Tradable universe (comma-separated Gate.io spot pairs). Expanded to a broader

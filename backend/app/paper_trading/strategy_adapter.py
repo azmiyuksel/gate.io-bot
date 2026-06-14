@@ -126,7 +126,7 @@ class CapitalPreservationAdapter(BaseStrategy):
                     side=PaperSide.buy,
                     strength=0.8,
                     strategy="capital_preservation_v1",
-                    timestamp=self._current_data.timestamp if self._current_data else datetime.utcnow(),
+                    timestamp=self._current_data.timestamp if self._current_data else datetime.now(UTC),
                     metadata={"reason": signal.reason, "atr": str(signal.atr_value)},
                 )
             self._last_reason = signal.reason

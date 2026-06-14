@@ -97,16 +97,19 @@ def trigger_rebalance(db: DbSession) -> dict:
     # Simulate fetching active spot positions from the Paper Trading position table (if running paper bot)
     # or keep default assets.
     # To keep it generic and functional, we update engine positions first.
-    from app.models.entities import PaperPosition
-    paper_positions = db.query(PaperPosition).filter(PaperPosition.is_open.is_(True)).all()
-    active_pos = []
-    for p in paper_positions:
-        active_pos.append({
-            "symbol": p.symbol,
-            "quantity": float(p.quantity),
-            "entry_price": float(p.average_entry_price),
-            "last_price": float(p.last_price)
-        })
+    try:
+        from app.models.entities import PaperPosition
+        paper_positions = db.query(PaperPosition).filter(PaperPosition.is_open.is_(True)).all()
+        active_pos = []
+        for p in paper_positions:
+            active_pos.append({
+                "symbol": p.symbol,
+                "quantity": float(p.quantity),
+                "entry_price": float(p.average_entry_price),
+                "last_price": float(p.last_price)
+            })
+    except Exception:
+        active_pos = []
     
     engine.update_positions(active_pos)
     engine.rebalance(trigger_reason=RebalanceTrigger.manual)

@@ -77,6 +77,9 @@ class PaperTradingEngine:
                 self.db.refresh(self.account)
             except Exception:
                 pass
+            # Auto-resume from PAUSED after cooldown if risk limits recovered
+            if self.account.status == PaperBotStatus.paused:
+                self.risk.maybe_auto_resume()
             if self.account.status == PaperBotStatus.running:
                 await self._evaluate_entries(symbols, settings)
             await asyncio.sleep(max(int(settings.paper_eval_interval_seconds), 1))
@@ -157,7 +160,9 @@ class PaperTradingEngine:
         max_capital_pct = settings.max_capital_per_trade_pct if settings else Decimal("0.01")
         max_risk_pct = Decimal(str(config.max_risk_per_trade_pct))
 
-        # Risk-based position sizing: size so that loss-to-stop equals max_risk_pct of equity
+        # Risk-constrained position sizing: the risk-based quantity (sized so loss-to-stop
+        # equals max_risk_pct of equity) is bound above by a notional cap (max_capital_pct).
+        # This means risk-based sizing constrains rather than drives the final position size.
         atr_str = signal.metadata.get("atr") if signal.metadata else None
         if atr_str and config.risk_based_sizing_enabled:
             try:
@@ -204,9 +209,11 @@ class PaperTradingEngine:
             if not position.breakeven_triggered and position.average_entry_price > 0:
                 profit_pct = (price - position.average_entry_price) / position.average_entry_price
                 if profit_pct >= breakeven_trigger:
-                    position.stop_loss = position.average_entry_price
+                    # Round-trip fees (0.2%): real breakeven is entry + fees, not entry alone
+                    round_trip_fee = position.average_entry_price * Decimal("0.002")
+                    position.stop_loss = position.average_entry_price + round_trip_fee
                     position.breakeven_triggered = True
-                    self._log("breakeven_stop", f"{data.symbol} stop moved to breakeven at {price}")
+                    self._log("breakeven_stop", f"{data.symbol} stop moved to breakeven (incl. fees) at {price}")
 
             # Trailing stop: ratchet up as price rises (only after breakeven)
             if position.breakeven_triggered and position.highest_price and trailing_pct > 0:

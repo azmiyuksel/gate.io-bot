@@ -1,7 +1,10 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+import asyncio
+import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import DbSession, current_user_role, require_admin
 from app.models.entities import PaperAccount, PaperEquityCurve, PaperLog, PaperOrder, PaperPosition, PaperTrade
@@ -26,13 +29,6 @@ router = APIRouter(prefix="/paper", tags=["paper"], dependencies=[Depends(curren
 @router.post("/start", dependencies=[Depends(require_admin)])
 def start_paper(payload: PaperStartRequest, db: DbSession) -> dict:
     account = _get_or_create_account(db, payload.account_name, payload.initial_balance)
-    # Reset cash_balance if it was drained to 0 (e.g. from previous losing trades)
-    try:
-        if account.cash_balance <= 0:
-            account.cash_balance = account.initial_balance
-            account.realized_pnl = Decimal("0")
-    except (TypeError, AttributeError):
-        pass
     account.status = PaperBotStatus.running
     # Record initial equity point so the chart is never empty
     portfolio = PaperPortfolio(db, account)
@@ -135,13 +131,6 @@ def pause_paper(db: DbSession) -> dict:
 @router.post("/resume", dependencies=[Depends(require_admin)])
 def resume_paper(db: DbSession) -> dict:
     account = _get_or_create_account(db)
-    # Reset cash_balance if it was drained to 0
-    try:
-        if account.cash_balance <= 0:
-            account.cash_balance = account.initial_balance
-            account.realized_pnl = Decimal("0")
-    except (TypeError, AttributeError):
-        pass
     account.status = PaperBotStatus.running
     # Record equity point so chart updates immediately
     portfolio = PaperPortfolio(db, account)
@@ -286,6 +275,39 @@ def signal_diagnostics(db: DbSession, hours: int = 24) -> dict:
         "reason_counts": ordered,
         "latest_by_symbol": latest_by_symbol,
     }
+
+
+@router.get("/stream")
+async def stream_paper(request: Request, db: DbSession) -> StreamingResponse:
+    async def event_stream():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    account = db.query(PaperAccount).filter(PaperAccount.name == "default").first()
+                    if account:
+                        portfolio = PaperPortfolio(db, account)
+                        open_positions = portfolio.open_positions()
+                        unrealized = sum((position.unrealized_pnl for position in open_positions), Decimal("0"))
+                        metrics = PaperMetrics(db, account.id).summary()
+                        payload = {
+                            "account_id": account.id,
+                            "status": account.status,
+                            "cash_balance": float(account.cash_balance),
+                            "equity": float(portfolio.equity()),
+                            "realized_pnl": float(account.realized_pnl),
+                            "unrealized_pnl": float(unrealized),
+                            "exposure": float(portfolio.exposure_pct()),
+                            "metrics": metrics,
+                        }
+                        yield f"data: {json.dumps(payload)}\n\n"
+                except Exception:
+                    yield f"data: {json.dumps({'status': 'error'})}\n\n"
+                await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            pass
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 def _get_or_create_account(db: DbSession, name: str = "default", initial_balance: Decimal = Decimal("10000")) -> PaperAccount:

@@ -37,6 +37,7 @@ import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import { fmtUTC, money } from "@/lib/utils";
 import {
+  createPaperStream,
   getPaperEconomics,
   getPaperEquity,
   getPaperPositions,
@@ -65,6 +66,7 @@ export default function PaperTradingPage() {
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionLoadingBtn, setActionLoadingBtn] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
 
@@ -77,6 +79,7 @@ export default function PaperTradingPage() {
   const [economics, setEconomics] = useState<PaperEconomics | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     setToken(getAccessToken());
@@ -86,8 +89,7 @@ export default function PaperTradingPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [s, p, t, e, r, d, ec] = await Promise.all([
-        getPaperStatus().catch(() => null),
+      const [p, t, e, r, d, ec] = await Promise.all([
         getPaperPositions().catch(() => []),
         getPaperTrades().catch(() => []),
         getPaperEquity().catch(() => []),
@@ -95,7 +97,6 @@ export default function PaperTradingPage() {
         getPaperSignalDiagnostics().catch(() => null),
         getPaperEconomics().catch(() => null),
       ]);
-      if (s) setStatus(s);
       setPositions(p);
       setTrades(t);
       setEquity(e);
@@ -111,14 +112,24 @@ export default function PaperTradingPage() {
   useEffect(() => {
     if (!token) return;
     refresh();
-    intervalRef.current = setInterval(refresh, 5000);
+    // SSE stream for real-time status and equity updates
+    sseRef.current = createPaperStream((data) => {
+      if (data) {
+        setStatus(data);
+        setLastUpdated(new Date());
+      }
+    });
+    // Poll for detailed data at reduced rate (15s instead of 5s)
+    intervalRef.current = setInterval(refresh, 15000);
     return () => {
+      if (sseRef.current) sseRef.current.close();
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [token, refresh]);
 
-  async function action(fn: () => Promise<boolean>, successMsg: string) {
+  async function action(fn: () => Promise<boolean>, successMsg: string, btnId = "") {
     setActionLoading(true);
+    if (btnId) setActionLoadingBtn(btnId);
     try {
       const ok = await fn();
       if (ok) {
@@ -131,6 +142,7 @@ export default function PaperTradingPage() {
     }
     await refresh();
     setActionLoading(false);
+    setActionLoadingBtn("");
   }
 
   const botStatus = status?.status ?? "STOPPED";
@@ -167,31 +179,31 @@ export default function PaperTradingPage() {
         {token && (
           <div className="mx-auto flex max-w-7xl flex-wrap gap-2 px-6 pb-4">
             {botStatus === "STOPPED" && (
-              <Button onClick={() => action(startPaperTrading, "Paper trading başlatıldı")} disabled={actionLoading}>
+              <Button onClick={() => action(startPaperTrading, "Paper trading başlatıldı", "start")} disabled={!!actionLoadingBtn}>
                 <Play size={15} /> Başlat
               </Button>
             )}
             {botStatus === "RUNNING" && (
               <>
-                <Button onClick={() => action(pausePaperTrading, "Duraklatıldı")} disabled={actionLoading} className="bg-amber-600">
+                <Button onClick={() => action(pausePaperTrading, "Duraklatıldı", "pause")} disabled={!!actionLoadingBtn} className="bg-amber-600">
                   <CirclePause size={15} /> Duraklat
                 </Button>
-                <Button onClick={() => action(stopPaperTrading, "Durduruldu")} disabled={actionLoading} className="bg-danger">
+                <Button onClick={() => action(stopPaperTrading, "Durduruldu", "stop")} disabled={!!actionLoadingBtn} className="bg-danger">
                   <Square size={15} /> Durdur
                 </Button>
               </>
             )}
             {botStatus === "PAUSED" && (
               <>
-                <Button onClick={() => action(resumePaperTrading, "Devam ediliyor")} disabled={actionLoading}>
+                <Button onClick={() => action(resumePaperTrading, "Devam ediliyor", "resume")} disabled={!!actionLoadingBtn}>
                   <Play size={15} /> Devam Et
                 </Button>
-                <Button onClick={() => action(stopPaperTrading, "Durduruldu")} disabled={actionLoading} className="bg-danger">
+                <Button onClick={() => action(stopPaperTrading, "Durduruldu", "stop")} disabled={!!actionLoadingBtn} className="bg-danger">
                   <Square size={15} /> Durdur
                 </Button>
               </>
             )}
-            <Button onClick={() => setConfirmReset(true)} disabled={actionLoading} className="bg-foreground/80">
+            <Button onClick={() => setConfirmReset(true)} disabled={!!actionLoadingBtn} className="bg-foreground/80">
               <RotateCcw size={15} /> Sıfırla
             </Button>
           </div>
@@ -432,7 +444,8 @@ export default function PaperTradingPage() {
                     </div>
                     <div className="mt-1 h-1.5 w-full rounded bg-border">
                       <div
-                        className={`h-1.5 rounded w-[${Math.round(pct)}%] ${approved ? "bg-primary" : "bg-amber-600"}`}
+                        className={`h-1.5 rounded ${approved ? "bg-primary" : "bg-amber-600"}`}
+                        style={{ width: `${Math.round(pct)}%` }}
                       />
                     </div>
                   </div>
@@ -531,9 +544,9 @@ export default function PaperTradingPage() {
         message="Tüm paper trading verileri sıfırlanacak. Emin misiniz?"
         confirmLabel="Sıfırla"
         danger
-        onConfirm={() => {
+        onConfirm={async () => {
+          await action(resetPaperTrading, "Sıfırlandı", "reset");
           setConfirmReset(false);
-          action(resetPaperTrading, "Sıfırlandı");
         }}
         onCancel={() => setConfirmReset(false)}
       />

@@ -99,28 +99,44 @@ class PaperBroker:
             )
         )
         self._log("order_filled", f"{order.side} {order.symbol} qty={execution.filled_quantity}")
-        self.db.commit()
 
     def close_position(self, position: PaperPosition, data: MarketData, reason: str) -> None:
-        signal_time = datetime.now(UTC)
-        submission_time = datetime.now(UTC)
+        now = datetime.now(UTC)
+        order = PaperOrder(
+            account_id=self.account.id,
+            symbol=position.symbol,
+            side=OrderSide.sell,
+            order_type=PaperOrderType.market,
+            status=PaperOrderStatus.filled,
+            requested_quantity=position.quantity,
+            filled_quantity=position.quantity,
+            signal={"reason": reason, "type": "exit"},
+        )
+        self.db.add(order)
+        self.db.commit()
+        self.db.refresh(order)
         execution = self.simulator.execute_market(
-            order_id=0,
+            order_id=order.id,
             side=PaperSide.sell,
             quantity=float(position.quantity),
             data=data,
         )
+        order.filled_quantity = Decimal(str(execution.filled_quantity))
+        order.average_fill_price = Decimal(str(execution.average_price))
+        order.fee_paid = Decimal(str(execution.fee))
+        order.latency_ms = execution.latency_ms
+        order.filled_at = now
         exit_price = Decimal(str(execution.average_price))
         pnl = (exit_price - position.average_entry_price) * position.quantity - Decimal(str(execution.fee))
         self.account.cash_balance += exit_price * position.quantity - Decimal(str(execution.fee))
         self.account.realized_pnl += pnl
         position.realized_pnl += pnl
         position.is_open = False
-        position.closed_at = datetime.now(UTC)
+        position.closed_at = now
         self.db.add(
             PaperTrade(
                 account_id=self.account.id,
-                order_id=None,
+                order_id=order.id,
                 symbol=position.symbol,
                 side=OrderSide.sell,
                 price=exit_price,
@@ -130,7 +146,6 @@ class PaperBroker:
             )
         )
         self._log("trade_closed", f"{position.symbol} closed: {reason}", {"pnl": str(pnl)})
-        self.db.commit()
 
         # Record Execution Quality metrics
         try:
@@ -143,11 +158,11 @@ class PaperBroker:
                 side="sell",
                 expected_price=exit_price,
                 expected_quantity=position.quantity,
-                signal_time=signal_time,
-                submission_time=submission_time,
+                signal_time=now,
+                submission_time=now,
             )
             
-            ack_time = submission_time + timedelta(milliseconds=5)
+            ack_time = now + timedelta(milliseconds=5)
             fill_time = datetime.now(UTC)
             
             eq_engine.record_fill(
@@ -240,3 +255,4 @@ class PaperBroker:
                 payload=payload or {},
             )
         )
+        self.db.commit()
