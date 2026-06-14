@@ -4,7 +4,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models.entities import PaperAccount, PaperLog
+from app.models.entities import PaperAccount, PaperLog, PaperPosition
 from app.models.enums import LogLevel, PaperBotStatus
 from app.paper_trading.models import MarketData, TradingSignal
 from app.paper_trading.portfolio import PaperPortfolio
@@ -24,8 +24,11 @@ class PaperRiskSimulator:
         equity = self.portfolio.equity()
         if equity <= 0:
             return False, "no_equity"
-        if len(self.portfolio.open_positions()) >= self.account.max_open_positions:
+        open_positions = self.portfolio.open_positions()
+        if len(open_positions) >= self.account.max_open_positions:
             return False, "max_open_positions"
+        if any(p.symbol == signal.symbol for p in open_positions):
+            return False, "already_in_position"
         if self.portfolio.exposure_pct() >= self.account.max_exposure_pct:
             return False, "max_exposure"
         latest_dd = self._latest_drawdown()

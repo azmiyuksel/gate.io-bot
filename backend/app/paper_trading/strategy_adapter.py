@@ -103,7 +103,8 @@ class CapitalPreservationAdapter(BaseStrategy):
                     metadata={"reason": signal.reason, "atr": str(signal.atr_value)},
                 )
             self._last_reason = signal.reason
+            logger.info("[%s] candles=%d signal=BUY reason=%s", symbol, len(candles), signal.reason)
         else:
             self._last_reason = signal.reason
-        logger.info("[%s] candles=%d signal=%s reason=%s", symbol, len(candles),
-                     "BUY" if signal.should_buy else "NO", signal.reason)
+            if len(candles) == self._min_candles:
+                logger.info("[%s] candles=%d signal=NO reason=%s", symbol, len(candles), signal.reason)

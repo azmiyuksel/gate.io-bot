@@ -68,11 +68,13 @@ class PaperTradingEngine:
 
     async def execute_signal(self, signal: TradingSignal, data: MarketData) -> None:
         approved, reason = self.risk.approve_signal(signal, data)
-        self._log("risk_check", reason, {"signal": signal.to_dict()})
         if not approved:
+            if reason not in ("already_in_position", "rsi_not_oversold", "below_200_ema", "not_near_20_ema", "low_volume", "excessive_24h_volatility"):
+                self._log("risk_check", reason, {"signal": signal.to_dict()})
             if reason in {"daily_loss_limit_reached", "max_drawdown_reached"}:
                 await self.notifier.send(f"Paper trading paused: {reason}")
             return
+        self._log("risk_check", "approved", {"signal": signal.to_dict()})
         equity = self.portfolio.equity()
         price = Decimal(str(data.price))
         settings = StrategySettingsRepository(self.db).current()
