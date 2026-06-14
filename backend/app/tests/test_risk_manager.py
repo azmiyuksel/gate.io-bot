@@ -67,3 +67,44 @@ def test_approve_entry_needs_both_flags(db_session, monkeypatch):
     db_session.commit()
     approved = RiskManager(db_session).approve_entry(Decimal("10000"), Decimal("100"), Decimal("2"))
     assert approved.allowed is True
+
+
+def test_risk_based_sizing_targets_fixed_risk(db_session, monkeypatch):
+    from decimal import Decimal
+
+    from app.core.config import get_settings
+    from app.models.entities import StrategySettings
+    from app.services.risk.manager import RiskManager
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "bot_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "max_risk_per_trade_pct", 0.02, raising=False)
+    monkeypatch.setattr(settings, "max_total_exposure_pct", 0.30, raising=False)
+    monkeypatch.setattr(settings, "vol_targeting_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "drawdown_derisk_enabled", False, raising=False)
+
+    row = db_session.query(StrategySettings).first() or StrategySettings()
+    if row.id is None:
+        db_session.add(row)
+    row.is_enabled = True
+    row.atr_multiplier = Decimal("2")
+    row.min_reward_risk = Decimal("1.5")
+    row.max_capital_per_trade_pct = Decimal("0.05")
+    db_session.commit()
+
+    equity, entry, atr = Decimal("10000"), Decimal("100"), Decimal("30")
+    # risk_per_unit = atr*atr_multiplier = 60; stop=40, tp=190 (valid).
+
+    # Notional mode ignores stop distance: a fixed 5-unit notional with a wide
+    # stop (risk/unit=60) implies a 300 loss, breaching the 200 per-trade cap.
+    monkeypatch.setattr(settings, "risk_based_sizing_enabled", False, raising=False)
+    notional = RiskManager(db_session).approve_entry(equity, entry, atr)
+    assert not notional.allowed
+    assert notional.reason.startswith("excessive_risk_per_trade")
+
+    # Risk-based mode sizes DOWN so loss-to-stop == 2% of equity (200/60) and trades.
+    monkeypatch.setattr(settings, "risk_based_sizing_enabled", True, raising=False)
+    risk = RiskManager(db_session).approve_entry(equity, entry, atr)
+    assert risk.allowed
+    assert risk.quantity == Decimal("200") / Decimal("60")
+    assert risk.quantity * (entry - risk.stop_loss) == Decimal("200")

@@ -3,12 +3,23 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import datetime
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 import httpx
 
 from app.core.config import get_settings
+
+_INTERVAL_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def _interval_seconds(interval: str) -> int:
+    """Seconds per candle for a Gate.io interval string (e.g. '1h', '15m', '1d')."""
+    try:
+        return int(interval[:-1]) * _INTERVAL_UNIT_SECONDS.get(interval[-1], 3600)
+    except (ValueError, IndexError):
+        return 3600
 
 
 class OrderBelowMinimum(Exception):
@@ -106,8 +117,45 @@ class GateIOClient:
             "/spot/candlesticks",
             params={"currency_pair": symbol, "interval": interval, "limit": limit},
         )
+        return self._parse_candles(data)
+
+    async def candles_range(
+        self,
+        symbol: str,
+        interval: str,
+        start: datetime,
+        end: datetime,
+        max_pages: int = 40,
+    ) -> list[dict]:
+        """Fetch every candle in [start, end], paging past Gate.io's 1000-bar
+        per-request cap. Without this a long backtest silently truncates to the
+        most recent 1000 bars. Returns oldest->newest, de-duplicated."""
+        start_ts = int(start.timestamp())
+        end_ts = int(end.timestamp())
+        step = _interval_seconds(interval)
+        by_ts: dict[int, dict] = {}
+        cursor = end_ts
+        for _ in range(max_pages):
+            data = await self.request(
+                "GET",
+                "/spot/candlesticks",
+                params={"currency_pair": symbol, "interval": interval, "to": cursor, "limit": 1000},
+            )
+            parsed = self._parse_candles(data)
+            if not parsed:
+                break
+            for candle in parsed:
+                by_ts[int(candle["timestamp"])] = candle
+            oldest = min(int(c["timestamp"]) for c in parsed)
+            if oldest <= start_ts:
+                break
+            cursor = oldest - step  # walk the window backwards
+        return [by_ts[t] for t in sorted(by_ts) if start_ts <= t <= end_ts]
+
+    @staticmethod
+    def _parse_candles(data: list) -> list[dict]:
         result = []
-        for item in reversed(data):
+        for item in reversed(data or []):
             close = Decimal(str(item[2]))
             quote_volume = Decimal(str(item[1]))
             # Gate.io v4 returns QUOTE volume at index 1 (and base volume at index 6

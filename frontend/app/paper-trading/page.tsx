@@ -285,8 +285,12 @@ export default function PaperTradingPage() {
                       <td className={pnl >= 0 ? "text-primary font-medium" : "text-danger font-medium"}>
                         ${money(pos.unrealized_pnl)}
                       </td>
-                      <td className="text-muted">-</td>
-                      <td className="text-muted">-</td>
+                      <td className={pos.stop_loss ? "text-danger" : "text-muted"}>
+                        {pos.stop_loss ? `$${money(pos.stop_loss)}` : "-"}
+                      </td>
+                      <td className={pos.take_profit ? "text-primary" : "text-muted"}>
+                        {pos.take_profit ? `$${money(pos.take_profit)}` : "-"}
+                      </td>
                     </tr>
                   );
                 })}

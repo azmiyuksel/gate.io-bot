@@ -17,6 +17,8 @@ export type PaperPosition = {
   last_price: string;
   unrealized_pnl: string;
   realized_pnl: string;
+  stop_loss: string | null;
+  take_profit: string | null;
   is_open: boolean;
 };
 

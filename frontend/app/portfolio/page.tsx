@@ -40,6 +40,7 @@ import { money } from "@/lib/utils";
 import {
   getPortfolio,
   getPortfolioAllocations,
+  getPortfolioCorrelations,
   getPortfolioMetrics,
   getRebalanceHistory,
   resetPortfolio,
@@ -47,7 +48,14 @@ import {
   triggerRebalance,
 } from "@/lib/portfolio-api";
 import { useToast } from "@/components/ui/toast";
-import type { Allocation, Portfolio, PortfolioMetric, RebalanceEvent, RiskSnapshot } from "@/types/portfolio";
+import type {
+  Allocation,
+  Portfolio,
+  PortfolioCorrelations,
+  PortfolioMetric,
+  RebalanceEvent,
+  RiskSnapshot,
+} from "@/types/portfolio";
 
 const COLORS = ["#146c5d", "#15b79e", "#e5e5e0", "#b42318"];
 
@@ -64,6 +72,7 @@ export default function PortfolioPage() {
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [rebalances, setRebalances] = useState<RebalanceEvent[]>([]);
   const [stressResult, setStressResult] = useState<RiskSnapshot | null>(null);
+  const [correlations, setCorrelations] = useState<PortfolioCorrelations | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -75,16 +84,18 @@ export default function PortfolioPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [p, m, a, r] = await Promise.all([
+      const [p, m, a, r, c] = await Promise.all([
         getPortfolio(),
         getPortfolioMetrics(),
         getPortfolioAllocations(),
         getRebalanceHistory(),
+        getPortfolioCorrelations(),
       ]);
       if (p) setPortfolio(p);
       setMetrics(m);
       setAllocations(a);
       setRebalances(r);
+      setCorrelations(c);
       setLastUpdated(new Date());
     } finally {
       setLoading(false);
@@ -149,15 +160,10 @@ export default function PortfolioPage() {
   // Setup strategy weights
   const strategyWeights = allocations.filter((a) => a.target_type === "strategy");
 
-  // Default correlations if matrix is empty
-  const corrMatrix: Record<string, Record<string, number>> = {
-    BTC_USDT: { BTC_USDT: 1.0, ETH_USDT: 0.85, SOL_USDT: 0.72, XRP_USDT: 0.55 },
-    ETH_USDT: { BTC_USDT: 0.85, ETH_USDT: 1.0, SOL_USDT: 0.78, XRP_USDT: 0.61 },
-    SOL_USDT: { BTC_USDT: 0.72, ETH_USDT: 0.78, SOL_USDT: 1.0, XRP_USDT: 0.49 },
-    XRP_USDT: { BTC_USDT: 0.55, ETH_USDT: 0.61, SOL_USDT: 0.49, XRP_USDT: 1.0 },
-  };
-
-  const symbols = Object.keys(corrMatrix);
+  // Live return-correlation matrix from the backend (no more hardcoded values).
+  const corrMatrix = correlations?.matrix ?? {};
+  const symbols = correlations?.symbols ?? [];
+  const hasCorrData = Boolean(correlations?.data_available && symbols.length >= 2);
 
   return (
     <main className="min-h-screen">
@@ -348,7 +354,18 @@ export default function PortfolioPage() {
 
         {/* Correlation Heatmap */}
         <Card>
-          <h2 className="mb-4 text-base font-semibold">Rolling Korelasyon Matrisi</h2>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-base font-semibold">Getiri Korelasyon Matrisi</h2>
+            {correlations?.timeframe && (
+              <span className="text-xs text-muted">{correlations.timeframe} · getiriler</span>
+            )}
+          </div>
+          {!hasCorrData ? (
+            <p className="py-8 text-center text-sm text-muted">
+              Korelasyon için yeterli geçmiş veri yok. Market-data toplandıkça
+              (en az ~10 mum/sembol) matris otomatik dolacak.
+            </p>
+          ) : (
           <div className="overflow-x-auto">
             <table role="table" className="w-full text-center text-xs">
               <thead>
@@ -364,10 +381,10 @@ export default function PortfolioPage() {
                   <tr key={s1} className="border-b border-border">
                     <td className="py-2.5 text-left font-semibold text-muted">{s1.replace("_USDT", "")}</td>
                     {symbols.map((s2) => {
-                      const corr = corrMatrix[s1][s2];
+                      const corr = corrMatrix[s1]?.[s2] ?? 0;
                       let bgClass = "bg-emerald-500/10";
                       if (corr > 0.8) bgClass = "bg-amber-500/40 text-amber-950 font-bold";
-                      if (corr === 1.0) bgClass = "bg-primary text-white font-bold";
+                      if (corr >= 0.999) bgClass = "bg-primary text-white font-bold";
                       return (
                         <td key={s2} className={`rounded p-1 ${bgClass}`}>
                           {corr.toFixed(2)}
@@ -379,6 +396,7 @@ export default function PortfolioPage() {
               </tbody>
             </table>
           </div>
+          )}
         </Card>
       </section>
 

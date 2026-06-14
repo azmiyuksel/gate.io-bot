@@ -3,8 +3,10 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import DbSession, current_user_role, require_admin
+from app.core.config import get_settings
 from app.models.entities import Allocation, Portfolio, PortfolioAsset, PortfolioMetric, RebalanceEvent, RiskSnapshot
 from app.models.enums import RebalanceTrigger
+from app.portfolio.correlation import CorrelationEngine
 from app.portfolio.engine import PortfolioEngine
 from app.schemas.portfolio import (
     AllocationOut,
@@ -159,6 +161,28 @@ def get_rebalance_history(db: DbSession) -> List[RebalanceEvent]:
         .limit(50)
         .all()
     )
+
+
+@router.get("/correlations")
+def get_correlations(db: DbSession) -> dict:
+    """Live return-correlation matrix for the configured universe, computed from
+    cached historical candles. Replaces the dashboard's previously hardcoded
+    matrix; `data_available` is False when there isn't enough history yet."""
+    settings = get_settings()
+    timeframe = settings.market_data_interval
+    result = CorrelationEngine(db).calculate_correlation(settings.symbols, timeframe)
+    # The engine only populates volatilities/covariance when it had real returns;
+    # otherwise it returns a placeholder matrix we must not present as real data.
+    data_available = "volatilities" in result
+    matrix = result.get("matrix", {}) if data_available else {}
+    return {
+        "symbols": list(matrix.keys()),
+        "matrix": matrix,
+        "high_correlation_pairs": result.get("high_correlation_pairs", []),
+        "risk_score": result.get("risk_score", 0.0),
+        "timeframe": timeframe,
+        "data_available": data_available,
+    }
 
 
 def _get_or_create_portfolio(db: DbSession, name: str = "default", initial_balance: Decimal = Decimal("10000")) -> Portfolio:

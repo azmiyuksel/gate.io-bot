@@ -34,7 +34,12 @@ def aggregate_results(window_results: list) -> dict:
     test_metrics = [window.test_metrics for window in window_results]
     train_profit = sum(float(window.train_metrics.get("net_profit", 0)) for window in window_results)
     test_profit = sum(float(window.test_metrics.get("net_profit", 0)) for window in window_results)
-    wfe = walk_forward_efficiency(train_profit, test_profit)
+    # WFE on RATE-normalized (annualized) returns, not raw profit sums: train
+    # windows are far longer than test windows, so summed net profit understates
+    # out-of-sample efficiency and overstates "overfit". Compare like-for-like.
+    train_ann = float(np.mean([float(w.train_metrics.get("annualized_return", 0)) for w in window_results]))
+    test_ann = float(np.mean([float(w.test_metrics.get("annualized_return", 0)) for w in window_results]))
+    wfe = walk_forward_efficiency(train_ann, test_ann)
     positive = sum(1 for metric in test_metrics if float(metric.get("net_profit", 0)) > 0)
     consistency = positive / len(window_results)
     avg_sharpe = float(np.mean([metric.get("sharpe_ratio", 0) for metric in test_metrics]))
@@ -44,7 +49,12 @@ def aggregate_results(window_results: list) -> dict:
     worst_drawdown = float(np.min([metric.get("max_drawdown", 0) for metric in test_metrics]))
     best_window = max(window_results, key=lambda item: item.test_metrics.get("net_profit", 0))
     worst_window = min(window_results, key=lambda item: item.test_metrics.get("net_profit", 0))
-    total_return = test_profit / max(abs(train_profit), 1)
+    # True out-of-sample total return: compound each test window's return
+    # (the old `test_profit/train_profit` was an efficiency ratio, not a return).
+    oos_compounded = 1.0
+    for metric in test_metrics:
+        oos_compounded *= 1.0 + float(metric.get("total_return", 0))
+    total_return = oos_compounded - 1.0
     annualized_return = float(np.mean([metric.get("annualized_return", 0) for metric in test_metrics]))
     robustness = robustness_score(consistency, wfe, avg_sharpe, worst_drawdown, avg_pf)
     return {

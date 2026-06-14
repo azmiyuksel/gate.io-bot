@@ -53,6 +53,15 @@ export type RiskSnapshot = {
   metrics_snapshot: Record<string, any>;
 };
 
+export type PortfolioCorrelations = {
+  symbols: string[];
+  matrix: Record<string, Record<string, number>>;
+  high_correlation_pairs: [string, string, number][];
+  risk_score: number;
+  timeframe: string;
+  data_available: boolean;
+};
+
 export type Portfolio = {
   id: number;
   name: string;

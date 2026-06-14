@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     quote_depeg_threshold_pct: float = 0.01  # 1% drift from parity
     quote_depeg_halt: bool = True            # pause new entries while depegged
 
+    # Risk-based position sizing (opt-in): size each trade so the loss-to-stop
+    # equals max_risk_per_trade_pct of equity (true fixed-fractional risk), instead
+    # of allocating a fixed notional. Never exceeds max_capital_per_trade_pct notional.
+    risk_based_sizing_enabled: bool = False
+
     # --- Volatility targeting (opt-in): scale size inversely to volatility ---
     vol_targeting_enabled: bool = False
     vol_target_atr_pct: float = 0.02          # target ATR as a fraction of price
@@ -79,7 +84,13 @@ class Settings(BaseSettings):
     strategy_trailing_stop_pct: float = 0.01
     # Number of candles that represent a "daily" range (depends on candle interval).
     strategy_daily_range_candles: int = 24
-    trading_symbols: str = "BTC_USDT,ETH_USDT,XRP_USDT,DOGE_USDT,SOL_USDT,ADA_USDT,LINK_USDT,AVAX_USDT"
+    # Tradable universe (comma-separated Gate.io spot pairs). Expanded to a broader
+    # set of liquid USDT pairs; override via TRADING_SYMBOLS to add/remove coins.
+    trading_symbols: str = (
+        "BTC_USDT,ETH_USDT,BNB_USDT,XRP_USDT,SOL_USDT,DOGE_USDT,ADA_USDT,TRX_USDT,"
+        "LINK_USDT,AVAX_USDT,DOT_USDT,LTC_USDT,BCH_USDT,ATOM_USDT,UNI_USDT,XLM_USDT,"
+        "NEAR_USDT,APT_USDT,ARB_USDT,OP_USDT,FIL_USDT,INJ_USDT"
+    )
     # Minimum volume ratio: reject entries when current volume is below this fraction
     # of the recent average volume (e.g., 0.3 = 30% of average).
     strategy_min_volume_ratio: float = 0.3
@@ -220,7 +231,16 @@ class Settings(BaseSettings):
 
     @property
     def symbols(self) -> list[str]:
-        return [symbol.strip() for symbol in self.trading_symbols.split(",") if symbol.strip()]
+        # Normalize (uppercase), drop blanks and de-duplicate while preserving the
+        # configured order, so a large/edited universe stays clean and stable.
+        seen: set[str] = set()
+        out: list[str] = []
+        for symbol in self.trading_symbols.split(","):
+            sym = symbol.strip().upper()
+            if sym and sym not in seen:
+                seen.add(sym)
+                out.append(sym)
+        return out
 
     @property
     def cors_origin_list(self) -> list[str]:

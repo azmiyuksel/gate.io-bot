@@ -1,4 +1,11 @@
-import type { Allocation, Portfolio, PortfolioMetric, RebalanceEvent, RiskSnapshot } from "@/types/portfolio";
+import type {
+  Allocation,
+  Portfolio,
+  PortfolioCorrelations,
+  PortfolioMetric,
+  RebalanceEvent,
+  RiskSnapshot,
+} from "@/types/portfolio";
 import { authFetch } from "@/lib/auth-api";
 
 export async function getPortfolio(): Promise<Portfolio | null> {
@@ -7,6 +14,16 @@ export async function getPortfolio(): Promise<Portfolio | null> {
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error fetching portfolio:", err);
+  }
+  return null;
+}
+
+export async function getPortfolioCorrelations(): Promise<PortfolioCorrelations | null> {
+  try {
+    const res = await authFetch(`/portfolio/correlations`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.error("Error fetching correlations:", err);
   }
   return null;
 }

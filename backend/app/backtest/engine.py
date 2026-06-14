@@ -52,8 +52,12 @@ class HistoricalDataLoader:
     ) -> pd.DataFrame:
         if self.gateio is None:
             raise ValueError("Gate.io client is required")
-        candles = await self.gateio.candles(symbol, interval=timeframe, limit=1000)
+        # Page across the 1000-bar request cap so long date ranges aren't silently
+        # truncated to the most recent 1000 candles.
+        candles = await self.gateio.candles_range(symbol, timeframe, start_at, end_at)
         frame = pd.DataFrame(candles)
+        if frame.empty:
+            return self.validate(frame, timeframe)
         frame["timestamp"] = pd.to_datetime(frame["timestamp"], unit="s", utc=True)
         frame = frame[(frame["timestamp"] >= start_at) & (frame["timestamp"] <= end_at)]
         frame = self.validate(frame, timeframe)

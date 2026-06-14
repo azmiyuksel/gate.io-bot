@@ -85,16 +85,31 @@ class RiskManager:
         if self.trades.weekly_pnl() <= weekly_limit:
             return RiskDecision(False, "weekly_loss_limit")
 
-        # Sizing is NOTIONAL-based: allocate `max_capital_per_trade_pct` of equity
-        # to the position. This is deliberately conservative (capital preservation)
-        # and is NOT a fixed "risk-to-stop" model — the loss if stopped out is far
-        # smaller than the allocated notional (≈ notional * stop_distance/entry).
-        notional = equity * settings.max_capital_per_trade_pct
-        quantity = notional / entry
+        # Risk levels first — sizing may depend on the stop distance.
+        stop_loss = entry - (atr_value * settings.atr_multiplier)
+        risk_per_unit = entry - stop_loss
+        take_profit = entry + (risk_per_unit * settings.min_reward_risk)
+        if stop_loss <= 0 or take_profit <= entry or risk_per_unit <= 0:
+            return RiskDecision(False, "invalid_risk_levels")
+
+        app_settings = get_settings()
+        notional_cap = equity * settings.max_capital_per_trade_pct
+        if app_settings.risk_based_sizing_enabled:
+            # Fixed-fractional RISK sizing: size so the loss if stopped out equals
+            # max_risk_per_trade_pct of equity. Cap at the notional limit so the
+            # total-exposure guard above stays valid.
+            risk_budget = equity * Decimal(str(app_settings.max_risk_per_trade_pct))
+            quantity = risk_budget / risk_per_unit
+            if quantity * entry > notional_cap:
+                quantity = notional_cap / entry
+        else:
+            # Notional-based: allocate `max_capital_per_trade_pct` of equity. The
+            # loss if stopped out is ≈ notional * stop_distance/entry, i.e. smaller
+            # than the allocated notional.
+            quantity = notional_cap / entry
 
         # Optional volatility targeting: feed the current volatility (ATR) back
         # into sizing so per-trade risk is steadier across calm/volatile markets.
-        app_settings = get_settings()
         if app_settings.vol_targeting_enabled and entry > 0 and atr_value > 0:
             mult = vol_target_multiplier(
                 atr_value / entry,
@@ -103,12 +118,6 @@ class RiskManager:
                 Decimal(str(app_settings.vol_target_max_multiplier)),
             )
             quantity = quantity * mult
-
-        stop_loss = entry - (atr_value * settings.atr_multiplier)
-        risk_per_unit = entry - stop_loss
-        take_profit = entry + (risk_per_unit * settings.min_reward_risk)
-        if stop_loss <= 0 or take_profit <= entry:
-            return RiskDecision(False, "invalid_risk_levels")
 
         # --- PER-TRADE MAXIMUM DOLLAR LOSS GUARD ---
         # Prevent a single catastrophic fill (e.g., flash crash) from exceeding

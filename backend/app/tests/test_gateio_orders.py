@@ -207,3 +207,39 @@ def test_paper_adapter_disables_trend_filter():
 
     assert CapitalPreservationStrategy().trend_filter_enabled is True
     assert CapitalPreservationAdapter()._strategy.trend_filter_enabled is False
+
+
+async def test_candles_range_pages_past_1000_cap(monkeypatch):
+    from datetime import UTC, datetime
+
+    c = GateIOClient()
+    pages = [
+        [[t, "100", "10", "11", "9", "10"] for t in range(200, 210)],  # newest page
+        [[t, "100", "10", "11", "9", "10"] for t in range(190, 200)],  # older page
+        [],
+    ]
+    calls = {"i": 0}
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        i = calls["i"]
+        calls["i"] += 1
+        return pages[i] if i < len(pages) else []
+
+    monkeypatch.setattr(c, "request", fake_request)
+    start = datetime.fromtimestamp(195, tz=UTC)
+    end = datetime.fromtimestamp(10_000, tz=UTC)
+    out = await c.candles_range("BTC_USDT", "1h", start, end)
+    ts = [int(x["timestamp"]) for x in out]
+    assert ts == sorted(ts)                 # ascending
+    assert ts[0] == 195 and ts[-1] == 209   # filtered to [start, end]
+    assert len(ts) == 15                     # 195..209, de-duplicated across pages
+
+
+def test_symbols_property_normalizes_and_dedupes():
+    from app.core.config import Settings
+
+    s = Settings(
+        secret_key="t", fernet_key="t",
+        trading_symbols="btc_usdt, ETH_USDT ,btc_usdt,, sol_usdt",
+    )
+    assert s.symbols == ["BTC_USDT", "ETH_USDT", "SOL_USDT"]

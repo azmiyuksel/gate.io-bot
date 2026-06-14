@@ -29,6 +29,8 @@ class PaperPositionOut(BaseModel):
     last_price: Decimal
     unrealized_pnl: Decimal
     realized_pnl: Decimal
+    stop_loss: Decimal | None = None
+    take_profit: Decimal | None = None
     is_open: bool
 
     model_config = {"from_attributes": True}

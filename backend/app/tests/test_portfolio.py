@@ -71,3 +71,35 @@ def test_risk_model_position_sizing() -> None:
     assert sl_dist == Decimal("4")
     assert qty == Decimal("25")
     assert sl_price == Decimal("96")
+
+
+def test_correlations_endpoint_reports_data_availability(db_session):
+    from datetime import UTC, datetime, timedelta
+    from decimal import Decimal
+
+    from app.api.v1.portfolio import get_correlations
+    from app.core.config import get_settings
+    from app.models.entities import HistoricalCandle
+
+    # No candles yet -> must not present fake data.
+    empty = get_correlations(db_session)
+    assert empty["data_available"] is False
+    assert empty["symbols"] == []
+
+    tf = get_settings().market_data_interval
+    base = datetime(2024, 1, 1, tzinfo=UTC)
+    for sym, drift in (("BTC_USDT", "1.0"), ("ETH_USDT", "0.5")):
+        for i in range(15):
+            price = Decimal("100") + Decimal(str(i)) * Decimal(drift)
+            db_session.add(HistoricalCandle(
+                symbol=sym, timeframe=tf, timestamp=base + timedelta(hours=i),
+                open=price, high=price, low=price, close=price, volume=Decimal("1000"),
+                source="test",
+            ))
+    db_session.commit()
+
+    result = get_correlations(db_session)
+    assert result["data_available"] is True
+    assert "BTC_USDT" in result["symbols"] and "ETH_USDT" in result["symbols"]
+    # Self-correlation is 1.0 on the diagonal.
+    assert round(result["matrix"]["BTC_USDT"]["BTC_USDT"], 6) == 1.0
