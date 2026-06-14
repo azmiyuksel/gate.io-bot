@@ -19,6 +19,58 @@ from app.services.risk.circuit_breaker import CircuitBreaker
 from app.services.trading_engine import TradingEngine
 
 
+async def monitor_portfolio_risk() -> None:
+    """Periodic portfolio-level risk limit check with Telegram alerts."""
+    from app.models.entities import Portfolio, PaperPosition
+    from app.portfolio.engine import PortfolioEngine
+    from app.portfolio.risk_model import PortfolioRiskModel
+
+    db = SessionLocal()
+    try:
+        portfolio = db.query(Portfolio).filter(Portfolio.name == "default").first()
+        if not portfolio:
+            db.close()
+            return
+
+        # Sync paper positions before checking risk
+        paper_positions = db.query(PaperPosition).filter(PaperPosition.is_open.is_(True)).all()
+        if paper_positions:
+            engine = PortfolioEngine(db, portfolio)
+            active_pos = [
+                {
+                    "symbol": p.symbol,
+                    "quantity": float(p.quantity),
+                    "entry_price": float(p.average_entry_price),
+                    "last_price": float(p.last_price),
+                }
+                for p in paper_positions
+            ]
+            engine.update_positions(active_pos)
+
+        passed, reason = PortfolioRiskModel(db).check_risk_limits(portfolio)
+        if not passed:
+            from app.services.notifications.telegram import TelegramNotifier
+            await TelegramNotifier().send_portfolio_risk_limit(
+                portfolio=portfolio.name,
+                reason=reason,
+                equity=float(portfolio.total_equity),
+            )
+            db.add(
+                SystemLog(
+                    level=LogLevel.warning,
+                    source="portfolio_risk",
+                    message=f"Portfolio risk limit breached: {reason}",
+                )
+            )
+            db.commit()
+    except Exception as exc:
+        db.rollback()
+        import logging
+        logging.getLogger(__name__).error(f"Portfolio risk check failed: {exc}")
+    finally:
+        db.close()
+
+
 async def _quote_depegged(client: GateIOClient, settings) -> bool:
     """Best-effort depeg check on the configured reference stablecoin pair."""
     from app.services.risk.stablecoin import is_depegged
@@ -276,6 +328,7 @@ async def main() -> None:
     scheduler = AsyncIOScheduler()
     scheduler.add_job(run_cycle, "interval", minutes=15, max_instances=1)
     scheduler.add_job(ingest_market_data, "interval", minutes=15, max_instances=1)
+    scheduler.add_job(monitor_portfolio_risk, "interval", minutes=15, max_instances=1)
     scheduler.add_job(run_research_loop, "interval", hours=6, max_instances=1)
     scheduler.add_job(run_learning_cycle, "cron", hour=3, minute=0, max_instances=1)
     scheduler.add_job(weekly_learning_report, "cron", day_of_week="mon", hour=8, minute=0)

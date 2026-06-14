@@ -81,6 +81,7 @@ class RebalanceTrigger(StrEnum):
 
 class RebalanceStatus(StrEnum):
     completed = "completed"
+    skipped = "skipped"
     failed = "failed"
 
 

@@ -5,6 +5,7 @@ import type {
   PortfolioMetric,
   RebalanceEvent,
   RiskSnapshot,
+  StrategyPerformance,
 } from "@/types/portfolio";
 import { authFetch } from "@/lib/auth-api";
 
@@ -48,6 +49,26 @@ export async function getPortfolioAllocations(): Promise<Allocation[]> {
   return [];
 }
 
+export async function getPortfolioVaR(): Promise<{ var: number; cvar: number } | null> {
+  try {
+    const res = await authFetch(`/portfolio/var`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.error("Error fetching VaR:", err);
+  }
+  return null;
+}
+
+export async function getStrategyPerformance(): Promise<StrategyPerformance[]> {
+  try {
+    const res = await authFetch(`/portfolio/strategy-performance`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.error("Error fetching strategy performance:", err);
+  }
+  return [];
+}
+
 export async function triggerRebalance(): Promise<boolean> {
   try {
     const res = await authFetch(`/portfolio/rebalance`, {
@@ -74,7 +95,7 @@ export async function resetPortfolio(): Promise<boolean> {
 
 export async function runStressTest(scenarioName: string): Promise<RiskSnapshot | null> {
   try {
-    const res = await authFetch(`/portfolio/stress-test?scenario_name=${scenarioName}`, {
+    const res = await authFetch(`/portfolio/stress-test?scenario_name=${encodeURIComponent(scenarioName)}`, {
       method: "POST",
     });
     if (res.ok) return await res.json();

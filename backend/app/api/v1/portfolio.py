@@ -8,6 +8,8 @@ from app.models.entities import Allocation, Portfolio, PortfolioAsset, Portfolio
 from app.models.enums import RebalanceTrigger
 from app.portfolio.correlation import CorrelationEngine
 from app.portfolio.engine import PortfolioEngine
+from app.portfolio.models import DEFAULT_STRATEGY_WEIGHTS
+from app.portfolio.risk_model import PortfolioRiskModel
 from app.schemas.portfolio import (
     AllocationOut,
     PortfolioCreate,
@@ -183,6 +185,50 @@ def get_correlations(db: DbSession) -> dict:
         "timeframe": timeframe,
         "data_available": data_available,
     }
+
+
+@router.get("/risk-check")
+def check_portfolio_risk(db: DbSession) -> dict:
+    portfolio = _get_or_create_portfolio(db)
+    passed, reason = PortfolioRiskModel(db).check_risk_limits(portfolio)
+    engine = PortfolioEngine(db, portfolio)
+    var_cvar = engine.value_at_risk()
+    return {"passed": passed, "reason": reason, "var_95": var_cvar["var"], "cvar_95": var_cvar["cvar"]}
+
+
+@router.get("/var")
+def get_portfolio_var(db: DbSession) -> dict:
+    portfolio = _get_or_create_portfolio(db)
+    engine = PortfolioEngine(db, portfolio)
+    return engine.value_at_risk()
+
+
+@router.delete("/{portfolio_id}", dependencies=[Depends(require_admin)])
+def delete_portfolio(portfolio_id: int, db: DbSession) -> dict:
+    portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    db.delete(portfolio)
+    db.commit()
+    return {"status": "deleted", "portfolio_id": portfolio_id}
+
+
+@router.get("/strategy-performance")
+def get_strategy_performance(db: DbSession) -> list[dict]:
+    portfolio = _get_or_create_portfolio(db)
+    engine = PortfolioEngine(db, portfolio)
+    result = []
+    for name in DEFAULT_STRATEGY_WEIGHTS:
+        perf = engine._compute_strategy_performance(name)
+        result.append({
+            "name": name,
+            "sharpe_ratio": float(perf.sharpe_ratio),
+            "win_rate": float(perf.win_rate),
+            "profit_factor": float(perf.profit_factor),
+            "max_drawdown": float(perf.max_drawdown),
+            "stability_score": float(perf.stability_score),
+        })
+    return result
 
 
 def _get_or_create_portfolio(db: DbSession, name: str = "default", initial_balance: Decimal = Decimal("10000")) -> Portfolio:

@@ -28,11 +28,14 @@ class CapitalAllocator:
         self,
         total_equity: Decimal,
         strategies: List[Dict[str, Any]],
-        correlation_matrix: Dict[str, Dict[str, float]],
+        strategy_correlations: Dict[str, float],
         drawdowns: Dict[str, Decimal]
     ) -> Dict[str, Decimal]:
         """
         Calculates the capital allocation (in USD) for each strategy based on scores and drawdowns.
+
+        ``strategy_correlations`` maps strategy names to their average pairwise
+        asset correlation (pre-computed by the engine from real trade symbols).
         """
         if total_equity <= 0 or not strategies:
             return {}
@@ -57,17 +60,8 @@ class CapitalAllocator:
             # 2. Risk Adjusted Return
             risk_adjusted_return = min(Decimal("1.0"), max(Decimal("0.0"), sharpe / Decimal("2.0")))
 
-            # 3. Inverse Correlation Penalty
-            # Find the average correlation this strategy has with other strategies
-            avg_corr = 0.0
-            other_count = 0
-            for other_name in correlation_matrix.get(name, {}):
-                if other_name != name:
-                    avg_corr += correlation_matrix[name][other_name]
-                    other_count += 1
-            
-            avg_corr = (avg_corr / other_count) if other_count > 0 else 0.5
-            # Inverse Correlation: higher correlation -> lower penalty score (more penalty)
+            # 3. Inverse Correlation Penalty — uses per-strategy average asset correlation
+            avg_corr = strategy_correlations.get(name, 0.5)
             inverse_correlation_penalty = Decimal(str(max(0.0, 1.0 - max(0.0, avg_corr))))
 
             # 4. Stability Score

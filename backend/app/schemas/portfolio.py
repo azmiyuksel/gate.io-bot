@@ -91,6 +91,7 @@ class PortfolioOut(BaseModel):
     is_active: bool
     total_equity: Decimal
     cash_balance: Decimal
+    peak_equity: Decimal
     daily_max_risk_pct: Decimal
     weekly_max_risk_pct: Decimal
     monthly_max_risk_pct: Decimal

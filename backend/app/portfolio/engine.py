@@ -188,10 +188,37 @@ class PortfolioEngine:
         """
         Allocates capital across strategies using the Capital Allocator.
         """
-        # Fetch current correlation matrix
+        # Fetch current correlation matrix across all portfolio assets
         assets = self.db.query(PortfolioAsset).filter(PortfolioAsset.portfolio_id == self.portfolio.id).all()
         symbols = [a.symbol for a in assets]
         corr_data = self.correlation_engine.calculate_correlation(symbols)
+        corr_matrix = corr_data.get("matrix", {})
+
+        # Compute per-strategy average asset correlation from each strategy's
+        # recently-traded symbols, rather than looking up strategy names in
+        # the asset-keyed correlation matrix.
+        strategy_correlations: dict[str, float] = {}
+        for name in DEFAULT_STRATEGY_WEIGHTS:
+            traded = (
+                self.db.query(Trade.symbol)
+                .filter(Trade.status == PositionStatus.closed)
+                .filter(Trade.strategy_name == name)
+                .order_by(Trade.closed_at.desc())
+                .limit(20)
+                .all()
+            )
+            strat_symbols = list({t[0] for t in traded if t[0]})
+            if len(strat_symbols) >= 2:
+                pairs = []
+                for i in range(len(strat_symbols)):
+                    row = corr_matrix.get(strat_symbols[i], {})
+                    for j in range(i + 1, len(strat_symbols)):
+                        val = row.get(strat_symbols[j])
+                        if val is not None:
+                            pairs.append(val)
+                strategy_correlations[name] = float(sum(pairs) / len(pairs)) if pairs else 0.5
+            else:
+                strategy_correlations[name] = 0.5
 
         strategies = []
         drawdowns = {}
@@ -209,7 +236,7 @@ class PortfolioEngine:
         allocations = self.allocator.allocate_capital(
             self.portfolio.total_equity,
             strategies,
-            corr_data["matrix"],
+            strategy_correlations,
             drawdowns
         )
 
@@ -276,7 +303,12 @@ class PortfolioEngine:
         return metric
 
     def _compute_portfolio_sharpe(self) -> Decimal:
-        """Compute Sharpe ratio from the equity history stored in PortfolioMetric."""
+        """Compute Sharpe ratio from the equity history stored in PortfolioMetric.
+
+        Uses actual time deltas between records rather than assuming a fixed
+        frequency, so the annualisation factor stays accurate even when
+        metrics are recorded irregularly (e.g. only on rebalance events).
+        """
         import numpy as np
 
         rows = (
@@ -297,12 +329,31 @@ class PortfolioEngine:
         std = float(returns.std())
         if std <= 0:
             return Decimal("0")
-        # Annualize assuming hourly returns (24 * 365)
-        sharpe = float(returns.mean()) / std * math.sqrt(24 * 365)
+
+        # Dynamic annualisation: use the mean inter-record time delta in hours.
+        timestamps = [
+            r.timestamp for r in rows
+            if r.timestamp is not None
+        ]
+        if len(timestamps) >= 2:
+            deltas = [
+                (timestamps[i] - timestamps[i - 1]).total_seconds() / 3600.0
+                for i in range(1, len(timestamps))
+            ]
+            avg_hours = float(np.mean(deltas))
+        else:
+            avg_hours = 1.0
+        periods_per_year = 8760.0 / max(avg_hours, 0.01)  # 8760 = 365 * 24
+
+        sharpe = float(returns.mean()) / std * math.sqrt(periods_per_year)
         return Decimal(str(round(sharpe, 4)))
 
     def _compute_volatility_adjusted_return(self) -> Decimal:
-        """Annualized return / annualized volatility from equity history."""
+        """Annualized return / annualized volatility from equity history.
+
+        Uses the same dynamic period calculation as ``_compute_portfolio_sharpe``
+        so the result is independent of the recording frequency.
+        """
         import numpy as np
 
         rows = (
@@ -320,8 +371,23 @@ class PortfolioEngine:
         returns = returns[np.isfinite(returns)]
         if returns.size == 0:
             return Decimal("0")
-        ann_return = float(returns.mean()) * 24 * 365
-        ann_vol = float(returns.std()) * math.sqrt(24 * 365)
+
+        timestamps = [
+            r.timestamp for r in rows
+            if r.timestamp is not None
+        ]
+        if len(timestamps) >= 2:
+            deltas = [
+                (timestamps[i] - timestamps[i - 1]).total_seconds() / 3600.0
+                for i in range(1, len(timestamps))
+            ]
+            avg_hours = float(np.mean(deltas))
+        else:
+            avg_hours = 1.0
+        periods_per_year = 8760.0 / max(avg_hours, 0.01)
+
+        ann_return = float(returns.mean()) * periods_per_year
+        ann_vol = float(returns.std()) * math.sqrt(periods_per_year)
         if ann_vol <= 0:
             return Decimal("0")
         return Decimal(str(round(ann_return / ann_vol, 4)))

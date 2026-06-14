@@ -1,11 +1,11 @@
 export type PortfolioAsset = {
   id: number;
   symbol: string;
-  position_size: string;
-  average_entry_price: string;
-  current_price: string;
-  unrealized_pnl: string;
-  risk_contribution: string;
+  position_size: number;
+  average_entry_price: number;
+  current_price: number;
+  unrealized_pnl: number;
+  risk_contribution: number;
   updated_at: string;
 };
 
@@ -13,13 +13,13 @@ export type Allocation = {
   id: number;
   target_type: string;
   target_name: string;
-  weight: string;
-  allocated_amount: string;
-  performance_score: string;
-  risk_adjusted_return: string;
-  correlation_penalty: string;
-  stability_score: string;
-  drawdown_adjustment: string;
+  weight: number;
+  allocated_amount: number;
+  performance_score: number;
+  risk_adjusted_return: number;
+  correlation_penalty: number;
+  stability_score: number;
+  drawdown_adjustment: number;
 };
 
 export type RebalanceEvent = {
@@ -35,20 +35,20 @@ export type RebalanceEvent = {
 export type PortfolioMetric = {
   id: number;
   timestamp: string;
-  total_equity: string;
-  sharpe_ratio: string;
-  drawdown: string;
-  correlation_risk_score: string;
+  total_equity: number;
+  sharpe_ratio: number;
+  drawdown: number;
+  correlation_risk_score: number;
   exposure_per_asset: Record<string, number>;
   exposure_per_strategy: Record<string, number>;
-  volatility_adjusted_return: string;
+  volatility_adjusted_return: number;
 };
 
 export type RiskSnapshot = {
   id: number;
   timestamp: string;
   scenario_name: string;
-  simulated_loss: string;
+  simulated_loss: number;
   limit_status: string;
   metrics_snapshot: Record<string, any>;
 };
@@ -67,13 +67,23 @@ export type Portfolio = {
   name: string;
   description: string | null;
   is_active: boolean;
-  total_equity: string;
-  cash_balance: string;
-  daily_max_risk_pct: string;
-  weekly_max_risk_pct: string;
-  monthly_max_risk_pct: string;
+  total_equity: number;
+  cash_balance: number;
+  peak_equity: number;
+  daily_max_risk_pct: number;
+  weekly_max_risk_pct: number;
+  monthly_max_risk_pct: number;
   created_at: string;
   updated_at: string;
   assets: PortfolioAsset[];
   allocations: Allocation[];
+};
+
+export type StrategyPerformance = {
+  name: string;
+  sharpe_ratio: number;
+  win_rate: number;
+  profit_factor: number;
+  max_drawdown: number;
+  stability_score: number;
 };

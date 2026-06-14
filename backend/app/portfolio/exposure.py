@@ -20,7 +20,14 @@ class ExposureManager:
             
             # Exposure = quantity * current_price
             qty = Decimal(str(getattr(pos, "quantity", 0) or pos.get("quantity", 0)))
-            price = Decimal(str(getattr(pos, "last_price", 0) or getattr(pos, "current_price", 0) or pos.get("last_price", 0) or pos.get("current_price", 0) or getattr(pos, "entry_price", 0)))
+            price = Decimal(
+                str(
+                    getattr(pos, "current_price", None)
+                    or getattr(pos, "last_price", None)
+                    or pos.get("current_price", None)
+                    or pos.get("last_price", 0)
+                )
+            )
             
             value = qty * price
             exposure_pct = float(value / total_equity)

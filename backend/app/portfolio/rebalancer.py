@@ -20,9 +20,12 @@ class PortfolioRebalancer:
     ) -> Tuple[bool, RebalanceTrigger | None]:
         """
         Evaluates trigger conditions for portfolio rebalancing.
+
+        When the most-recent event was skipped due to cost, time-based
+        triggers are suppressed to prevent cheap-redundant-trigger loops.
         """
         settings = get_settings()
-        # 1. Drawdown trigger
+        # 1. Drawdown trigger (always fires regardless of last status)
         if current_drawdown > Decimal(str(settings.portfolio_rebalance_drawdown_pct)):
             return True, RebalanceTrigger.drawdown_threshold
 
@@ -40,8 +43,11 @@ class PortfolioRebalancer:
         
         now = datetime.now(UTC)
         if not last_event:
-            # Force first rebalance
             return True, RebalanceTrigger.manual
+
+        # Suppress time triggers when the last event was skipped
+        if last_event.status == RebalanceStatus.skipped:
+            return False, None
 
         # Time elapsed since last rebalance
         elapsed = now - last_event.created_at
@@ -86,7 +92,7 @@ class PortfolioRebalancer:
                 previous_weights=previous_weights,
                 new_weights=target_weights,
                 execution_log=f"Skipped: total deviation {total_deviation:.4f} < 2x cost ({cost_bps} bps)",
-                status=RebalanceStatus.completed
+                status=RebalanceStatus.skipped
             )
             self.db.add(event)
             self.db.commit()
