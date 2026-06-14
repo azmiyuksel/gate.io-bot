@@ -208,3 +208,18 @@ def test_paper_economics_edge_and_cost_bridge(db_session):
     assert result["cost_bridge"]["net_pnl"] == 30.0
     assert result["cost_bridge"]["total_fees"] == 3.0
     assert result["cost_bridge"]["gross_pnl"] == 33.0
+
+
+def test_status_exposes_pause_reason_when_paused(db_session):
+    from app.api.v1.paper import _get_or_create_account, status
+    from app.models.entities import PaperLog
+    from app.models.enums import PaperBotStatus
+
+    account = _get_or_create_account(db_session)
+    account.status = PaperBotStatus.paused
+    db_session.add(PaperLog(account_id=account.id, event="system_paused", message="max_drawdown_reached"))
+    db_session.commit()
+
+    out = status(db_session)
+    assert out.status == PaperBotStatus.paused
+    assert out.pause_reason == "max_drawdown_reached"

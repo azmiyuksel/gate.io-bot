@@ -247,6 +247,17 @@ export default function PaperTradingPage() {
         <div className="mx-auto max-w-7xl px-6 pt-4 text-sm text-muted">İlk veriler yükleniyor…</div>
       )}
 
+      {botStatus === "PAUSED" && (
+        <div className="mx-auto max-w-7xl px-6 pt-4">
+          <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+            Bot bir risk limiti nedeniyle <strong>duraklatıldı</strong>
+            {status?.pause_reason ? ` (${status.pause_reason})` : ""} — bu yüzden ilk
+            alımdan sonra yeni işlem açılmıyor. Devam etmek için yukarıdaki{" "}
+            <strong>Devam Et</strong> butonunu kullanın.
+          </div>
+        </div>
+      )}
+
       <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-5">
         <Metric label="Equity" value={`$${money(status?.equity ?? 0)}`} icon={<Activity size={18} />} />
         <Metric

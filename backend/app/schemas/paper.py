@@ -20,6 +20,7 @@ class PaperStatus(BaseModel):
     unrealized_pnl: Decimal
     exposure: Decimal
     metrics: dict
+    pause_reason: str | None = None
 
 
 class PaperPositionOut(BaseModel):

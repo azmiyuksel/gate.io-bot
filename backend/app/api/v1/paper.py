@@ -51,6 +51,17 @@ def status(db: DbSession) -> PaperStatus:
     portfolio = PaperPortfolio(db, account)
     open_positions = portfolio.open_positions()
     unrealized = sum((position.unrealized_pnl for position in open_positions), Decimal("0"))
+    # Surface WHY the bot paused (e.g. a risk limit auto-pause halts all new entries
+    # — "one buy then silence"), so the dashboard can explain the standstill.
+    pause_reason = None
+    if account.status == PaperBotStatus.paused:
+        last_pause = (
+            db.query(PaperLog)
+            .filter(PaperLog.account_id == account.id, PaperLog.event == "system_paused")
+            .order_by(PaperLog.created_at.desc())
+            .first()
+        )
+        pause_reason = last_pause.message if last_pause else None
     return PaperStatus(
         account_id=account.id,
         status=account.status,
@@ -61,6 +72,7 @@ def status(db: DbSession) -> PaperStatus:
         unrealized_pnl=unrealized,
         exposure=portfolio.exposure_pct(),
         metrics=PaperMetrics(db, account.id).summary(),
+        pause_reason=pause_reason,
     )
 
 

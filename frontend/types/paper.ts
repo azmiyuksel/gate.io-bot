@@ -8,6 +8,7 @@ export type PaperStatus = {
   unrealized_pnl: string;
   exposure: string;
   metrics: PaperMetrics;
+  pause_reason: string | null;
 };
 
 export type PaperPosition = {
