@@ -40,6 +40,7 @@ import {
   getPaperEquity,
   getPaperPositions,
   getPaperRiskStatus,
+  getPaperSignalDiagnostics,
   getPaperStatus,
   getPaperTrades,
   pausePaperTrading,
@@ -52,6 +53,7 @@ import type {
   PaperEquityPoint,
   PaperPosition,
   PaperRiskStatus,
+  PaperSignalDiagnostics,
   PaperStatus,
   PaperTrade,
 } from "@/types/paper";
@@ -69,6 +71,7 @@ export default function PaperTradingPage() {
   const [trades, setTrades] = useState<PaperTrade[]>([]);
   const [equity, setEquity] = useState<PaperEquityPoint[]>([]);
   const [risk, setRisk] = useState<PaperRiskStatus | null>(null);
+  const [diagnostics, setDiagnostics] = useState<PaperSignalDiagnostics | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -80,18 +83,20 @@ export default function PaperTradingPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [s, p, t, e, r] = await Promise.all([
+      const [s, p, t, e, r, d] = await Promise.all([
         getPaperStatus(),
         getPaperPositions(),
         getPaperTrades(),
         getPaperEquity(),
         getPaperRiskStatus(),
+        getPaperSignalDiagnostics(),
       ]);
       if (s) setStatus(s);
       setPositions(p);
       setTrades(t);
       setEquity(e);
       if (r) setRisk(r);
+      setDiagnostics(d);
       setLastUpdated(new Date());
     } finally {
       setLoading(false);
@@ -310,6 +315,74 @@ export default function PaperTradingPage() {
           ) : (
             <p className="text-sm text-muted">Risk verisi yok.</p>
           )}
+        </Card>
+      </section>
+
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[1fr_1fr]">
+        <Card>
+          <div className="mb-1 flex items-center gap-2">
+            <Activity size={17} />
+            <h2 className="text-base font-semibold">Sinyal Tanılama</h2>
+          </div>
+          <p className="mb-4 text-sm text-muted">
+            Son {diagnostics?.window_hours ?? 24} saatte girişlerin neden atlandığı
+            {diagnostics ? ` (${diagnostics.evaluations} değerlendirme)` : ""}.
+          </p>
+          {diagnostics && Object.keys(diagnostics.reason_counts).length > 0 ? (
+            <div className="space-y-2">
+              {Object.entries(diagnostics.reason_counts).map(([reason, count]) => {
+                const max = Math.max(...Object.values(diagnostics.reason_counts));
+                const pct = max > 0 ? (count / max) * 100 : 0;
+                const approved = reason === "approved";
+                return (
+                  <div key={reason}>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className={approved ? "font-medium text-primary" : ""}>{reason}</span>
+                      <span className="text-muted">{count}</span>
+                    </div>
+                    <div className="mt-1 h-1.5 w-full rounded bg-border">
+                      <div
+                        className="h-1.5 rounded"
+                        style={{ width: `${pct}%`, backgroundColor: approved ? "#146c5d" : "#b9933a" }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-muted">Henüz değerlendirme kaydı yok.</p>
+          )}
+        </Card>
+
+        <Card>
+          <h2 className="mb-4 text-base font-semibold">Sembol Bazında Son Durum</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm" role="table">
+              <thead className="border-b border-border text-muted">
+                <tr>
+                  <th className="py-2" scope="col">Sembol</th>
+                  <th scope="col">Son Neden</th>
+                </tr>
+              </thead>
+              <tbody>
+                {diagnostics && Object.keys(diagnostics.latest_by_symbol).length > 0 ? (
+                  Object.entries(diagnostics.latest_by_symbol).map(([symbol, info]) => (
+                    <tr key={symbol} className="border-b border-border">
+                      <td className="py-3 font-medium">{symbol}</td>
+                      <td className={info.reason === "approved" ? "text-primary font-medium" : "text-muted"}>
+                        {info.reason}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="py-6 text-muted" colSpan={2}>Kayıt yok.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </Card>
       </section>
 

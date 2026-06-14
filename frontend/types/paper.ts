@@ -81,3 +81,10 @@ export type PaperLog = {
   payload: Record<string, unknown>;
   created_at: string;
 };
+
+export type PaperSignalDiagnostics = {
+  window_hours: number;
+  evaluations: number;
+  reason_counts: Record<string, number>;
+  latest_by_symbol: Record<string, { reason: string; at: string | null }>;
+};

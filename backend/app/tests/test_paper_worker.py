@@ -133,3 +133,36 @@ def test_stream_tick_has_no_intrabar_range():
     assert data.price == 100.0
     assert data.high is None
     assert data.low is None
+
+
+def test_signal_diagnostics_aggregates_skip_reasons(db_session):
+    from datetime import UTC, datetime
+
+    from app.api.v1.paper import _get_or_create_account, signal_diagnostics
+    from app.models.entities import PaperLog
+
+    account = _get_or_create_account(db_session)
+    rows = [
+        ("entry_skipped", "BTC_USDT", "below_200_ema"),
+        ("entry_skipped", "ETH_USDT", "rsi_not_oversold"),
+        ("entry_skipped", "BTC_USDT", "below_200_ema"),
+        ("risk_check", "SOL_USDT", "max_open_positions"),
+        ("risk_check", "ADA_USDT", "approved"),
+    ]
+    for event, symbol, reason in rows:
+        db_session.add(PaperLog(
+            account_id=account.id, event=event,
+            message=f"{symbol}: {reason}",
+            payload={"symbol": symbol, "reason": reason},
+            created_at=datetime.now(UTC),
+        ))
+    db_session.commit()
+
+    result = signal_diagnostics(db_session, hours=24)
+    assert result["evaluations"] == 5
+    assert result["reason_counts"]["below_200_ema"] == 2
+    assert result["reason_counts"]["approved"] == 1
+    # Counts are returned in descending order (most frequent first).
+    assert list(result["reason_counts"])[0] == "below_200_ema"
+    # Latest reason is tracked per symbol.
+    assert result["latest_by_symbol"]["BTC_USDT"]["reason"] == "below_200_ema"

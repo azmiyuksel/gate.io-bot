@@ -96,6 +96,11 @@ class PaperTradingEngine:
                 continue
             signal = self.strategy.evaluate_real_candles(symbol, candles)
             if signal is None:
+                # Record why this symbol produced no entry so the dashboard can
+                # show, live, which filter is gating the (deliberately selective)
+                # strategy.
+                reason = getattr(self.strategy, "last_reason", "") or "no_signal"
+                self._log("entry_skipped", f"{symbol}: {reason}", {"symbol": symbol, "reason": reason})
                 continue
             latest = candles[-1]
             # Build a MarketData snapshot from the latest REAL candle (proper OHLC),
@@ -128,12 +133,13 @@ class PaperTradingEngine:
     async def execute_signal(self, signal: TradingSignal, data: MarketData) -> None:
         approved, reason = self.risk.approve_signal(signal, data)
         if not approved:
-            if reason not in ("already_in_position", "rsi_not_oversold", "below_200_ema", "not_near_20_ema", "low_volume", "excessive_24h_volatility"):
-                self._log("risk_check", reason, {"signal": signal.to_dict()})
+            # Evaluation runs every few minutes (not per tick), so it is cheap to
+            # record every rejection with a structured reason for the dashboard.
+            self._log("risk_check", f"{signal.symbol}: {reason}", {"symbol": signal.symbol, "reason": reason})
             if reason in {"daily_loss_limit_reached", "max_drawdown_reached"}:
                 await self.notifier.send(f"Paper trading paused: {reason}")
             return
-        self._log("risk_check", "approved", {"signal": signal.to_dict()})
+        self._log("risk_check", f"{signal.symbol}: approved", {"symbol": signal.symbol, "reason": "approved"})
         equity = self.portfolio.equity()
         price = Decimal(str(data.price))
         settings = StrategySettingsRepository(self.db).current()

@@ -5,6 +5,7 @@ import type {
   PaperOrder,
   PaperPosition,
   PaperRiskStatus,
+  PaperSignalDiagnostics,
   PaperStatus,
   PaperTrade,
 } from "@/types/paper";
@@ -138,5 +139,17 @@ export async function getPaperLogs(): Promise<PaperLog[]> {
     return res.json();
   } catch {
     return [];
+  }
+}
+
+export async function getPaperSignalDiagnostics(
+  hours = 24,
+): Promise<PaperSignalDiagnostics | null> {
+  try {
+    const res = await authFetch(`/paper/signal-diagnostics?hours=${hours}`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
   }
 }

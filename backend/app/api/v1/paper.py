@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends
@@ -187,6 +188,50 @@ def logs(db: DbSession) -> list[PaperLog]:
         .limit(200)
         .all()
     )
+
+
+@router.get("/signal-diagnostics")
+def signal_diagnostics(db: DbSession, hours: int = 24) -> dict:
+    """Aggregate why entries were skipped, so the dashboard can show — live — which
+    filter is gating the (deliberately selective) strategy.
+
+    Tallies the per-evaluation `entry_skipped` (strategy filters) and `risk_check`
+    (risk-simulator gates / approvals) records over the given window.
+    """
+    account = _get_or_create_account(db)
+    window = max(1, min(int(hours), 168))
+    since = datetime.now(UTC) - timedelta(hours=window)
+    rows = (
+        db.query(PaperLog)
+        .filter(
+            PaperLog.account_id == account.id,
+            PaperLog.event.in_(("entry_skipped", "risk_check")),
+            PaperLog.created_at >= since,
+        )
+        .order_by(PaperLog.created_at.desc())
+        .all()
+    )
+    reason_counts: dict[str, int] = {}
+    latest_by_symbol: dict[str, dict] = {}
+    total = 0
+    for row in rows:
+        payload = row.payload or {}
+        reason = payload.get("reason") or row.message
+        symbol = payload.get("symbol")
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        total += 1
+        if symbol and symbol not in latest_by_symbol:
+            latest_by_symbol[symbol] = {
+                "reason": reason,
+                "at": row.created_at.isoformat() if row.created_at else None,
+            }
+    ordered = dict(sorted(reason_counts.items(), key=lambda kv: kv[1], reverse=True))
+    return {
+        "window_hours": window,
+        "evaluations": total,
+        "reason_counts": ordered,
+        "latest_by_symbol": latest_by_symbol,
+    }
 
 
 def _get_or_create_account(db: DbSession, name: str = "default", initial_balance: Decimal = Decimal("10000")) -> PaperAccount:
