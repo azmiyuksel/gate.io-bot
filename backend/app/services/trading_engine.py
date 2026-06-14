@@ -41,6 +41,39 @@ def _fee_in_quote(response: dict, price: Decimal, symbol: str) -> Decimal:
     return fee
 
 
+def _fee_in_base(response: dict, symbol: str) -> Decimal:
+    """The portion of an exchange fee charged in the BASE currency, if any.
+
+    On a spot BUY the fee is frequently deducted from the coin received, so the
+    base quantity actually credited is the fill minus this fee.
+    """
+    fee_ccy = (response.get("fee_currency") or "").upper()
+    base_ccy = symbol.split("_")[0].upper()
+    if fee_ccy and fee_ccy == base_ccy:
+        return Decimal(str(response.get("fee") or 0))
+    return Decimal("0")
+
+
+def _filled_base_qty(response: dict, fill_price: Decimal, fallback: Decimal) -> Decimal:
+    """Base quantity actually filled by an order.
+
+    Gate.io's `filled_total` is denominated in the QUOTE currency (the value
+    transacted), NOT the base amount, so deriving base directly from it would be
+    wrong. Prefer base = filled_total / avg_deal_price; fall back to
+    `amount - left` (valid when `amount` is a base quantity, i.e. sells/limit
+    orders), then to the provided fallback.
+    """
+    filled_total = Decimal(str(response.get("filled_total") or 0))  # quote value filled
+    if filled_total > 0 and fill_price > 0:
+        return filled_total / fill_price
+    amount = Decimal(str(response.get("amount") or 0))
+    left = Decimal(str(response.get("left") or 0))
+    base = amount - left
+    if base > 0:
+        return base
+    return fallback
+
+
 class TradingEngine:
     def __init__(self, db: Session, client: GateIOClient) -> None:
         self.db = db
@@ -60,7 +93,12 @@ class TradingEngine:
             self._log("circuit_breaker", f"{symbol}: skipped, circuit breaker tripped")
             return
 
-        candles = await self.client.candles(symbol)
+        _settings = get_settings()
+        candles = await self.client.candles(
+            symbol,
+            interval=_settings.market_data_interval,
+            limit=_settings.candle_history_limit,
+        )
 
         # Market Data Quality gate: run the feed through the quality pipeline and
         # block trading on unreliable data, de-risk on degraded data.
@@ -134,6 +172,22 @@ class TradingEngine:
             self._log("risk_filter", f"{symbol} trade quantity scaled to zero by risk filters (regime: {risk_mult}x, health: {health_mult}x, data: {data_risk_mult}x, drawdown: {dd_mult}x)")
             return
 
+        # Pre-trade slippage guard: a market BUY has no price cap, so if the live
+        # price has already run away from the signal price, abort rather than chase
+        # the fill into adverse slippage.
+        entry_slip_band = Decimal(str(_settings.entry_max_slippage_pct))
+        if entry_slip_band > 0:
+            live_price = await self.client.last_price(symbol)
+            if live_price is not None and live_price > 0:
+                adverse_move = (live_price - signal.entry_price) / signal.entry_price
+                if adverse_move > entry_slip_band:
+                    self._log(
+                        "slippage_guard",
+                        f"{symbol}: entry skipped, price moved {adverse_move:.4%} "
+                        f"(live={live_price} signal={signal.entry_price}) > max {entry_slip_band:.2%}",
+                    )
+                    return
+
         submission_time = datetime.now(UTC)
         # Market BUY on Gate.io spot takes a QUOTE (USDT) amount to spend.
         quote_amount = final_quantity * signal.entry_price
@@ -164,10 +218,14 @@ class TradingEngine:
                     f"Position will be tracked for reconciliation.",
                     LogLevel.warning,
                 )
-        # Derive the base quantity actually received from the fill, not the
-        # pre-order estimate.  quote_amount was the USDT spent; dividing by
-        # the real fill price gives the true base amount credited.
-        actual_base_qty = (quote_amount / fill_price) if fill_price > 0 else final_quantity
+        # Derive the base quantity actually credited from the real fill (not the
+        # pre-order estimate) and subtract any fee charged in the base currency —
+        # Gate.io deducts the spot BUY fee from the coin received, so the tracked
+        # size must match what we can later sell.
+        gross_base_qty = _filled_base_qty(response, fill_price, final_quantity)
+        actual_base_qty = gross_base_qty - _fee_in_base(response, symbol)
+        if actual_base_qty <= 0:
+            actual_base_qty = gross_base_qty
         position = Position(
             symbol=symbol,
             entry_price=fill_price,
@@ -205,7 +263,7 @@ class TradingEngine:
             submission_time=submission_time,
             order_id=order.id,
             fill_price=fill_price,
-            fill_quantity=Decimal(str(response.get("filled_total") or actual_base_qty)),
+            fill_quantity=gross_base_qty,
             fee=_fee_in_quote(response, fill_price, symbol),
             ack_time=ack_time,
         )
@@ -224,10 +282,33 @@ class TradingEngine:
                         LogLevel.warning,
                     )
                     continue
-                price = Decimal(str(candles[-1]["close"]))
-                if price <= position.stop_loss:
+                latest = candles[-1]
+                # Use the authoritative live ticker price; fall back to the latest
+                # candle close only if the ticker is unavailable.
+                price = await self.client.last_price(position.symbol)
+                if price is None or price <= 0:
+                    price = Decimal(str(latest["close"]))
+
+                stop_hit = price <= position.stop_loss
+                tp_hit = price >= position.take_profit
+                # Intrabar gap protection: between 15-minute polls the price can wick
+                # through a level and recover. Catch that via the candle's low/high —
+                # but only for candles that fully postdate entry, so a pre-entry wick
+                # cannot false-trigger a freshly opened position.
+                opened = position.opened_at
+                if opened is not None and opened.tzinfo is None:
+                    opened = opened.replace(tzinfo=UTC)
+                candle_start = datetime.fromtimestamp(int(latest["timestamp"]), tz=UTC)
+                if opened is None or candle_start >= opened:
+                    if Decimal(str(latest["low"])) <= position.stop_loss:
+                        stop_hit = True
+                    if Decimal(str(latest["high"])) >= position.take_profit:
+                        tp_hit = True
+
+                # Evaluate the stop before the take-profit — protect capital first.
+                if stop_hit:
                     await self.close_position(position, "stop_loss")
-                elif price >= position.take_profit:
+                elif tp_hit:
                     await self.close_position(position, "take_profit")
                 else:
                     self._update_trailing_stop(position, price)
@@ -276,8 +357,9 @@ class TradingEngine:
         response = await self.client.place_market_sell(position.symbol, position.quantity)
         ack_time = datetime.now(UTC)
 
-        filled_qty = Decimal(str(response.get("filled_total") or position.quantity))
         exit_price = Decimal(str(response.get("avg_deal_price") or position.entry_price))
+        # `filled_total` is QUOTE-denominated; derive the base quantity sold.
+        filled_qty = _filled_base_qty(response, exit_price, position.quantity)
         fee = _fee_in_quote(response, exit_price, position.symbol)
         pnl = (exit_price - position.entry_price) * filled_qty - fee
 
@@ -286,8 +368,9 @@ class TradingEngine:
             position.status = PositionStatus.open
         else:
             position.status = PositionStatus.closed
-        position.closed_at = datetime.now(UTC)
-        position.realized_pnl = pnl
+            position.closed_at = datetime.now(UTC)
+        # Accumulate realized PnL across partial closes instead of overwriting it.
+        position.realized_pnl = (position.realized_pnl or Decimal("0")) + pnl
 
         order = Order(
             exchange_order_id=str(response.get("id")),

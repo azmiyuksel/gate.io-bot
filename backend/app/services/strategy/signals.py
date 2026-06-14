@@ -33,6 +33,8 @@ class CapitalPreservationStrategy:
         # Volume filter: reject entries when current volume is below this fraction
         # of the recent average volume. Default 50%.
         self.min_volume_ratio = Decimal(str(getattr(settings, "strategy_min_volume_ratio", "0.5")))
+        # EMA200 trend filter (capital preservation): block longs below the 200 EMA.
+        self.trend_filter_enabled = bool(getattr(settings, "strategy_trend_filter_enabled", True))
 
     def evaluate(self, candles: list[dict]) -> Signal:
         if len(candles) < 200:
@@ -76,9 +78,8 @@ class CapitalPreservationStrategy:
             if avg_volume > 0 and current_volume / avg_volume < self.min_volume_ratio:
                 return Signal(False, "low_volume")
 
-        if False:  # EMA200 trend filter disabled for paper trading
-            if last_price <= ema_200:
-                return Signal(False, "below_200_ema")
+        if self.trend_filter_enabled and last_price <= ema_200:
+            return Signal(False, "below_200_ema")
         if rsi_14 >= self.rsi_threshold:
             return Signal(False, "rsi_not_oversold")
 

@@ -145,3 +145,55 @@ def test_strategy_thresholds_loaded_from_config():
     strat = CapitalPreservationStrategy()
     assert float(strat.rsi_threshold) == 45.0
     assert float(strat.max_24h_range_pct) == 0.12
+
+
+# --- Fill accounting fixes: filled_total is QUOTE, base fee handling ---
+
+
+def test_filled_base_qty_derives_base_from_quote_filled_total():
+    from app.services.trading_engine import _filled_base_qty
+
+    # filled_total (2000 USDT) is quote-denominated; at price 200 -> 10 base.
+    resp = {"filled_total": "2000", "amount": "0", "left": "0"}
+    assert _filled_base_qty(resp, Decimal("200"), Decimal("0")) == Decimal("10")
+
+
+def test_filled_base_qty_falls_back_to_amount_minus_left():
+    from app.services.trading_engine import _filled_base_qty
+
+    # No filled_total -> use base amount minus the unfilled remainder (sell semantics).
+    resp = {"filled_total": "0", "amount": "5", "left": "1"}
+    assert _filled_base_qty(resp, Decimal("0"), Decimal("99")) == Decimal("4")
+
+
+def test_filled_base_qty_uses_fallback_when_no_data():
+    from app.services.trading_engine import _filled_base_qty
+
+    assert _filled_base_qty({}, Decimal("0"), Decimal("7")) == Decimal("7")
+
+
+def test_fee_in_base_returns_base_fee_only():
+    from app.services.trading_engine import _fee_in_base
+
+    assert _fee_in_base({"fee": "0.001", "fee_currency": "BTC"}, "BTC_USDT") == Decimal("0.001")
+    assert _fee_in_base({"fee": "2.5", "fee_currency": "USDT"}, "BTC_USDT") == Decimal("0")
+
+
+def test_trend_filter_blocks_entries_below_ema200():
+    from app.services.strategy.signals import CapitalPreservationStrategy
+
+    # Steady downtrend: last close sits well below the 200 EMA.
+    candles = []
+    for i in range(400):
+        price = Decimal("200") - Decimal(str(i)) * Decimal("0.25")
+        candles.append({
+            "timestamp": 1700000000 + i * 3600,
+            "open": price, "high": price + 1, "low": price - 1, "close": price,
+            "volume": Decimal("1000"), "quote_volume": price * Decimal("1000"),
+        })
+
+    strat = CapitalPreservationStrategy()
+    assert strat.trend_filter_enabled is True
+    signal = strat.evaluate(candles)
+    assert signal.should_buy is False
+    assert signal.reason == "below_200_ema"

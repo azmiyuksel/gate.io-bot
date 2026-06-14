@@ -65,6 +65,12 @@ class Settings(BaseSettings):
 
     # --- Live strategy entry thresholds (tunable per market) ---
     strategy_rsi_threshold: float = 45.0
+    # EMA200 trend filter: when enabled, only enter long while price is above the
+    # 200-period EMA (capital preservation — avoid buying in confirmed downtrends).
+    strategy_trend_filter_enabled: bool = True
+    # Number of candles fetched per scan. EMA200 needs >=200 and only converges
+    # well with extra history, so fetch a generous window (bounded by max_query_limit).
+    candle_history_limit: int = 400
     strategy_ema20_distance_pct: float = 0.02
     # Max 24h range as a fraction of price before an entry is rejected. 0.12
     # allows normal crypto volatility while still filtering extreme moves.
@@ -184,6 +190,10 @@ class Settings(BaseSettings):
     eq_latency_zscore_threshold: float = 3.0
     eq_critical_slippage_pct: float = 0.005
     eq_partial_fill_explosion_threshold: int = 4
+    # Pre-trade slippage guard: skip a market BUY when the live price has already
+    # moved adversely beyond this fraction of the signal price (don't chase fills).
+    # Set to 0 to disable.
+    entry_max_slippage_pct: float = 0.01
 
     # --- Portfolio Allocator ---
     alloc_weight_strategy: float = 0.40

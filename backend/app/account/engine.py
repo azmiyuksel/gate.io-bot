@@ -167,7 +167,16 @@ class AccountManager:
         return age > self.settings.max_equity_staleness_seconds
 
     def peak_equity(self) -> Decimal:
-        value = self.db.query(func.max(AccountSnapshot.total_equity)).scalar()
+        # Only trust exchange-marked snapshots for the peak. Fallback snapshots can
+        # carry a configured placeholder equity (fallback_equity) that would inflate
+        # the peak and trigger a false drawdown / circuit-breaker trip.
+        value = (
+            self.db.query(func.max(AccountSnapshot.total_equity))
+            .filter(AccountSnapshot.source == "exchange")
+            .scalar()
+        )
+        if value is None:  # no real snapshots yet — fall back to any available
+            value = self.db.query(func.max(AccountSnapshot.total_equity)).scalar()
         if value is None:
             return self.latest_equity()
         return Decimal(str(value))
