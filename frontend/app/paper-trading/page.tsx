@@ -324,10 +324,23 @@ export default function PaperTradingPage() {
             <Activity size={17} />
             <h2 className="text-base font-semibold">Sinyal Tanılama</h2>
           </div>
-          <p className="mb-4 text-sm text-muted">
+          <p className="mb-2 text-sm text-muted">
             Son {diagnostics?.window_hours ?? 24} saatte girişlerin neden atlandığı
             {diagnostics ? ` (${diagnostics.evaluations} değerlendirme)` : ""}.
           </p>
+          {diagnostics && diagnostics.evaluations === 0 && (
+            <div className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              Hiç değerlendirme kaydı yok. <strong>paper-worker</strong> servisi
+              çalışmıyor olabilir veya worker dış ağa (Gate.io) erişemiyor olabilir.
+              <code className="ml-1">docker compose logs -f paper-worker</code> ile kontrol edin.
+            </div>
+          )}
+          {diagnostics?.last_evaluation_at && (
+            <p className="mb-4 text-xs text-muted">
+              Son değerlendirme:{" "}
+              {new Date(diagnostics.last_evaluation_at).toLocaleString("tr-TR")}
+            </p>
+          )}
           {diagnostics && Object.keys(diagnostics.reason_counts).length > 0 ? (
             <div className="space-y-2">
               {Object.entries(diagnostics.reason_counts).map(([reason, count]) => {

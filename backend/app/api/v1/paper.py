@@ -214,6 +214,7 @@ def signal_diagnostics(db: DbSession, hours: int = 24) -> dict:
     reason_counts: dict[str, int] = {}
     latest_by_symbol: dict[str, dict] = {}
     total = 0
+    last_evaluation_at = rows[0].created_at.isoformat() if rows and rows[0].created_at else None
     for row in rows:
         payload = row.payload or {}
         reason = payload.get("reason") or row.message
@@ -229,6 +230,7 @@ def signal_diagnostics(db: DbSession, hours: int = 24) -> dict:
     return {
         "window_hours": window,
         "evaluations": total,
+        "last_evaluation_at": last_evaluation_at,
         "reason_counts": ordered,
         "latest_by_symbol": latest_by_symbol,
     }

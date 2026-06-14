@@ -85,6 +85,7 @@ export type PaperLog = {
 export type PaperSignalDiagnostics = {
   window_hours: number;
   evaluations: number;
+  last_evaluation_at: string | null;
   reason_counts: Record<string, number>;
   latest_by_symbol: Record<string, { reason: string; at: string | null }>;
 };

@@ -90,9 +90,21 @@ class PaperTradingEngine:
                     limit=settings.candle_history_limit,
                 )
             except Exception as exc:
+                # Surface fetch failures to the dashboard instead of failing silently
+                # (a worker with no outbound network would otherwise look idle).
                 logger.warning("paper entry: candle fetch failed for %s: %s", symbol, exc)
+                self._log(
+                    "entry_skipped",
+                    f"{symbol}: candle_fetch_failed ({exc})",
+                    {"symbol": symbol, "reason": "candle_fetch_failed"},
+                )
                 continue
             if not candles:
+                self._log(
+                    "entry_skipped",
+                    f"{symbol}: no_candles",
+                    {"symbol": symbol, "reason": "no_candles"},
+                )
                 continue
             signal = self.strategy.evaluate_real_candles(symbol, candles)
             if signal is None:
@@ -174,6 +186,8 @@ class PaperTradingEngine:
                 self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
 
     def _log(self, event: str, message: str, payload: dict | None = None) -> None:
+        # Commit immediately so diagnostics persist even when no ticks are flowing
+        # (e.g. the WS feed is down but REST entry evaluation still runs).
         self.db.add(
             PaperLog(
                 account_id=self.account.id,
@@ -184,3 +198,4 @@ class PaperTradingEngine:
                 created_at=datetime.now(UTC),
             )
         )
+        self.db.commit()
