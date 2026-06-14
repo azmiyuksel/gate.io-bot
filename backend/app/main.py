@@ -58,11 +58,10 @@ async def observability_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
         status_code = response.status_code
+        response.headers["X-Request-ID"] = request_id
         return response
     finally:
         duration = time.perf_counter() - start
-        # Use the matched route template to keep metric cardinality bounded.
-        # Unmatched paths (404s) collapse to a single label to avoid explosion.
         route = request.scope.get("route")
         route_path = getattr(route, "path", None) or "unmatched"
         record_request(request.method, route_path, status_code, duration)
@@ -75,28 +74,21 @@ async def observability_middleware(request: Request, call_next):
                 "duration_ms": round(duration * 1000, 2),
             },
         )
-        # Surface the id to clients and reset the contextvar.
-        if "response" in locals():
-            response.headers["X-Request-ID"] = request_id
         correlation_id.reset(token)
 
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Log unhandled errors with the correlation id and return a safe payload.
-
-    Avoids leaking internal exception detail to clients while keeping the
-    request id so the matching server-side log can be found.
-    """
-    request_id = correlation_id.get()
-    logger.exception("unhandled_exception", extra={"path": request.url.path})
+    """Log unhandled errors with the correlation id and return a safe payload."""
+    request_id = correlation_id.get() or request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    logger.exception("unhandled_exception", extra={"path": request.url.path, "request_id": request_id})
     detail = "Internal server error"
     if not settings.is_production:
         detail = f"{type(exc).__name__}: {exc}"
     return JSONResponse(
         status_code=500,
         content={"detail": detail, "request_id": request_id},
-        headers={"X-Request-ID": request_id} if request_id else None,
+        headers={"X-Request-ID": request_id},
     )
 
 
