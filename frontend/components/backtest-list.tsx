@@ -105,8 +105,8 @@ export function BacktestList() {
                         <td>{run.strategy_name}</td>
                         <td>{run.symbol} · {run.timeframe}</td>
                         <td>${money(run.net_profit)}</td>
-                        <td>{run.sharpe_ratio.toFixed(2)}</td>
-                        <td>{(run.max_drawdown * 100).toFixed(2)}%</td>
+                        <td>{(run.sharpe_ratio ?? 0).toFixed(2)}</td>
+                        <td>{((run.max_drawdown ?? 0) * 100).toFixed(2)}%</td>
                         <td>{run.status}</td>
                         <td className="flex justify-end gap-2 py-2">
                           <Link href={`/backtests/results/${run.id}`}>

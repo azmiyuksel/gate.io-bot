@@ -218,7 +218,7 @@ export default function PortfolioPage() {
         />
         <Metric
           label="Portfoy Sharpe Orani"
-          value={metrics.length > 0 ? metrics[metrics.length - 1].sharpe_ratio.toFixed(2) : "-"}
+          value={metrics.length > 0 ? (metrics[metrics.length - 1].sharpe_ratio ?? 0).toFixed(2) : "-"}
           icon={<TrendingUp size={18} />}
         />
         <Metric
@@ -229,7 +229,7 @@ export default function PortfolioPage() {
         />
         <Metric
           label="Korelasyon Risk Skoru"
-          value={metrics.length > 0 ? metrics[metrics.length - 1].correlation_risk_score.toFixed(2) : "-"}
+          value={metrics.length > 0 ? (metrics[metrics.length - 1].correlation_risk_score ?? 0).toFixed(2) : "-"}
           icon={<Percent size={18} />}
         />
       </section>
@@ -381,12 +381,12 @@ export default function PortfolioPage() {
                     <tr key={sp.name} className="border-b border-border">
                       <td className="py-2.5 font-medium">{sp.name}</td>
                       <td className={sp.sharpe_ratio >= 0 ? "text-primary" : "text-danger"}>
-                        {sp.sharpe_ratio.toFixed(2)}
+                        {(sp.sharpe_ratio ?? 0).toFixed(2)}
                       </td>
-                      <td>{(sp.win_rate * 100).toFixed(0)}%</td>
-                      <td>{sp.profit_factor.toFixed(2)}</td>
-                      <td className="text-danger">{(sp.max_drawdown * 100).toFixed(1)}%</td>
-                      <td>{sp.stability_score.toFixed(2)}</td>
+                      <td>{((sp.win_rate ?? 0) * 100).toFixed(0)}%</td>
+                      <td>{(sp.profit_factor ?? 0).toFixed(2)}</td>
+                      <td className="text-danger">{((sp.max_drawdown ?? 0) * 100).toFixed(1)}%</td>
+                      <td>{(sp.stability_score ?? 0).toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -117,9 +117,9 @@ export function BacktestResult({ id }: { id: string }) {
         ) : (
           <>
             <Metric label="Net Kar" value={`$${money(run.metrics.net_profit)}`} />
-            <Metric label="Sharpe" value={run.metrics.sharpe_ratio.toFixed(2)} />
-            <Metric label="Max DD" value={`${(run.metrics.max_drawdown * 100).toFixed(2)}%`} />
-            <Metric label="Win Rate" value={`${(run.metrics.win_rate * 100).toFixed(1)}%`} />
+            <Metric label="Sharpe" value={(run.metrics.sharpe_ratio ?? 0).toFixed(2)} />
+            <Metric label="Max DD" value={`${((run.metrics.max_drawdown ?? 0) * 100).toFixed(2)}%`} />
+            <Metric label="Win Rate" value={`${((run.metrics.win_rate ?? 0) * 100).toFixed(1)}%`} />
           </>
         )}
       </section>
