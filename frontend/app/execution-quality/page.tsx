@@ -59,6 +59,20 @@ const CATEGORY_COLORS: Record<string, string> = {
   Poor: "#b42318",          // Red
 };
 
+const CATEGORY_BG_CLASSES: Record<string, string> = {
+  Excellent: "bg-emerald-700",
+  Good: "bg-teal-700",
+  Acceptable: "bg-amber-600",
+  Poor: "bg-red-700",
+};
+
+const CATEGORY_TEXT_CLASSES: Record<string, string> = {
+  Excellent: "text-emerald-700",
+  Good: "text-teal-700",
+  Acceptable: "text-amber-600",
+  Poor: "text-red-700",
+};
+
 const CATEGORY_LABELS: Record<string, string> = {
   Excellent: "Mükemmel (Excellent)",
   Good: "İyi (Good)",
@@ -102,10 +116,10 @@ export default function ExecutionQualityPage() {
     setLoading(true);
     try {
       const [statusData, slipData, latData, reportData] = await Promise.all([
-        getStrategyExecutionStatus(strategyName),
-        getSlippageLogs(strategyName, 50),
-        getLatencyLogs(strategyName, 50),
-        getExecutionReport(strategyName, 30),
+        getStrategyExecutionStatus(strategyName).catch(() => null),
+        getSlippageLogs(strategyName, 50).catch(() => []),
+        getLatencyLogs(strategyName, 50).catch(() => []),
+        getExecutionReport(strategyName, 30).catch(() => null),
       ]);
 
       if (statusData) setStatus(statusData);
@@ -236,8 +250,7 @@ export default function ExecutionQualityPage() {
               <LastUpdated time={lastUpdated} />
               <span className="text-sm text-muted">İcra Derecesi:</span>
               <span
-                className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold text-white shadow-sm"
-                style={{ backgroundColor: colorCode }}
+                className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold text-white shadow-sm ${CATEGORY_BG_CLASSES[category] ?? "bg-slate-500"}`}
               >
                 {categoryLabel}
               </span>
@@ -255,7 +268,7 @@ export default function ExecutionQualityPage() {
               <span>İcra Kalite Skoru (Overall Score)</span>
               <ShieldCheck size={18} className="text-[#146c5d]" />
             </div>
-            <div className="text-3xl font-bold" style={{ color: colorCode }}>
+            <div className={`text-3xl font-bold ${CATEGORY_TEXT_CLASSES[category] ?? "text-slate-600"}`}>
               {currentScore.toFixed(1)} / 100
             </div>
           </div>
@@ -490,7 +503,7 @@ export default function ExecutionQualityPage() {
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="font-bold">{rec.type}</span>
-                    <span className="rounded px-1.5 py-0.2 text-[9px] font-extrabold border bg-white uppercase">
+                    <span className="rounded px-1.5 py-0.2 text-xs font-extrabold border bg-white uppercase">
                       {rec.severity}
                     </span>
                   </div>
@@ -524,29 +537,10 @@ export default function ExecutionQualityPage() {
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-b border-[#deded8] hover:bg-slate-50">
-                  <td className="py-3 font-semibold text-slate-800">Yüksek Volatilite vs Slippage</td>
-                  <td className="font-semibold text-amber-600">0.72 (Yüksek)</td>
-                  <td className="text-slate-600">Fiyat kaymasını arttırır</td>
-                  <td><span className="bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded text-[10px] font-bold">Kısıtlayıcı</span></td>
-                </tr>
-                <tr className="border-b border-[#deded8] hover:bg-slate-50">
-                  <td className="py-3 font-semibold text-slate-800">Spread Genişliği vs Latency</td>
-                  <td className="font-semibold text-slate-600">0.18 (Düşük)</td>
-                  <td className="text-slate-600">Önemli bir etkisi yok</td>
-                  <td><span className="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded text-[10px] font-bold">Nötr</span></td>
-                </tr>
-                <tr className="border-b border-[#deded8] hover:bg-slate-50">
-                  <td className="py-3 font-semibold text-slate-800">Spread Genişliği vs Slippage</td>
-                  <td className="font-semibold text-[#146c5d]">0.84 (Çok Yüksek)</td>
-                  <td className="text-slate-600">Fiyat adım kaymasını doğrudan arttırır</td>
-                  <td><span className="bg-rose-100 text-[#b42318] px-1.5 py-0.5 rounded text-[10px] font-bold">Riskli</span></td>
-                </tr>
-                <tr className="hover:bg-slate-50">
-                  <td className="py-3 font-semibold text-slate-800">Market Hacmi vs Fill Completion</td>
-                  <td className="font-semibold text-[#146c5d]">-0.65 (Ters Yönlü)</td>
-                  <td className="text-slate-600">Düşük hacim kısmi dolumları tetikler</td>
-                  <td><span className="bg-[#146c5d33] text-[#146c5d] px-1.5 py-0.5 rounded text-[10px] font-bold">Likidite</span></td>
+                <tr>
+                  <td className="py-6 text-center text-muted" colSpan={4}>
+                    Korelasyon verisi henüz mevcut değil. Yeterli piyasa verisi toplandığında otomatik olarak hesaplanacak.
+                  </td>
                 </tr>
               </tbody>
             </table>

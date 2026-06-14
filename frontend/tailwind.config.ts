@@ -12,6 +12,15 @@ const config: Config = {
         danger: "#b42318",
         muted: "#6b7280",
       },
+      animation: {
+        "slide-in-right": "slide-in-right 300ms ease-out both",
+      },
+      keyframes: {
+        "slide-in-right": {
+          from: { transform: "translateX(1.25rem)", opacity: "0" },
+          to: { transform: "translateX(0)", opacity: "1" },
+        },
+      },
     },
   },
   plugins: [],

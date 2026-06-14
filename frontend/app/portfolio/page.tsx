@@ -212,7 +212,7 @@ export default function PortfolioPage() {
         />
         <Metric
           label="Portföy Sharpe Oranı"
-          value={metrics.length > 0 ? Number(metrics[metrics.length - 1].sharpe_ratio).toFixed(2) : "1.65"}
+          value={metrics.length > 0 ? Number(metrics[metrics.length - 1].sharpe_ratio).toFixed(2) : "–"}
           icon={<TrendingUp size={18} />}
         />
         <Metric
@@ -223,7 +223,7 @@ export default function PortfolioPage() {
         />
         <Metric
           label="Korelasyon Risk Skoru"
-          value={metrics.length > 0 ? Number(metrics[metrics.length - 1].correlation_risk_score).toFixed(2) : "0.45"}
+          value={metrics.length > 0 ? Number(metrics[metrics.length - 1].correlation_risk_score).toFixed(2) : "–"}
           icon={<Percent size={18} />}
         />
       </section>
@@ -313,7 +313,7 @@ export default function PortfolioPage() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Aktif Portföy Varlıkları</h2>
           <div className="overflow-x-auto">
-            <table role="table" className="w-full text-left text-sm">
+            <table className="w-full text-left text-sm">
               <thead className="border-b border-border text-muted">
                 <tr>
                   <th scope="col" className="py-2">Varlık</th>
@@ -367,7 +367,7 @@ export default function PortfolioPage() {
             </p>
           ) : (
           <div className="overflow-x-auto">
-            <table role="table" className="w-full text-center text-xs">
+            <table className="w-full text-center text-xs">
               <thead>
                 <tr>
                   <th scope="col" className="py-2 text-left text-muted">Varlık</th>
@@ -453,7 +453,7 @@ export default function PortfolioPage() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Dengeleme Geçmişi (Rebalance History)</h2>
           <div className="overflow-y-auto max-h-[300px]">
-            <table role="table" className="w-full text-left text-sm">
+            <table className="w-full text-left text-sm">
               <thead className="border-b border-border text-muted">
                 <tr>
                   <th scope="col" className="py-2">Zaman</th>
@@ -469,7 +469,7 @@ export default function PortfolioPage() {
                       {new Date(event.created_at).toLocaleString("tr-TR")}
                     </td>
                     <td className="font-medium text-xs">{event.trigger_reason}</td>
-                    <td className="whitespace-pre-line text-[11px] text-muted py-2 max-w-sm">
+                    <td className="whitespace-pre-line text-xs text-muted py-2 max-w-sm">
                       {event.execution_log}
                     </td>
                     <td>

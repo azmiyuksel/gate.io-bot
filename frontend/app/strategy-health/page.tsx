@@ -55,7 +55,7 @@ import type {
 
 const STATE_COLORS: Record<string, string> = {
   ACTIVE: "#146c5d",
-  WARNING: "#d97706",
+  WARNING: "#92400e",
   CRITICAL: "#b42318",
   PAUSED: "#6b7280",
 };
@@ -102,11 +102,11 @@ export default function StrategyHealthPage() {
     setLoading(true);
     try {
       const [health, base, metrics, alertList, transList] = await Promise.all([
-        getStrategyHealth(strategyName),
-        getStrategyBaseline(strategyName),
-        getHealthMetrics(strategyName),
-        getStrategyAlerts(strategyName),
-        getTransitions(strategyName),
+        getStrategyHealth(strategyName).catch(() => null),
+        getStrategyBaseline(strategyName).catch(() => null),
+        getHealthMetrics(strategyName).catch(() => []),
+        getStrategyAlerts(strategyName).catch(() => []),
+        getTransitions(strategyName).catch(() => []),
       ]);
 
       if (health) setHealthStatus(health);
@@ -245,7 +245,7 @@ export default function StrategyHealthPage() {
   return (
     <main className="min-h-screen bg-[#f7f7f4]">
       {/* ─── Header ─── */}
-      <header className="border-b border-[#deded8] bg-white">
+      <header className="border-b border-border bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div>
             <Breadcrumb items={[{ label: "Strateji Sağlık" }]} />
@@ -275,7 +275,7 @@ export default function StrategyHealthPage() {
               <Button
                 onClick={handleRecalculate}
                 disabled={actionLoading}
-                className="bg-transparent border border-[#deded8] text-slate-700 hover:bg-slate-100"
+                className="bg-transparent border border-border text-slate-700 hover:bg-slate-100"
               >
                 <RotateCcw size={15} /> Parametreleri Yeniden Hesapla (Recalculate)
               </Button>
@@ -292,7 +292,9 @@ export default function StrategyHealthPage() {
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted">Strateji Durumu:</span>
               <span
-                className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold text-white shadow-sm"
+                className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${
+                  currentState === "WARNING" ? "text-gray-900" : "text-white"
+                }`}
                 style={{ backgroundColor: stateColor }}
               >
                 {stateLabel}
@@ -396,8 +398,9 @@ export default function StrategyHealthPage() {
                   Stratejinin geçmiş backtest/beklenti değeri ile canlı gerçekleşen verisinin kıyası
                 </p>
               </div>
-              <div className="flex rounded-md border border-[#deded8] bg-slate-100 p-0.5 text-xs">
+              <div className="flex rounded-md border border-border bg-slate-100 p-0.5 text-xs">
                 <button
+                  aria-label="Sharpe oranı grafiği"
                   className={`rounded px-2.5 py-1 font-semibold transition-all ${
                     activeChartMetric === "sharpe" ? "bg-white text-[#146c5d] shadow" : "text-muted hover:text-black"
                   }`}
@@ -406,6 +409,7 @@ export default function StrategyHealthPage() {
                   Sharpe
                 </button>
                 <button
+                  aria-label="Kazanma oranı grafiği"
                   className={`rounded px-2.5 py-1 font-semibold transition-all ${
                     activeChartMetric === "win_rate" ? "bg-white text-[#146c5d] shadow" : "text-muted hover:text-black"
                   }`}
@@ -414,6 +418,7 @@ export default function StrategyHealthPage() {
                   Win Rate
                 </button>
                 <button
+                  aria-label="Kar faktörü grafiği"
                   className={`rounded px-2.5 py-1 font-semibold transition-all ${
                     activeChartMetric === "profit_factor" ? "bg-white text-[#146c5d] shadow" : "text-muted hover:text-black"
                   }`}
@@ -422,6 +427,7 @@ export default function StrategyHealthPage() {
                   Profit Factor
                 </button>
                 <button
+                  aria-label="Drawdown grafiği"
                   className={`rounded px-2.5 py-1 font-semibold transition-all ${
                     activeChartMetric === "drawdown" ? "bg-white text-[#146c5d] shadow" : "text-muted hover:text-black"
                   }`}
@@ -477,19 +483,19 @@ export default function StrategyHealthPage() {
             </p>
             {baseline ? (
               <div className="space-y-3.5 text-sm">
-                <div className="flex justify-between border-b border-[#deded8] pb-2">
+                <div className="flex justify-between border-b border-border pb-2">
                   <span className="text-muted">Expected Sharpe:</span>
                   <span className="font-semibold">{Number(baseline.expected_sharpe).toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between border-b border-[#deded8] pb-2">
+                <div className="flex justify-between border-b border-border pb-2">
                   <span className="text-muted">Expected Win Rate:</span>
                   <span className="font-semibold">{(Number(baseline.expected_win_rate) * 100).toFixed(1)}%</span>
                 </div>
-                <div className="flex justify-between border-b border-[#deded8] pb-2">
+                <div className="flex justify-between border-b border-border pb-2">
                   <span className="text-muted">Expected Profit Factor:</span>
                   <span className="font-semibold">{Number(baseline.expected_profit_factor).toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between border-b border-[#deded8] pb-2">
+                <div className="flex justify-between border-b border-border pb-2">
                   <span className="text-muted">Expected Max Drawdown:</span>
                   <span className="font-semibold text-[#b42318]">
                     {(Number(baseline.expected_drawdown) * 100).toFixed(2)}%
@@ -522,7 +528,7 @@ export default function StrategyHealthPage() {
           </div>
           <div className="max-h-[300px] overflow-y-auto">
             <table role="table" className="w-full text-left text-xs">
-              <thead className="border-b border-[#deded8] text-muted">
+              <thead className="border-b border-border text-muted">
                 <tr>
                   <th scope="col" className="py-2">Zaman</th>
                   <th scope="col">Seviye</th>
@@ -532,12 +538,12 @@ export default function StrategyHealthPage() {
               </thead>
               <tbody>
                 {alerts.map((a) => (
-                  <tr key={a.id} className="border-b border-[#deded8] hover:bg-slate-50">
+                  <tr key={a.id} className="border-b border-border hover:bg-slate-50">
                     <td className="py-2.5 text-muted">
                       {new Date(a.created_at).toLocaleString("tr-TR")}
                     </td>
                     <td>
-                      <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-bold border ${ALERT_COLORS[a.alert_level] ?? "bg-slate-50 text-slate-700"}`}>
+                      <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-bold border ${ALERT_COLORS[a.alert_level] ?? "bg-slate-50 text-slate-700"}`}>
                         {a.alert_level}
                       </span>
                     </td>
@@ -567,7 +573,7 @@ export default function StrategyHealthPage() {
           </div>
           <div className="max-h-[300px] overflow-y-auto">
             <table role="table" className="w-full text-left text-xs">
-              <thead className="border-b border-[#deded8] text-muted">
+              <thead className="border-b border-border text-muted">
                 <tr>
                   <th scope="col" className="py-2">Zaman</th>
                   <th scope="col">Eski Durum</th>
@@ -578,13 +584,15 @@ export default function StrategyHealthPage() {
               </thead>
               <tbody>
                 {transitions.map((t) => (
-                  <tr key={t.id} className="border-b border-[#deded8] hover:bg-slate-50">
+                  <tr key={t.id} className="border-b border-border hover:bg-slate-50">
                     <td className="py-2.5 text-muted">
                       {new Date(t.created_at).toLocaleString("tr-TR")}
                     </td>
                     <td>
                       <span
-                        className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${
+                          t.old_state === "WARNING" ? "text-gray-900" : "text-white"
+                        }`}
                         style={{ backgroundColor: STATE_COLORS[t.old_state] ?? "#6b7280" }}
                       >
                         {STATE_LABELS[t.old_state] ?? t.old_state}
@@ -595,7 +603,9 @@ export default function StrategyHealthPage() {
                     </td>
                     <td>
                       <span
-                        className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${
+                          t.new_state === "WARNING" ? "text-gray-900" : "text-white"
+                        }`}
                         style={{ backgroundColor: STATE_COLORS[t.new_state] ?? "#6b7280" }}
                       >
                         {STATE_LABELS[t.new_state] ?? t.new_state}

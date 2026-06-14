@@ -31,6 +31,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { LastUpdated } from "@/components/ui/last-updated";
 import { Metric } from "@/components/ui/metric";
+import { PageSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import {
@@ -108,7 +109,7 @@ export default function DataQualityPage() {
 
   useEffect(() => {
     if (!token || !symbol) return;
-    refresh();
+    refresh().catch(() => {});
     const id = setInterval(refresh, 30000);
     return () => clearInterval(id);
   }, [token, symbol, refresh]);
@@ -192,12 +193,14 @@ export default function DataQualityPage() {
         <div className="rounded-md bg-teal-50 px-4 py-2 text-sm text-teal-800">{message}</div>
       )}
 
-      {!status && (
+      {loading ? (
+        <PageSkeleton />
+      ) : !status ? (
         <Card className="p-8 text-center text-neutral-500">
           Token ve sembol girip "Yenile" deyin. Henüz veri kalite kaydı yoksa "Yeniden Doğrula" ile
           oluşturabilirsiniz.
         </Card>
-      )}
+      ) : null}
 
       {status && (
         <>
@@ -206,7 +209,7 @@ export default function DataQualityPage() {
               <div className="flex items-center gap-2 text-sm text-neutral-500">
                 <Gauge className="h-4 w-4" /> Veri Sağlık Skoru
               </div>
-              <div className="mt-2 text-4xl font-bold" style={{ color: CATEGORY_COLORS[category] ?? "#111" }}>
+              <div className="mt-2 text-3xl font-bold" style={{ color: CATEGORY_COLORS[category] ?? "#111" }}>
                 {score.toFixed(1)}
               </div>
               <div className="text-sm font-medium" style={{ color: CATEGORY_COLORS[category] ?? "#111" }}>

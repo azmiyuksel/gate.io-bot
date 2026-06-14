@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Metric } from "@/components/ui/metric";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
+import { MetricSkeleton, EmptyState } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { money } from "@/lib/utils";
 import { authFetch, getAccessToken } from "@/lib/auth-api";
@@ -20,11 +21,19 @@ export function BacktestResult({ id }: { id: string }) {
   const { toast } = useToast();
   const [token, setToken] = useState("");
   const [run, setRun] = useState<BacktestDetail | null>(null);
+  const [loading, setLoading] = useState(true);
 
   async function refresh() {
     if (!token) return;
-    const response = await authFetch(`/backtests/${id}`);
-    if (response.ok) setRun(await response.json());
+    setLoading(true);
+    try {
+      const response = await authFetch(`/backtests/${id}`);
+      if (response.ok) setRun(await response.json());
+    } catch {
+      toast("Sunucuya ulaşılamadı", "error");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function optimize() {
@@ -98,27 +107,38 @@ export function BacktestResult({ id }: { id: string }) {
       </header>
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric label="Net Kar" value={`$${money(run?.metrics.net_profit ?? 0)}`} />
-        <Metric label="Sharpe" value={(run?.metrics.sharpe_ratio ?? 0).toFixed(2)} />
-        <Metric label="Max DD" value={`${((run?.metrics.max_drawdown ?? 0) * 100).toFixed(2)}%`} />
-        <Metric label="Win Rate" value={`${((run?.metrics.win_rate ?? 0) * 100).toFixed(1)}%`} />
+        {loading || !run ? (
+          <>
+            <MetricSkeleton />
+            <MetricSkeleton />
+            <MetricSkeleton />
+            <MetricSkeleton />
+          </>
+        ) : (
+          <>
+            <Metric label="Net Kar" value={`$${money(run.metrics.net_profit)}`} />
+            <Metric label="Sharpe" value={run.metrics.sharpe_ratio.toFixed(2)} />
+            <Metric label="Max DD" value={`${(run.metrics.max_drawdown * 100).toFixed(2)}%`} />
+            <Metric label="Win Rate" value={`${(run.metrics.win_rate * 100).toFixed(1)}%`} />
+          </>
+        )}
       </section>
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-2">
         <Card>
           <h2 className="mb-4 text-base font-semibold">Equity Curve</h2>
           {equityFigure ? (
-            <Plot data={equityFigure.data} layout={{ ...equityFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} />
+            <Plot data={equityFigure.data} layout={{ ...equityFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} aria-label="Equity curve chart" />
           ) : (
-            <p className="text-sm text-muted">Grafik yok.</p>
+            <EmptyState title="Grafik verisi yok" />
           )}
         </Card>
         <Card>
           <h2 className="mb-4 text-base font-semibold">Drawdown Curve</h2>
           {drawdownFigure ? (
-            <Plot data={drawdownFigure.data} layout={{ ...drawdownFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} />
+            <Plot data={drawdownFigure.data} layout={{ ...drawdownFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} aria-label="Drawdown curve chart" />
           ) : (
-            <p className="text-sm text-muted">Grafik yok.</p>
+            <EmptyState title="Grafik verisi yok" />
           )}
         </Card>
       </section>

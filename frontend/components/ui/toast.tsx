@@ -1,12 +1,12 @@
 "use client";
 
 import { AlertCircle, CheckCircle2, Info, X, XCircle } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 type ToastType = "success" | "error" | "info" | "warning";
 
-interface Toast {
+interface ToastItem {
   id: number;
   message: string;
   type: ToastType;
@@ -23,11 +23,11 @@ export function useToast() {
 }
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  let nextId = 0;
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const nextIdRef = useRef(0);
 
   const toast = useCallback((message: string, type: ToastType = "info") => {
-    const id = ++nextId;
+    const id = ++nextIdRef.current;
     setToasts((prev) => [...prev, { id, message, type }]);
   }, []);
 
@@ -40,14 +40,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       {children}
       <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2" aria-live="polite">
         {toasts.map((t) => (
-          <ToastItem key={t.id} toast={t} onRemove={() => remove(t.id)} />
+          <ToastCard key={t.id} toast={t} onRemove={() => remove(t.id)} />
         ))}
       </div>
     </ToastContext.Provider>
   );
 }
 
-function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) {
+function ToastCard({ toast, onRemove }: { toast: ToastItem; onRemove: () => void }) {
   useEffect(() => {
     const timer = setTimeout(onRemove, 4000);
     return () => clearTimeout(timer);
@@ -70,8 +70,7 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) 
   return (
     <div
       className={cn(
-        "pointer-events-auto flex items-center gap-3 rounded-md border px-4 py-3 text-sm shadow-lg transition-all",
-        "animate-in slide-in-from-right-5",
+        "pointer-events-auto flex items-center gap-3 rounded-md border px-4 py-3 text-sm shadow-lg transition-all animate-slide-in-right",
         borders[toast.type],
       )}
       role="alert"

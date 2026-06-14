@@ -25,36 +25,3 @@ select,
 textarea {
   font: inherit;
 }
-
-/* Custom animation utilities */
-@keyframes slide-in-from-right-5 {
-  from {
-    transform: translateX(1.25rem);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-.animate-in {
-  animation-duration: 300ms;
-  animation-timing-function: ease-out;
-  animation-fill-mode: both;
-}
-
-.slide-in-from-right-5 {
-  animation-name: slide-in-from-right-5;
-}
-
-/* Skeleton shimmer */
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}

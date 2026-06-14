@@ -15,6 +15,7 @@ import {
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Input } from "@/components/ui/input";
 import { Metric } from "@/components/ui/metric";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -113,10 +114,12 @@ export function Dashboard() {
       } else {
         toast("Dashboard verisi alınamadı", "error");
       }
-      const chartsResponse = await authFetch(`/dashboard/charts`);
-      if (chartsResponse.ok) setCharts(await chartsResponse.json());
-      const econResponse = await authFetch(`/dashboard/economics`);
-      if (econResponse.ok) setEconomics(await econResponse.json());
+      const [chartsResponse, econResponse] = await Promise.all([
+        authFetch(`/dashboard/charts`),
+        authFetch(`/dashboard/economics`),
+      ].map((p) => p.catch(() => null)));
+      if (chartsResponse?.ok) setCharts(await chartsResponse.json());
+      if (econResponse?.ok) setEconomics(await econResponse.json());
     } catch {
       toast("Sunucuya ulaşılamadı", "error");
     } finally {
@@ -194,6 +197,7 @@ export function Dashboard() {
       <header className="border-b border-border bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div>
+            <Breadcrumb items={[{ label: "Dashboard" }]} showHome={false} />
             <h1 className="text-xl font-semibold">Gate.io Spot Capital Bot</h1>
             <p className="text-sm text-muted">Düşük riskli spot strateji kontrol paneli</p>
           </div>
@@ -265,7 +269,7 @@ export function Dashboard() {
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-base font-semibold">Equity Curve</h2>
             <span className="text-sm text-muted">
-              Win rate {charts.win_rate.toFixed(1)}% · Max DD {money(String(charts.max_drawdown))}
+              Win rate {charts.win_rate.toFixed(1)}% · Max DD {(Math.abs(charts.max_drawdown ?? 0) * 100).toFixed(2)}%
             </span>
           </div>
           <div className="h-72">
@@ -351,7 +355,7 @@ export function Dashboard() {
                     <td>{money(position.take_profit)}</td>
                     <td className="text-right">
                       <Button
-                        className="bg-danger px-3"
+                        variant="danger"
                         onClick={() => setConfirmClose({ id: position.id, symbol: position.symbol })}
                         aria-label={`${position.symbol} pozisyonunu kapat`}
                       >

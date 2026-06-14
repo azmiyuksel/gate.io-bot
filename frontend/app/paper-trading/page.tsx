@@ -87,13 +87,13 @@ export default function PaperTradingPage() {
     setLoading(true);
     try {
       const [s, p, t, e, r, d, ec] = await Promise.all([
-        getPaperStatus(),
-        getPaperPositions(),
-        getPaperTrades(),
-        getPaperEquity(),
-        getPaperRiskStatus(),
-        getPaperSignalDiagnostics(),
-        getPaperEconomics(),
+        getPaperStatus().catch(() => null),
+        getPaperPositions().catch(() => []),
+        getPaperTrades().catch(() => []),
+        getPaperEquity().catch(() => []),
+        getPaperRiskStatus().catch(() => null),
+        getPaperSignalDiagnostics().catch(() => null),
+        getPaperEconomics().catch(() => null),
       ]);
       if (s) setStatus(s);
       setPositions(p);
@@ -119,9 +119,16 @@ export default function PaperTradingPage() {
 
   async function action(fn: () => Promise<boolean>, successMsg: string) {
     setActionLoading(true);
-    const ok = await fn();
-    if (ok) toast(successMsg, "success");
-    else toast("İşlem başarısız", "error");
+    try {
+      const ok = await fn();
+      if (ok) {
+        toast(successMsg, "success");
+      } else {
+        toast("İşlem başarısız", "error");
+      }
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "İşlem başarısız", "error");
+    }
     await refresh();
     setActionLoading(false);
   }
@@ -266,7 +273,7 @@ export default function PaperTradingPage() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Açık Pozisyonlar</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm" role="table">
+            <table className="w-full text-left text-sm">
               <thead className="border-b border-border text-muted">
                 <tr>
                   <th className="py-2" scope="col">Sembol</th>
@@ -425,8 +432,7 @@ export default function PaperTradingPage() {
                     </div>
                     <div className="mt-1 h-1.5 w-full rounded bg-border">
                       <div
-                        className="h-1.5 rounded"
-                        style={{ width: `${pct}%`, backgroundColor: approved ? "#146c5d" : "#b9933a" }}
+                        className={`h-1.5 rounded w-[${Math.round(pct)}%] ${approved ? "bg-primary" : "bg-amber-600"}`}
                       />
                     </div>
                   </div>
@@ -441,7 +447,7 @@ export default function PaperTradingPage() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Sembol Bazında Son Durum</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm" role="table">
+            <table className="w-full text-left text-sm">
               <thead className="border-b border-border text-muted">
                 <tr>
                   <th className="py-2" scope="col">Sembol</th>
@@ -473,7 +479,7 @@ export default function PaperTradingPage() {
         <Card>
           <h2 className="mb-4 text-base font-semibold">Son İşlemler</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm" role="table">
+            <table className="w-full text-left text-sm">
               <thead className="border-b border-border text-muted">
                 <tr>
                   <th className="py-2" scope="col">Zaman</th>

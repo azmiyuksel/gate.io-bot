@@ -63,6 +63,15 @@ const REGIME_LABELS: Record<string, string> = {
   BREAKOUT_PHASE: "Kırılım Aşaması (Breakout)",
 };
 
+const REGIME_TEXT_COLORS: Record<string, string> = {
+  TRENDING_BULL: "text-emerald-700",
+  TRENDING_BEAR: "text-red-700",
+  SIDEWAYS: "text-slate-500",
+  HIGH_VOLATILITY: "text-amber-600",
+  LOW_VOLATILITY: "text-violet-600",
+  BREAKOUT_PHASE: "text-blue-600",
+};
+
 export default function MarketRegimePage() {
   const { toast } = useToast();
   const [token, setToken] = useState("");
@@ -86,10 +95,10 @@ export default function MarketRegimePage() {
     setLoading(true);
     try {
       const [curr, hist, perf, trans] = await Promise.all([
-        getCurrentRegime(),
-        getRegimeHistory(),
-        getRegimePerformance(),
-        getRegimeTransitions(),
+        getCurrentRegime().catch(() => null),
+        getRegimeHistory().catch(() => []),
+        getRegimePerformance().catch(() => []),
+        getRegimeTransitions().catch(() => []),
       ]);
       if (curr) setCurrentRegime(curr);
       setHistory(hist);
@@ -112,14 +121,17 @@ export default function MarketRegimePage() {
 
   async function handleRecalculate() {
     setActionLoading(true);
-        const success = await recalculateRegime();
-    if (success) {
-      toast("Piyasa rejimi geçmişi başarıyla hesaplandı ve modeller eğitildi!", "success");
-      await refresh();
-    } else {
-      toast("Piyasa rejimi hesaplama başarısız oldu.", "error");
+    try {
+      const success = await recalculateRegime();
+      if (success) {
+        toast("Piyasa rejimi geçmişi başarıyla hesaplandı ve modeller eğitildi!", "success");
+        await refresh();
+      } else {
+        toast("Piyasa rejimi hesaplama başarısız oldu.", "error");
+      }
+    } finally {
+      setActionLoading(false);
     }
-    setActionLoading(false);
   }
 
   // Format confidence history chart data
@@ -191,7 +203,7 @@ export default function MarketRegimePage() {
               className="h-3 w-3 rounded-full animate-pulse"
               style={{ backgroundColor: REGIME_COLORS[activeRegime] ?? "#6b7280" }}
             />
-            <span className="text-lg font-bold" style={{ color: REGIME_COLORS[activeRegime] ?? "#6b7280" }}>
+            <span className={`text-lg font-bold ${REGIME_TEXT_COLORS[activeRegime] ?? "text-slate-500"}`}>
               {REGIME_LABELS[activeRegime] ?? activeRegime}
             </span>
           </div>
@@ -203,6 +215,10 @@ export default function MarketRegimePage() {
           <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-border">
             <div
               className="h-1.5 rounded-full transition-all"
+              role="progressbar"
+              aria-valuenow={Math.round(confidenceScore * 100)}
+              aria-valuemin={0}
+              aria-valuemax={100}
               style={{
                 width: `${confidenceScore * 100}%`,
                 backgroundColor: confidenceScore < 0.5 ? "#b42318" : confidenceScore <= 0.7 ? "#d97706" : "#146c5d"
@@ -300,7 +316,7 @@ export default function MarketRegimePage() {
                   const winRate = perf.total_trades > 0 ? (perf.winning_trades / perf.total_trades) * 100 : 0;
                   return (
                     <tr key={perf.id} className="border-b border-border">
-                      <td className="py-3 font-semibold" style={{ color: REGIME_COLORS[perf.regime_type] ?? "#6b7280" }}>
+                      <td className={`py-3 font-semibold ${REGIME_TEXT_COLORS[perf.regime_type] ?? "text-slate-500"}`}>
                         {REGIME_LABELS[perf.regime_type] ?? perf.regime_type}
                       </td>
                       <td>{perf.strategy_name}</td>
@@ -336,7 +352,7 @@ export default function MarketRegimePage() {
             <div className="flex items-center justify-between rounded-lg border border-border p-3 bg-slate-50">
               <div>
                 <p className="text-xs font-semibold text-muted">Rule-Based Sistem (Ağırlık: 40%)</p>
-                <p className="text-sm font-bold" style={{ color: REGIME_COLORS[currentRegime?.rule_based_vote ?? ""] ?? "#6b7280" }}>
+                <p className={`text-sm font-bold ${REGIME_TEXT_COLORS[currentRegime?.rule_based_vote ?? ""] ?? "text-slate-500"}`}>
                   {REGIME_LABELS[currentRegime?.rule_based_vote ?? ""] ?? (currentRegime?.rule_based_vote ?? "Sideways")}
                 </p>
               </div>
@@ -344,7 +360,7 @@ export default function MarketRegimePage() {
             <div className="flex items-center justify-between rounded-lg border border-border p-3 bg-slate-50">
               <div>
                 <p className="text-xs font-semibold text-muted">K-Means İstatiksel Kümeleme (Ağırlık: 30%)</p>
-                <p className="text-sm font-bold" style={{ color: REGIME_COLORS[currentRegime?.clustering_vote ?? ""] ?? "#6b7280" }}>
+                <p className={`text-sm font-bold ${REGIME_TEXT_COLORS[currentRegime?.clustering_vote ?? ""] ?? "text-slate-500"}`}>
                   {REGIME_LABELS[currentRegime?.clustering_vote ?? ""] ?? (currentRegime?.clustering_vote ?? "Sideways")}
                 </p>
               </div>
@@ -352,7 +368,7 @@ export default function MarketRegimePage() {
             <div className="flex items-center justify-between rounded-lg border border-border p-3 bg-slate-50">
               <div>
                 <p className="text-xs font-semibold text-muted">Random Forest Sınıflandırıcı (Ağırlık: 30%)</p>
-                <p className="text-sm font-bold" style={{ color: REGIME_COLORS[currentRegime?.ml_vote ?? ""] ?? "#6b7280" }}>
+                <p className={`text-sm font-bold ${REGIME_TEXT_COLORS[currentRegime?.ml_vote ?? ""] ?? "text-slate-500"}`}>
                   {REGIME_LABELS[currentRegime?.ml_vote ?? ""] ?? (currentRegime?.ml_vote ?? "Sideways")}
                 </p>
               </div>
@@ -382,7 +398,7 @@ export default function MarketRegimePage() {
                     <td className="font-semibold text-muted">
                       {t.old_regime.replace("TRENDING_", "")}
                     </td>
-                    <td className="font-semibold" style={{ color: REGIME_COLORS[t.new_regime] }}>
+                    <td className={`font-semibold ${REGIME_TEXT_COLORS[t.new_regime] ?? "text-slate-500"}`}>
                       {t.new_regime.replace("TRENDING_", "")}
                     </td>
                     <td className="text-muted">{`${(Number(t.confidence) * 100).toFixed(0)}%`}</td>

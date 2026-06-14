@@ -50,6 +50,7 @@ export function Navbar() {
         onClick={() => setMobileOpen(!mobileOpen)}
         aria-label={mobileOpen ? "Menüyü kapat" : "Menüyü aç"}
         aria-expanded={mobileOpen}
+        aria-controls="sidebar-nav"
       >
         {mobileOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
@@ -65,6 +66,7 @@ export function Navbar() {
 
       {/* Sidebar */}
       <aside
+        id="sidebar-nav"
         className={cn(
           "fixed inset-y-0 left-0 z-40 flex w-56 flex-col border-r border-border bg-white transition-transform duration-200",
           "lg:translate-x-0",
@@ -112,7 +114,7 @@ export function Navbar() {
 
         {/* Footer */}
         <div className="border-t border-border px-4 py-3">
-          <p className="text-[11px] text-muted">v0.1.0 · Sermaye Koruma</p>
+          <p className="text-xs text-muted">v0.1.0 · Sermaye Koruma</p>
         </div>
       </aside>
     </>

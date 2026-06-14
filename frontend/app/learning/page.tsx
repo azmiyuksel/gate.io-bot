@@ -22,6 +22,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { LastUpdated } from "@/components/ui/last-updated";
 import { Metric } from "@/components/ui/metric";
+import { PageSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import {
@@ -100,7 +101,7 @@ export default function LearningPage() {
     setBusy(true);
     setMessage("");
     try {
-      const res = await startLearning();
+      const res = await startLearning().catch(() => null);
       if (res) {
         setMessage(
           `Öğrenme turu #${res.cycle_id}: ${res.strategies_validated} doğrulandı, ` +
@@ -179,7 +180,11 @@ export default function LearningPage() {
 
       {message && <div className="rounded-md bg-teal-50 px-4 py-2 text-sm text-teal-800">{message}</div>}
 
-      {status && (
+      {status === null ? (
+        <PageSkeleton />
+      ) : (
+        <>
+          {status && (
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
           <Card className="p-5">
             <div className="flex items-center gap-2 text-sm text-neutral-500">
@@ -236,18 +241,18 @@ export default function LearningPage() {
                   </td>
                   <td className="py-2">
                     <div className="flex gap-2">
-                      <button
+                      <Button
                         onClick={() => onApprove(r.strategy_id)}
-                        className="inline-flex items-center gap-1 rounded bg-emerald-700 px-2 py-1 text-xs text-white hover:bg-emerald-800"
+                        className="bg-emerald-700 hover:brightness-95"
                       >
                         <ThumbsUp className="h-3 w-3" /> Onayla
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         onClick={() => onReject(r.id)}
-                        className="inline-flex items-center gap-1 rounded bg-red-700 px-2 py-1 text-xs text-white hover:bg-red-800"
+                        variant="danger"
                       >
                         <ThumbsDown className="h-3 w-3" /> Reddet
-                      </button>
+                      </Button>
                     </div>
                   </td>
                 </tr>
@@ -360,6 +365,8 @@ export default function LearningPage() {
           )}
         </div>
       </Card>
+        </>
+      )}
     </main>
   );
 }

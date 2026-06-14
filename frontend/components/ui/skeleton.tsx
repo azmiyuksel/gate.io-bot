@@ -56,10 +56,10 @@ export function ChartSkeleton({ height = 288 }: { height?: number }) {
   );
 }
 
-export function DashboardSkeleton() {
+export function PageSkeleton() {
   return (
     <div className="space-y-6 p-6">
-      <div className="grid gap-5 lg:grid-cols-4">
+      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <MetricSkeleton key={i} />
         ))}
@@ -72,6 +72,16 @@ export function DashboardSkeleton() {
         <TableSkeleton rows={4} cols={5} />
         <CardSkeleton rows={4} />
       </div>
+    </div>
+  );
+}
+
+export function EmptyState({ icon, title, subtitle }: { icon?: React.ReactNode; title: string; subtitle?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 text-center">
+      {icon && <div className="mb-3 text-muted">{icon}</div>}
+      <p className="text-sm font-medium text-muted">{title}</p>
+      {subtitle && <p className="mt-1 text-xs text-muted">{subtitle}</p>}
     </div>
   );
 }

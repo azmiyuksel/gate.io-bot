@@ -11,7 +11,7 @@ import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 import { Pagination, usePagination } from "@/components/ui/pagination";
-import { TableSkeleton } from "@/components/ui/skeleton";
+import { TableSkeleton, MetricSkeleton } from "@/components/ui/skeleton";
 import { authFetch, getAccessToken } from "@/lib/auth-api";
 import type { WalkForwardListItem } from "@/types/walkforward";
 
@@ -150,11 +150,23 @@ export function WalkForwardDashboard() {
       )}
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-3 lg:grid-cols-5">
-        <Metric label="Robustness" value={(latest?.robustness_score ?? 0).toFixed(1)} />
-        <Metric label="WFE" value={`${((latest?.wfe ?? 0) * 100).toFixed(1)}%`} />
-        <Metric label="Consistency" value={`${((latest?.consistency_score ?? 0) * 100).toFixed(1)}%`} />
-        <Metric label="Avg Sharpe" value={(latest?.average_sharpe ?? 0).toFixed(2)} />
-        <Metric label="Avg Drawdown" value={`${((latest?.average_drawdown ?? 0) * 100).toFixed(2)}%`} />
+        {loading || !latest ? (
+          <>
+            <MetricSkeleton />
+            <MetricSkeleton />
+            <MetricSkeleton />
+            <MetricSkeleton />
+            <MetricSkeleton />
+          </>
+        ) : (
+          <>
+            <Metric label="Robustness" value={(latest.robustness_score).toFixed(1)} />
+            <Metric label="WFE" value={`${(latest.wfe * 100).toFixed(1)}%`} />
+            <Metric label="Consistency" value={`${(latest.consistency_score * 100).toFixed(1)}%`} />
+            <Metric label="Avg Sharpe" value={latest.average_sharpe.toFixed(2)} />
+            <Metric label="Avg Drawdown" value={`${(latest.average_drawdown * 100).toFixed(2)}%`} />
+          </>
+        )}
       </section>
 
       <section className="mx-auto max-w-7xl px-6 pb-10">
@@ -186,7 +198,7 @@ export function WalkForwardDashboard() {
                         <td>{run.robustness_score.toFixed(1)}</td>
                         <td>{(run.wfe * 100).toFixed(1)}%</td>
                         <td>{(run.consistency_score * 100).toFixed(1)}%</td>
-                        <td>{run.deployment_decision}</td>
+                        <td>{getDecisionBadge(run.deployment_decision)}</td>
                         <td className="flex justify-end gap-2 py-2">
                           <Link href={`/walk-forward/${run.id}`}>
                             <Button className="px-3">Detay</Button>
@@ -227,5 +239,19 @@ export function WalkForwardDashboard() {
         onCancel={() => setConfirmDelete(null)}
       />
     </main>
+  );
+}
+
+function getDecisionBadge(decision: string) {
+  const map: Record<string, { label: string; className: string }> = {
+    DEPLOY: { label: "DEPLOY", className: "bg-emerald-100 text-emerald-800" },
+    REJECT: { label: "REJECT", className: "bg-red-100 text-red-800" },
+    CAUTION: { label: "CAUTION", className: "bg-amber-100 text-amber-800" },
+  };
+  const item = map[decision] ?? { label: decision, className: "bg-neutral-100 text-neutral-600" };
+  return (
+    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${item.className}`}>
+      {item.label}
+    </span>
   );
 }

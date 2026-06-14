@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Metric } from "@/components/ui/metric";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
+import { MetricSkeleton, EmptyState } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/toast";
 import { money } from "@/lib/utils";
 import { authFetch, getAccessToken } from "@/lib/auth-api";
 import type { WalkForwardDetail as WalkForwardDetailType } from "@/types/walkforward";
@@ -16,17 +18,26 @@ const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
 const apiUrl = "/api/v1";
 
 export function WalkForwardDetail({ id }: { id: string }) {
+  const { toast } = useToast();
   const [token, setToken] = useState("");
   const [run, setRun] = useState<WalkForwardDetailType | null>(null);
   const [selectedWindow, setSelectedWindow] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
 
   async function refresh() {
     if (!token) return;
-    const response = await authFetch(`/walkforward/${id}`);
-    if (response.ok) {
-      const data = await response.json();
-      setRun(data);
-      setSelectedWindow(data.windows[0]?.window_id ?? null);
+    setLoading(true);
+    try {
+      const response = await authFetch(`/walkforward/${id}`);
+      if (response.ok) {
+        const data = await response.json();
+        setRun(data);
+        setSelectedWindow(data.windows[0]?.window_id ?? null);
+      }
+    } catch {
+      toast("Sunucuya ulaşılamadı", "error");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -56,7 +67,7 @@ export function WalkForwardDetail({ id }: { id: string }) {
             />
             <h1 className="mt-2 text-xl font-semibold">WFA Sonucu #{id}</h1>
             <p className="text-sm text-muted">
-              {run ? `${run.symbol} · ${run.mode} · ${run.deployment_decision.decision}` : "Panelden giriş yapın ve sonucu yükleyin"}
+              {run ? `${run.symbol} · ${run.mode} · ${run?.deployment_decision?.decision}` : "Panelden giriş yapın ve sonucu yükleyin"}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -73,28 +84,40 @@ export function WalkForwardDetail({ id }: { id: string }) {
       </header>
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-3 lg:grid-cols-5">
-        <Metric label="Robustness" value={String(run?.aggregated_metrics.robustness_score ?? 0)} />
-        <Metric label="WFE" value={`${Number(run?.aggregated_metrics.wfe ?? 0) * 100}%`} />
-        <Metric label="Consistency" value={`${Number(run?.aggregated_metrics.consistency_score ?? 0) * 100}%`} />
-        <Metric label="VaR 95" value={`${((run?.monte_carlo_results.var_95 ?? 0) * 100).toFixed(2)}%`} />
-        <Metric label="Ruin" value={`${((run?.monte_carlo_results.ruin_probability ?? 0) * 100).toFixed(2)}%`} />
+        {loading || !run ? (
+          <>
+            <MetricSkeleton />
+            <MetricSkeleton />
+            <MetricSkeleton />
+            <MetricSkeleton />
+            <MetricSkeleton />
+          </>
+        ) : (
+          <>
+            <Metric label="Robustness" value={String(run.aggregated_metrics.robustness_score)} />
+            <Metric label="WFE" value={`${Number(run.aggregated_metrics.wfe) * 100}%`} />
+            <Metric label="Consistency" value={`${Number(run.aggregated_metrics.consistency_score) * 100}%`} />
+            <Metric label="VaR 95" value={`${(run.monte_carlo_results.var_95 * 100).toFixed(2)}%`} />
+            <Metric label="Ruin" value={`${(run.monte_carlo_results.ruin_probability * 100).toFixed(2)}%`} />
+          </>
+        )}
       </section>
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-2">
         <Card>
           <h2 className="mb-4 text-base font-semibold">Combined Equity Curve</h2>
           {equityFigure ? (
-            <Plot data={equityFigure.data} layout={{ ...equityFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} />
+            <Plot data={equityFigure.data} layout={{ ...equityFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} aria-label="Combined equity curve chart" />
           ) : (
-            <p className="text-sm text-muted">Grafik yok.</p>
+            <EmptyState title="Grafik verisi yok" />
           )}
         </Card>
         <Card>
           <h2 className="mb-4 text-base font-semibold">Window Performance</h2>
           {windowFigure ? (
-            <Plot data={windowFigure.data} layout={{ ...windowFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} />
+            <Plot data={windowFigure.data} layout={{ ...windowFigure.layout, autosize: true }} style={{ width: "100%", height: 320 }} aria-label="Window performance chart" />
           ) : (
-            <p className="text-sm text-muted">Grafik yok.</p>
+            <EmptyState title="Grafik verisi yok" />
           )}
         </Card>
       </section>
