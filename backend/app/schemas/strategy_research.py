@@ -106,6 +106,8 @@ class HypothesisTestOut(BaseModel):
     p_value: Decimal
     sample_size: int
     result: dict
+    symbol: str
+    timeframe: str
     created_at: datetime
 
     class Config:
@@ -134,3 +136,27 @@ class PromotionOut(BaseModel):
     decision: str
     passed: bool
     reasons: list[str]
+
+
+class StrategyDetailOut(BaseModel):
+    strategy: ResearchStrategyOut
+    versions: list[StrategyVersionOut]
+    trades: list[dict]
+    equity_curve: list[dict]
+
+    class Config:
+        from_attributes = True
+
+
+class CustomHypothesisIn(BaseModel):
+    statement: str
+    feature: str
+    condition_desc: str
+    expects_negative: bool = False
+    symbol: str = "BTC_USDT"
+    timeframe: str = "1h"
+
+
+class SymbolOut(BaseModel):
+    symbol: str
+    has_data: bool

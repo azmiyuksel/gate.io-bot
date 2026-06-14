@@ -111,7 +111,42 @@ EMA_RSI_ATR_TEMPLATE = StrategyTemplate(
     ),
 )
 
-TEMPLATES: dict[str, StrategyTemplate] = {EMA_RSI_ATR_TEMPLATE.name: EMA_RSI_ATR_TEMPLATE}
+MACD_TEMPLATE = StrategyTemplate(
+    name="macd",
+    indicators=("MACD", "ATR"),
+    params=(
+        ParamSpec("macd_fast", 8, 16, is_int=True),
+        ParamSpec("macd_slow", 20, 34, is_int=True),
+        ParamSpec("macd_signal", 6, 12, is_int=True),
+        ParamSpec("atr_period", 7, 21, is_int=True),
+        ParamSpec("atr_multiplier", 1.0, 3.0),
+        ParamSpec("reward_risk", 1.5, 3.5),
+        ParamSpec("max_capital_per_trade_pct", 0.005, 0.02),
+        ParamSpec("trailing_stop_pct", 0.005, 0.03),
+    ),
+)
+
+BOLLINGER_BANDS_TEMPLATE = StrategyTemplate(
+    name="bollinger_bands",
+    indicators=("BB", "RSI", "ATR"),
+    params=(
+        ParamSpec("bb_period", 10, 30, is_int=True),
+        ParamSpec("bb_std", 1.5, 3.0),
+        ParamSpec("rsi_period", 7, 21, is_int=True),
+        ParamSpec("rsi_oversold", 25, 45),
+        ParamSpec("atr_period", 7, 21, is_int=True),
+        ParamSpec("atr_multiplier", 1.0, 3.0),
+        ParamSpec("reward_risk", 1.5, 3.5),
+        ParamSpec("max_capital_per_trade_pct", 0.005, 0.02),
+        ParamSpec("trailing_stop_pct", 0.005, 0.03),
+    ),
+)
+
+TEMPLATES: dict[str, StrategyTemplate] = {
+    EMA_RSI_ATR_TEMPLATE.name: EMA_RSI_ATR_TEMPLATE,
+    MACD_TEMPLATE.name: MACD_TEMPLATE,
+    BOLLINGER_BANDS_TEMPLATE.name: BOLLINGER_BANDS_TEMPLATE,
+}
 
 
 def get_template(name: str) -> StrategyTemplate:

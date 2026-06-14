@@ -8,24 +8,54 @@ from __future__ import annotations
 
 import random
 
+import numpy as np
+
 from app.strategy_research.models import (
     StrategyGenome,
     StrategyTemplate,
     get_template,
 )
+from app.strategy_research.feature_store import FEATURE_PARAM_MAPPING
 
-# Canonical seed parameters (mirror the live capital-preservation strategy).
-SEED_PARAMETERS = {
-    "ema_trend": 200,
-    "ema_entry": 20,
-    "rsi_period": 14,
-    "rsi_threshold": 35.0,
-    "atr_period": 14,
-    "atr_multiplier": 1.5,
-    "reward_risk": 2.0,
-    "max_capital_per_trade_pct": 0.01,
-    "trailing_stop_pct": 0.01,
+# Canonical seed parameters per template.
+TEMPLATE_SEED_PARAMETERS: dict[str, dict[str, float | int]] = {
+    "ema_rsi_atr": {
+        "ema_trend": 200,
+        "ema_entry": 20,
+        "rsi_period": 14,
+        "rsi_threshold": 35.0,
+        "atr_period": 14,
+        "atr_multiplier": 1.5,
+        "reward_risk": 2.0,
+        "max_capital_per_trade_pct": 0.01,
+        "trailing_stop_pct": 0.01,
+    },
+    "macd": {
+        "macd_fast": 12,
+        "macd_slow": 26,
+        "macd_signal": 9,
+        "atr_period": 14,
+        "atr_multiplier": 2.0,
+        "reward_risk": 2.0,
+        "max_capital_per_trade_pct": 0.01,
+        "trailing_stop_pct": 0.01,
+    },
+    "bollinger_bands": {
+        "bb_period": 20,
+        "bb_std": 2.0,
+        "rsi_period": 14,
+        "rsi_oversold": 35.0,
+        "atr_period": 14,
+        "atr_multiplier": 1.5,
+        "reward_risk": 2.5,
+        "max_capital_per_trade_pct": 0.01,
+        "trailing_stop_pct": 0.01,
+    },
 }
+
+
+def get_seed_parameters(template_name: str) -> dict[str, float | int]:
+    return TEMPLATE_SEED_PARAMETERS.get(template_name, {})
 
 
 class StrategyGenerator:
@@ -46,7 +76,8 @@ class StrategyGenerator:
 
     def seed_genome(self, template_name: str = "ema_rsi_atr") -> StrategyGenome:
         template = get_template(template_name)
-        params = {p.name: SEED_PARAMETERS.get(p.name, p.sample(self.rng)) for p in template.params}
+        seeds = get_seed_parameters(template_name)
+        params = {p.name: seeds.get(p.name, p.sample(self.rng)) for p in template.params}
         return StrategyGenome(template=template_name, parameters=params, origin="seed")
 
     # --- B) Rule mutation engine ---
@@ -84,15 +115,29 @@ class StrategyGenerator:
     ) -> StrategyGenome:
         """Bias sampling toward parameters tied to high-importance features.
 
-        Important features get sampled near the seed (exploitation); unimportant
-        ones are sampled widely (exploration).
+        Uses FEATURE_PARAM_MAPPING to find which features affect each parameter,
+        then averages their importance scores. Important params get sampled near
+        the seed (exploitation); unimportant ones are sampled widely (exploration).
         """
         template: StrategyTemplate = get_template(template_name)
+        seeds = get_seed_parameters(template_name)
+
+        # Compute per-parameter aggregated importance from feature mapping.
+        param_importance: dict[str, float] = {}
+        for spec in template.params:
+            importance_values = []
+            for feature_name, affected_params in FEATURE_PARAM_MAPPING.items():
+                if spec.name in affected_params:
+                    importance_values.append(feature_importances.get(feature_name, 0.0))
+            param_importance[spec.name] = (
+                float(np.mean(importance_values)) if importance_values else 0.0
+            )
+
         params = {}
         for spec in template.params:
-            importance = feature_importances.get(spec.name, 0.0)
-            if importance >= 0.5:
-                base = float(SEED_PARAMETERS.get(spec.name, spec.sample(self.rng)))
+            pi = param_importance.get(spec.name, 0.0)
+            if pi >= 0.5:
+                base = float(seeds.get(spec.name, spec.sample(self.rng)))
                 span = (spec.high - spec.low) * 0.1
                 params[spec.name] = spec.clamp(base + self.rng.uniform(-span, span))
             else:

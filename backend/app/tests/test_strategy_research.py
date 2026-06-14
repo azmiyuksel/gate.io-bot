@@ -10,7 +10,7 @@ from app.models.entities import (
 from app.strategy_research.evaluator import StrategyEvaluator
 from app.strategy_research.engine import StrategyResearchEngine
 from app.strategy_research.feature_store import FeatureStore
-from app.strategy_research.generator import SEED_PARAMETERS, StrategyGenerator
+from app.strategy_research.generator import TEMPLATE_SEED_PARAMETERS, StrategyGenerator
 from app.strategy_research.hypothesis_builder import HypothesisBuilder
 from app.strategy_research.models import (
     EvaluationResult,
@@ -68,7 +68,7 @@ def test_seed_genome_matches_seed_parameters() -> None:
     gen = StrategyGenerator(seed=1)
     genome = gen.seed_genome()
     assert genome.origin == "seed"
-    assert genome.parameters["ema_trend"] == SEED_PARAMETERS["ema_trend"]
+    assert genome.parameters["ema_trend"] == TEMPLATE_SEED_PARAMETERS["ema_rsi_atr"]["ema_trend"]
 
 
 def test_mutate_stays_in_bounds_and_crossover_mixes() -> None:
@@ -99,7 +99,8 @@ def test_compute_fitness_formula() -> None:
 def _result(**kw) -> EvaluationResult:
     base = dict(
         genome=StrategyGenome("ema_rsi_atr", {}),
-        metrics={}, monte_carlo={}, walk_forward=[],
+        metrics={"track_days": 120, "dsr_pvalue": 0.01},
+        monte_carlo={}, walk_forward=[],
         sharpe=1.5, profit_factor=1.8, max_drawdown=0.1,
         stability_score=0.7, consistency_score=0.7,
         in_sample_sharpe=1.5, out_sample_sharpe=1.4, overfit=False, total_trades=40,
@@ -162,7 +163,7 @@ def test_feature_store_scores_features(db_session) -> None:
 def test_hypothesis_builder_runs(db_session) -> None:
     seed_candles(db_session, n=400)
     records = HypothesisBuilder(db_session).test_all("BTC_USDT", "1h")
-    assert len(records) == 4
+    assert len(records) == 8
     for rec in records:
         assert rec.status in ("SUPPORTED", "REJECTED", "INCONCLUSIVE")
         assert 0.0 <= float(rec.p_value) <= 1.0

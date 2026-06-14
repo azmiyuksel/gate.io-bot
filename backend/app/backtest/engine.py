@@ -10,10 +10,21 @@ from app.backtest.metrics import buy_and_hold_benchmark, compute_metrics, monte_
 from app.backtest.models import BacktestConfig, SUPPORTED_TIMEFRAMES, TIMEFRAME_TO_PANDAS
 from app.backtest.portfolio import Portfolio
 from app.backtest.reports import build_plotly_report
-from app.backtest.strategy_runner import EmaRsiAtrStrategy
+from app.backtest.strategy_runner import (
+    BollingerBandsStrategy,
+    EmaRsiAtrStrategy,
+    MacdStrategy,
+)
 from app.core.config import get_settings
 from app.models.entities import HistoricalCandle
 from app.services.exchange.gateio import GateIOClient
+
+
+STRATEGY_REGISTRY: dict[str, type] = {
+    "ema_rsi_atr": EmaRsiAtrStrategy,
+    "macd": MacdStrategy,
+    "bollinger_bands": BollingerBandsStrategy,
+}
 
 
 class HistoricalDataLoader:
@@ -119,7 +130,8 @@ class BacktestEngine:
     def run(self, data: pd.DataFrame, config: BacktestConfig) -> dict:
         if data.empty:
             raise ValueError("No historical data available for backtest")
-        strategy = EmaRsiAtrStrategy(config.parameters)
+        strategy_cls = STRATEGY_REGISTRY.get(config.strategy_class, EmaRsiAtrStrategy)
+        strategy = strategy_cls(config.parameters)
         prepared = strategy.prepare(data)
         portfolio = Portfolio(config.initial_cash)
         broker = VirtualBroker(

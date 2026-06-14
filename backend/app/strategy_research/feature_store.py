@@ -25,6 +25,21 @@ from app.strategy_research.models import FeatureCategory
 
 _EPS = 1e-9
 
+# Maps each engineered feature to the strategy template parameters it influences.
+# Used by feature-driven generation to bias parameter sampling toward high-importance features.
+FEATURE_PARAM_MAPPING: dict[str, list[str]] = {
+    "ema_trend_gap": ["ema_trend"],
+    "ema20_slope": ["ema_trend", "ema_entry", "macd_fast", "macd_slow"],
+    "atr_pct": ["atr_period", "atr_multiplier", "trailing_stop_pct"],
+    "realized_vol": ["atr_period", "trailing_stop_pct", "bb_std"],
+    "return_1": ["reward_risk"],
+    "price_vs_ema50": ["ema_trend", "ema_entry", "rsi_threshold"],
+    "volume_zscore": ["rsi_threshold", "rsi_oversold"],
+    "volume_change": ["max_capital_per_trade_pct"],
+    "close_in_range": ["bb_period", "rsi_oversold"],
+    "signed_volume": ["rsi_threshold", "rsi_oversold"],
+}
+
 
 def _safe_corr(a: pd.Series, b: pd.Series) -> float:
     mask = a.notna() & b.notna()
@@ -100,6 +115,7 @@ class FeatureStore:
             corr = _safe_corr(series, forward_return)
             stability = self._stability(series, forward_return)
             importance = abs(corr)
+            affects = FEATURE_PARAM_MAPPING.get(name, [])
             results.append(
                 {
                     "name": name,
@@ -107,10 +123,11 @@ class FeatureStore:
                     "correlation_with_profit": round(corr, 6),
                     "importance_score": round(importance, 6),
                     "stability_score": round(stability, 6),
+                    "affects_params": affects,
                 }
             )
             if persist:
-                self._upsert(symbol, timeframe, name, category, corr, importance, stability)
+                self._upsert(symbol, timeframe, name, category, corr, importance, stability, affects)
 
         if persist:
             self.db.commit()
@@ -145,6 +162,7 @@ class FeatureStore:
         corr: float,
         importance: float,
         stability: float,
+        affects_params: list[str] | None = None,
     ) -> None:
         record = (
             self.db.query(FeatureRecord)
@@ -160,6 +178,7 @@ class FeatureStore:
         record.correlation_with_profit = round(corr, 6)
         record.importance_score = round(importance, 6)
         record.stability_score = round(stability, 6)
+        record.feature_metadata = {"affects_params": affects_params or []}
         record.updated_at = datetime.now(UTC)
 
     def importances(self, symbol: str = "BTC_USDT", timeframe: str = "1h") -> dict[str, float]:

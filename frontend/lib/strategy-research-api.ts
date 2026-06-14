@@ -1,10 +1,13 @@
 import type {
+  ABTest,
   FeatureRecord,
   HypothesisTest,
   PromotionResult,
   ResearchExperiment,
   ResearchRunResult,
   ResearchStrategy,
+  ResearchSymbol,
+  StrategyDetail,
   StrategyVersion,
 } from "@/types/strategy-research";
 import { authFetch } from "@/lib/auth-api";
@@ -125,6 +128,53 @@ export async function promoteStrategy(
     if (res.ok) return await res.json();
   } catch (err) {
     console.error("Error promoting strategy:", err);
+  }
+  return null;
+}
+
+export async function getStrategyDetail(id: number): Promise<StrategyDetail | null> {
+  try {
+    const res = await authFetch(`/research/strategies/${id}/detail`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.error("Error fetching strategy detail:", err);
+  }
+  return null;
+}
+
+export async function getABTests(limit = 50): Promise<ABTest[]> {
+  try {
+    const res = await authFetch(`/research/ab-tests?limit=${limit}`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.error("Error fetching AB tests:", err);
+  }
+  return [];
+}
+
+export async function getResearchSymbols(): Promise<ResearchSymbol[]> {
+  try {
+    const res = await authFetch(`/research/symbols`);
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.error("Error fetching symbols:", err);
+  }
+  return [];
+}
+
+export async function testCustomHypothesis(
+  statement: string, feature: string, conditionDesc: string,
+  expectsNegative: boolean, symbol: string, timeframe: string
+): Promise<HypothesisTest | null> {
+  try {
+    const res = await authFetch(`/research/hypotheses/custom`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ statement, feature, condition_desc: conditionDesc, expects_negative: expectsNegative, symbol, timeframe }),
+    });
+    if (res.ok) return await res.json();
+  } catch (err) {
+    console.error("Error testing custom hypothesis:", err);
   }
   return null;
 }

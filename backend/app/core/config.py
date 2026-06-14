@@ -152,9 +152,17 @@ class Settings(BaseSettings):
     research_min_trades: int = 20
     # Walk-forward windows used during evaluation.
     research_wf_windows: int = 4
+    # WF method: "anchored" (expanding window) or "rolling" (equal-sized chunks).
+    research_wf_method: str = "anchored"
     # Population size per research-loop generation.
     research_population: int = 12
     research_survivors: int = 4
+    # Cross-validation folds for overfit detection (k-fold purged CV).
+    research_cv_folds: int = 5
+    # Minimum track record in calendar days required for promotion.
+    research_min_track_days: int = 90
+    # Deflated Sharpe Ratio confidence threshold (p-value, 0..1).
+    research_dsr_confidence: float = 0.95
 
     # --- Auto Learning & Continuous Evolution ---
     learning_enabled: bool = True

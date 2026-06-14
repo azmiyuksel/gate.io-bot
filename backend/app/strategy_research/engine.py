@@ -107,8 +107,12 @@ class StrategyResearchEngine:
     def run_experiments(
         self, symbol: str = "BTC_USDT", timeframe: str = "1h", population: int | None = None
     ) -> dict:
+        from app.strategy_research.models import TEMPLATES
+
         population = population or self.settings.research_population
         survivors_n = self.settings.research_survivors
+        template_names = list(TEMPLATES.keys())
+        per_template = max(population // len(template_names), 1)
 
         # Refresh feature importances so feature-driven generation has signal.
         try:
@@ -116,10 +120,14 @@ class StrategyResearchEngine:
         except Exception:
             logger.warning("Feature-store recompute failed", exc_info=True)
 
-        # 1. Build a diverse population (seed + random + feature-driven).
-        genomes: list[StrategyGenome] = [self.generator.seed_genome(template_name="ema_rsi_atr")]
-        genomes += self.generator.generate("ema_rsi_atr", max(population - 2, 1))
-        genomes.append(self.generate_strategy(feature_driven=True, symbol=symbol, timeframe=timeframe))
+        # 1. Build a diverse population across all templates.
+        genomes: list[StrategyGenome] = []
+        for tpl in template_names:
+            genomes.append(self.generator.seed_genome(template_name=tpl))
+        for tpl in template_names:
+            genomes += self.generator.generate(tpl, max(per_template - 1, 0))
+        for tpl in template_names:
+            genomes.append(self.generate_strategy(template=tpl, feature_driven=True, symbol=symbol, timeframe=timeframe))
 
         evaluated: list[tuple[ResearchStrategy, EvaluationResult]] = []
         for genome in genomes:
@@ -134,12 +142,13 @@ class StrategyResearchEngine:
                 "reason": "insufficient historical data", "leaderboard": [],
             }
 
-        # 2. Rank and breed survivors (crossover + mutation).
+        # 2. Rank and breed survivors by template family.
         evaluated.sort(key=lambda pair: pair[1].fitness, reverse=True)
         survivors = evaluated[:survivors_n]
         for i in range(len(survivors) - 1):
-            child = self.generator.crossover(survivors[i][1].genome, survivors[i + 1][1].genome)
-            self.evaluate_strategy(self.generator.mutate(child), symbol, timeframe)
+            if survivors[i][1].genome.template == survivors[i + 1][1].genome.template:
+                child = self.generator.crossover(survivors[i][1].genome, survivors[i + 1][1].genome)
+                self.evaluate_strategy(self.generator.mutate(child), symbol, timeframe)
 
         # 3. Auto-promote any survivor that clears the production gate.
         promoted = 0

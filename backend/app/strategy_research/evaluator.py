@@ -52,6 +52,15 @@ class StrategyEvaluator:
         if result.total_trades < s.research_min_trades:
             reasons.append(f"trades {result.total_trades} < {s.research_min_trades}")
 
+        track_days = int(result.metrics.get("track_days", 0))
+        if track_days < s.research_min_track_days:
+            reasons.append(f"track record {track_days}d < {s.research_min_track_days}d")
+
+        dsr = float(result.metrics.get("dsr_pvalue", 1.0))
+        dsr_threshold = 1.0 - s.research_dsr_confidence
+        if dsr > dsr_threshold:
+            reasons.append(f"DSR p-value {dsr:.4f} > {dsr_threshold:.4f} (not significant at {s.research_dsr_confidence})")
+
         passed = not reasons
         return PromotionVerdict(
             decision=PromotionDecision.promoted if passed else PromotionDecision.rejected,

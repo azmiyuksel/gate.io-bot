@@ -89,3 +89,29 @@ export type PromotionResult = {
   passed: boolean;
   reasons: string[];
 };
+
+export type ABTest = {
+  id: number;
+  strategy_a_id: number | null;
+  strategy_b_id: number | null;
+  symbol: string;
+  timeframe: string;
+  winner: string;
+  a_fitness: string | number;
+  b_fitness: string | number;
+  p_value: string | number;
+  detail: string;
+  created_at: string;
+};
+
+export type StrategyDetail = {
+  strategy: ResearchStrategy;
+  versions: StrategyVersion[];
+  trades: Array<Record<string, unknown>>;
+  equity_curve: Array<Record<string, unknown>>;
+};
+
+export type ResearchSymbol = {
+  symbol: string;
+  has_data: boolean;
+};

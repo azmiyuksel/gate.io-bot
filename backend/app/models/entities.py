@@ -967,6 +967,7 @@ class HypothesisTest(Base):
     sample_size: Mapped[int] = mapped_column(default=0)
     result: Mapped[dict] = mapped_column(JSON, default=dict)
     symbol: Mapped[str] = mapped_column(String(32), default="BTC_USDT")
+    timeframe: Mapped[str] = mapped_column(String(8), default="1h")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
 
 

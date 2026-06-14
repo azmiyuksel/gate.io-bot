@@ -48,6 +48,7 @@ class BacktestConfig:
     max_open_positions: int = 3
     max_capital_per_trade_pct: float = 0.01
     parameters: dict = field(default_factory=dict)
+    strategy_class: str = "ema_rsi_atr"
 
 
 @dataclass

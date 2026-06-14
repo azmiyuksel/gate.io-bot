@@ -1,5 +1,6 @@
 from typing import List
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import DbSession, current_user_role, require_admin
@@ -14,6 +15,7 @@ from app.models.entities import (
 from app.schemas._common import _validate_symbol, _validate_timeframe
 from app.schemas.strategy_research import (
     ABTestOut,
+    CustomHypothesisIn,
     ExperimentOut,
     FeatureRecordOut,
     GenerateIn,
@@ -22,7 +24,9 @@ from app.schemas.strategy_research import (
     ResearchStrategyOut,
     RunIn,
     RunOut,
+    StrategyDetailOut,
     StrategyVersionOut,
+    SymbolOut,
 )
 from app.strategy_research.engine import StrategyResearchEngine
 from app.strategy_research.feature_store import FeatureStore
@@ -166,3 +170,58 @@ def promote(strategy_id: int, db: DbSession) -> PromotionOut:
         passed=verdict.passed,
         reasons=verdict.reasons,
     )
+
+
+@router.get("/strategies/{strategy_id}/detail", response_model=StrategyDetailOut)
+def strategy_detail(strategy_id: int, db: DbSession) -> dict:
+    strategy = db.get(ResearchStrategy, strategy_id)
+    if strategy is None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    versions = (
+        db.query(StrategyVersion)
+        .filter(StrategyVersion.strategy_id == strategy_id)
+        .order_by(StrategyVersion.version.desc())
+        .all()
+    )
+    trades_data: list[dict] = []
+    equity_curve: list[dict] = []
+    best_version = versions[0] if versions else None
+    if best_version and best_version.metrics:
+        trades_data = best_version.metrics.get("trades", [])
+        equity_curve = best_version.metrics.get("equity_curve", [])
+
+    return {
+        "strategy": strategy,
+        "versions": versions,
+        "trades": trades_data,
+        "equity_curve": equity_curve,
+    }
+
+
+@router.get("/symbols", response_model=list[SymbolOut])
+def research_symbols(db: DbSession) -> list[dict]:
+    from sqlalchemy import func
+    from app.models.entities import HistoricalCandle
+
+    symbols = (
+        db.query(HistoricalCandle.symbol, func.count(HistoricalCandle.id))
+        .group_by(HistoricalCandle.symbol)
+        .having(func.count(HistoricalCandle.id) >= 100)
+        .order_by(HistoricalCandle.symbol)
+        .all()
+    )
+    return [{"symbol": s, "has_data": True} for s, _ in symbols]
+
+
+@router.post("/hypotheses/custom", response_model=HypothesisTestOut, dependencies=[Depends(require_admin)])
+def test_custom_hypothesis(payload: CustomHypothesisIn, db: DbSession) -> HypothesisTest:
+    from app.strategy_research.hypothesis_builder import Hypothesis, HypothesisBuilder
+
+    hypothesis = Hypothesis(
+        statement=payload.statement,
+        feature=payload.feature,
+        condition_desc=payload.condition_desc,
+        predicate=lambda f: pd.Series([True] * len(f), index=f.index),
+    )
+    builder = HypothesisBuilder(db)
+    return builder.test(hypothesis, payload.symbol, payload.timeframe, bonferroni_n=1)
