@@ -199,14 +199,20 @@ def test_trend_filter_blocks_entries_below_ema200():
     assert signal.reason == "below_200_ema"
 
 
-def test_paper_adapter_enables_trend_filter():
-    # Paper trading now enables the EMA200 trend filter to avoid buying in
-    # confirmed downtrends (capital preservation).
+def test_paper_adapter_uses_looser_paper_thresholds():
+    # Live keeps the strict EMA200 trend filter; paper runs deliberately looser
+    # thresholds (trend filter off, higher RSI, wider EMA20 band) so the simulation
+    # produces enough activity to observe.
+    from decimal import Decimal
+
     from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
     from app.services.strategy.signals import CapitalPreservationStrategy
 
     assert CapitalPreservationStrategy().trend_filter_enabled is True
-    assert CapitalPreservationAdapter()._strategy.trend_filter_enabled is True
+    paper = CapitalPreservationAdapter()._strategy
+    assert paper.trend_filter_enabled is False
+    assert paper.rsi_threshold == Decimal("40")
+    assert paper.ema20_distance_pct == Decimal("0.025")
 
 
 async def test_candles_range_pages_past_1000_cap(monkeypatch):

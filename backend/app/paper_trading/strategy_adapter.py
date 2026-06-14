@@ -9,7 +9,9 @@ from __future__ import annotations
 import logging
 from collections import defaultdict, deque
 from datetime import UTC, datetime
+from decimal import Decimal
 
+from app.core.config import get_settings
 from app.paper_trading.models import BaseStrategy, MarketData, PaperSide, TradingSignal
 from app.services.strategy.signals import CapitalPreservationStrategy
 
@@ -21,9 +23,13 @@ class CapitalPreservationAdapter(BaseStrategy):
 
     def __init__(self, candle_window: int = 60, min_candles: int = 210) -> None:
         self._strategy = CapitalPreservationStrategy()
-        # EMA200 trend filter enabled: only enter long positions above the 200 EMA
-        # to avoid buying in confirmed downtrends (capital preservation).
-        self._strategy.trend_filter_enabled = True
+        # Paper runs deliberately looser entry thresholds than live (which stays
+        # strict for capital preservation), so the simulation produces enough
+        # activity to observe. Live thresholds are untouched.
+        settings = get_settings()
+        self._strategy.trend_filter_enabled = settings.paper_trend_filter_enabled
+        self._strategy.rsi_threshold = Decimal(str(settings.paper_rsi_threshold))
+        self._strategy.ema20_distance_pct = Decimal(str(settings.paper_ema20_distance_pct))
         self._candle_window = candle_window  # ticks per synthetic candle
         self._min_candles = min_candles  # strategy needs >= 210
         self._tick_buffers: dict[str, list[MarketData]] = defaultdict(list)

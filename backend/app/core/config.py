@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     # Max 24h range as a fraction of price before an entry is rejected. 0.12
     # allows normal crypto volatility while still filtering extreme moves.
     strategy_max_24h_range_pct: float = 0.12
+
+    # --- Paper-trading entry threshold overrides (looser than live) ---
+    # Paper is for observing the simulation, so it runs deliberately more permissive
+    # thresholds than live (which stays strict for capital preservation).
+    paper_rsi_threshold: float = 40.0
+    paper_ema20_distance_pct: float = 0.025
+    paper_trend_filter_enabled: bool = False
     # Default trailing-stop distance (used when StrategySettings is missing).
     strategy_trailing_stop_pct: float = 0.03
     # Number of candles that represent a "daily" range (depends on candle interval).
