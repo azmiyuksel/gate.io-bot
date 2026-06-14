@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from time import time
 
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,10 @@ from app.paper_trading.portfolio import PaperPortfolio
 from app.paper_trading.risk_simulator import PaperRiskSimulator
 from app.repositories.trading import StrategySettingsRepository
 from app.services.notifications.telegram import TelegramNotifier
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class PaperTradingEngine:
@@ -31,8 +36,15 @@ class PaperTradingEngine:
         self.account.status = PaperBotStatus.running
         self._log("system_started", "Paper trading started")
         self.db.commit()
+        logger.info("Paper trading engine starting for symbols: %s", symbols)
         self.stream = GateIOMarketDataStream(symbols)
+        tick_count = 0
+        last_status = time()
         async for data in self.stream.stream():
+            tick_count += 1
+            if time() - last_status >= 60:
+                logger.info("Ticks received: %d", tick_count)
+                last_status = time()
             await self.on_tick(data)
 
     def stop(self) -> None:
@@ -56,7 +68,7 @@ class PaperTradingEngine:
 
     async def execute_signal(self, signal: TradingSignal, data: MarketData) -> None:
         approved, reason = self.risk.approve_signal(signal, data)
-        self._log("risk_check", reason, {"signal": signal.__dict__})
+        self._log("risk_check", reason, {"signal": signal.to_dict()})
         if not approved:
             if reason in {"daily_loss_limit_reached", "max_drawdown_reached"}:
                 await self.notifier.send(f"Paper trading paused: {reason}")

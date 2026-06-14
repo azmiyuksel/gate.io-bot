@@ -35,7 +35,7 @@ class CapitalPreservationStrategy:
         self.min_volume_ratio = Decimal(str(getattr(settings, "strategy_min_volume_ratio", "0.5")))
 
     def evaluate(self, candles: list[dict]) -> Signal:
-        if len(candles) < 210:
+        if len(candles) < 200:
             return Signal(False, "not_enough_history")
 
         closes = [Decimal(str(candle["close"])) for candle in candles]

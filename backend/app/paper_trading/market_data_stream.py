@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from collections import deque
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -7,6 +8,8 @@ from datetime import UTC, datetime
 import websockets
 
 from app.paper_trading.models import MarketData
+
+logger = logging.getLogger(__name__)
 
 
 class GateIOMarketDataStream:
@@ -20,6 +23,7 @@ class GateIOMarketDataStream:
         self.running = True
         while self.running:
             try:
+                logger.info("Connecting to Gate.io WebSocket: %s", self.url)
                 async with websockets.connect(self.url, ping_interval=20) as websocket:
                     await websocket.send(
                         json.dumps(
@@ -31,12 +35,14 @@ class GateIOMarketDataStream:
                             }
                         )
                     )
+                    logger.info("Subscribed to spot.tickers for %d symbols", len(self.symbols))
                     async for message in websocket:
                         data = self._parse(message)
                         if data:
                             self.buffer.append(data)
                             yield data
-            except Exception:
+            except Exception as exc:
+                logger.warning("WebSocket error, reconnecting in 3s: %s", exc)
                 await asyncio.sleep(3)
 
     def stop(self) -> None:

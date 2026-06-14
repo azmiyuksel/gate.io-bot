@@ -37,6 +37,16 @@ class TradingSignal:
     timestamp: datetime
     metadata: dict = field(default_factory=dict)
 
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "side": self.side.value,
+            "strength": self.strength,
+            "strategy": self.strategy,
+            "timestamp": self.timestamp.isoformat(),
+            "metadata": self.metadata,
+        }
+
 
 @dataclass
 class PaperExecution:
