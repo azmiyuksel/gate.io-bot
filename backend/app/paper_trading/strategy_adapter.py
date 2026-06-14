@@ -21,6 +21,10 @@ class CapitalPreservationAdapter(BaseStrategy):
 
     def __init__(self, candle_window: int = 60, min_candles: int = 210) -> None:
         self._strategy = CapitalPreservationStrategy()
+        # Paper trading is intentionally trend-agnostic: disable the EMA200 trend
+        # filter here so paper can still generate entries below the 200 EMA. The
+        # live engine keeps the filter on (capital preservation).
+        self._strategy.trend_filter_enabled = False
         self._candle_window = candle_window  # ticks per synthetic candle
         self._min_candles = min_candles  # strategy needs >= 210
         self._tick_buffers: dict[str, list[MarketData]] = defaultdict(list)
@@ -44,7 +48,6 @@ class CapitalPreservationAdapter(BaseStrategy):
         return self._last_signal
 
     def prewarm_candles(self, symbol: str, candles: list[dict]) -> None:
-        from decimal import Decimal
         converted = []
         for c in candles:
             converted.append({

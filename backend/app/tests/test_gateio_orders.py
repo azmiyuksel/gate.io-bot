@@ -197,3 +197,13 @@ def test_trend_filter_blocks_entries_below_ema200():
     signal = strat.evaluate(candles)
     assert signal.should_buy is False
     assert signal.reason == "below_200_ema"
+
+
+def test_paper_adapter_disables_trend_filter():
+    # Paper trading must remain trend-agnostic even though the live strategy
+    # enables the EMA200 trend filter by default.
+    from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
+    from app.services.strategy.signals import CapitalPreservationStrategy
+
+    assert CapitalPreservationStrategy().trend_filter_enabled is True
+    assert CapitalPreservationAdapter()._strategy.trend_filter_enabled is False
