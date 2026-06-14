@@ -1,4 +1,5 @@
 import type {
+  PaperEconomics,
   PaperEquityPoint,
   PaperLog,
   PaperMetrics,
@@ -147,6 +148,16 @@ export async function getPaperSignalDiagnostics(
 ): Promise<PaperSignalDiagnostics | null> {
   try {
     const res = await authFetch(`/paper/signal-diagnostics?hours=${hours}`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function getPaperEconomics(): Promise<PaperEconomics | null> {
+  try {
+    const res = await authFetch(`/paper/economics`);
     if (!res.ok) return null;
     return res.json();
   } catch {

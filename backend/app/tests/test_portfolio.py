@@ -103,3 +103,15 @@ def test_correlations_endpoint_reports_data_availability(db_session):
     assert "BTC_USDT" in result["symbols"] and "ETH_USDT" in result["symbols"]
     # Self-correlation is 1.0 on the diagonal.
     assert round(result["matrix"]["BTC_USDT"]["BTC_USDT"], 6) == 1.0
+
+
+def test_max_correlation_picks_highest_vs_open_positions():
+    from app.portfolio.correlation import max_correlation
+
+    matrix = {
+        "BTC_USDT": {"BTC_USDT": 1.0, "ETH_USDT": 0.9, "SOL_USDT": 0.4},
+        "ETH_USDT": {"BTC_USDT": 0.9, "ETH_USDT": 1.0, "SOL_USDT": 0.6},
+    }
+    assert max_correlation(matrix, "BTC_USDT", ["ETH_USDT", "SOL_USDT"]) == 0.9
+    # Candidate not in the matrix (insufficient history) -> never blocks.
+    assert max_correlation(matrix, "DOGE_USDT", ["ETH_USDT"]) == 0.0

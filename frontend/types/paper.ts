@@ -84,6 +84,25 @@ export type PaperLog = {
   created_at: string;
 };
 
+export type PaperEconomics = {
+  edge: {
+    trades: number;
+    win_rate: number;
+    payoff_ratio: number;
+    expectancy: number;
+    expectancy_r: number;
+    break_even_win_rate: number;
+    edge: number;
+    has_edge: boolean;
+  };
+  cost_bridge: {
+    gross_pnl: number;
+    total_fees: number;
+    net_pnl: number;
+    fee_pct_of_gross: number;
+  };
+};
+
 export type PaperSignalDiagnostics = {
   window_hours: number;
   evaluations: number;

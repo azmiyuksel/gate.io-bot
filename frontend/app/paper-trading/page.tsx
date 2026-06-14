@@ -35,8 +35,9 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LastUpdated } from "@/components/ui/last-updated";
 import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
-import { money } from "@/lib/utils";
+import { fmtUTC, money } from "@/lib/utils";
 import {
+  getPaperEconomics,
   getPaperEquity,
   getPaperPositions,
   getPaperRiskStatus,
@@ -50,6 +51,7 @@ import {
   stopPaperTrading,
 } from "@/lib/paper-api";
 import type {
+  PaperEconomics,
   PaperEquityPoint,
   PaperPosition,
   PaperRiskStatus,
@@ -72,6 +74,7 @@ export default function PaperTradingPage() {
   const [equity, setEquity] = useState<PaperEquityPoint[]>([]);
   const [risk, setRisk] = useState<PaperRiskStatus | null>(null);
   const [diagnostics, setDiagnostics] = useState<PaperSignalDiagnostics | null>(null);
+  const [economics, setEconomics] = useState<PaperEconomics | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -83,13 +86,14 @@ export default function PaperTradingPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const [s, p, t, e, r, d] = await Promise.all([
+      const [s, p, t, e, r, d, ec] = await Promise.all([
         getPaperStatus(),
         getPaperPositions(),
         getPaperTrades(),
         getPaperEquity(),
         getPaperRiskStatus(),
         getPaperSignalDiagnostics(),
+        getPaperEconomics(),
       ]);
       if (s) setStatus(s);
       setPositions(p);
@@ -97,6 +101,7 @@ export default function PaperTradingPage() {
       setEquity(e);
       if (r) setRisk(r);
       setDiagnostics(d);
+      setEconomics(ec);
       setLastUpdated(new Date());
     } finally {
       setLoading(false);
@@ -130,7 +135,7 @@ export default function PaperTradingPage() {
   }));
 
   const dailyPnl = trades.reduce((acc, t) => {
-    const day = new Date(t.traded_at).toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" });
+    const day = new Date(t.traded_at).toLocaleDateString("en-GB", { timeZone: "UTC", day: "2-digit", month: "2-digit" });
     acc[day] = (acc[day] || 0) + Number(t.realized_pnl);
     return acc;
   }, {} as Record<string, number>);
@@ -324,6 +329,67 @@ export default function PaperTradingPage() {
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[1fr_1fr]">
         <Card>
+          <h2 className="mb-4 text-base font-semibold">Edge (İşlem Ekonomisi)</h2>
+          {economics && economics.edge.trades > 0 ? (
+            <div className="grid grid-cols-2 gap-4">
+              <Metric label="Expectancy (R)" value={economics.edge.expectancy_r.toFixed(2)} />
+              <Metric label="Beklenti / işlem" value={`$${money(economics.edge.expectancy)}`} />
+              <Metric label="Kazanma oranı" value={`%${(economics.edge.win_rate * 100).toFixed(1)}`} />
+              <Metric label="Başabaş oranı" value={`%${(economics.edge.break_even_win_rate * 100).toFixed(1)}`} />
+              <Metric label="Payoff" value={economics.edge.payoff_ratio.toFixed(2)} />
+              <Metric
+                label="Edge"
+                value={`${economics.edge.edge >= 0 ? "+" : ""}${(economics.edge.edge * 100).toFixed(1)}%`}
+              />
+              <div className="col-span-2">
+                <span
+                  className={`rounded px-2 py-1 text-xs font-semibold ${
+                    economics.edge.has_edge ? "bg-primary/15 text-primary" : "bg-danger/15 text-danger"
+                  }`}
+                >
+                  {economics.edge.has_edge ? "Pozitif edge (maliyet sonrası)" : "Edge yok / negatif"}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted">Kapanmış işlem yok — edge için işlem birikmeli.</p>
+          )}
+        </Card>
+
+        <Card>
+          <h2 className="mb-4 text-base font-semibold">Maliyet Köprüsü</h2>
+          {economics ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted">Brüt PnL</span>
+                <span className="font-medium">${money(economics.cost_bridge.gross_pnl)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted">− Ücretler</span>
+                <span className="font-medium text-danger">−${money(economics.cost_bridge.total_fees)}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-border pt-3 text-sm">
+                <span className="font-semibold">Net PnL</span>
+                <span
+                  className={
+                    economics.cost_bridge.net_pnl >= 0 ? "font-semibold text-primary" : "font-semibold text-danger"
+                  }
+                >
+                  ${money(economics.cost_bridge.net_pnl)}
+                </span>
+              </div>
+              <p className="text-xs text-muted">
+                Ücretler brüt PnL&apos;in %{(economics.cost_bridge.fee_pct_of_gross * 100).toFixed(1)}&apos;ini götürdü.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted">Veri yok.</p>
+          )}
+        </Card>
+      </section>
+
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[1fr_1fr]">
+        <Card>
           <div className="mb-1 flex items-center gap-2">
             <Activity size={17} />
             <h2 className="text-base font-semibold">Sinyal Tanılama</h2>
@@ -342,7 +408,7 @@ export default function PaperTradingPage() {
           {diagnostics?.last_evaluation_at && (
             <p className="mb-4 text-xs text-muted">
               Son değerlendirme:{" "}
-              {new Date(diagnostics.last_evaluation_at).toLocaleString("tr-TR")}
+              {fmtUTC(diagnostics.last_evaluation_at, true)}
             </p>
           )}
           {diagnostics && Object.keys(diagnostics.reason_counts).length > 0 ? (
@@ -425,7 +491,7 @@ export default function PaperTradingPage() {
                   return (
                     <tr key={trade.id} className="border-b border-border">
                       <td className="py-3 text-muted">
-                        {new Date(trade.traded_at).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        {fmtUTC(trade.traded_at)}
                       </td>
                       <td className="font-medium">{trade.symbol}</td>
                       <td>

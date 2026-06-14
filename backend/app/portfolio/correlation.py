@@ -6,6 +6,17 @@ from app.core.config import get_settings
 from app.models.entities import HistoricalCandle
 
 
+def max_correlation(matrix: dict, candidate: str, others: list[str]) -> float:
+    """Highest correlation of `candidate` with any symbol in `others`.
+
+    Returns 0.0 when the candidate has no row (e.g. insufficient history), so a
+    missing estimate never blocks a trade.
+    """
+    row = matrix.get(candidate, {})
+    values = [row[o] for o in others if o != candidate and o in row]
+    return float(max(values)) if values else 0.0
+
+
 class CorrelationEngine:
     def __init__(self, db: Session) -> None:
         self.db = db

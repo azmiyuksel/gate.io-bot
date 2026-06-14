@@ -18,6 +18,7 @@ from app.schemas.paper import (
     PaperStatus,
     PaperTradeOut,
 )
+from app.services.analytics.economics import trade_economics
 
 router = APIRouter(prefix="/paper", tags=["paper"], dependencies=[Depends(current_user_role)])
 
@@ -145,6 +146,37 @@ def orders(db: DbSession) -> list[PaperOrder]:
 def metrics(db: DbSession) -> dict:
     account = _get_or_create_account(db)
     return PaperMetrics(db, account.id).summary()
+
+
+@router.get("/economics")
+def economics(db: DbSession) -> dict:
+    """Trade-economics edge (expectancy, R-multiple, break-even win rate) plus a
+    cost bridge (gross PnL -> fees -> net PnL) so the strategy's real edge after
+    costs is visible at a glance."""
+    account = _get_or_create_account(db)
+    trades = (
+        db.query(PaperTrade)
+        .filter(PaperTrade.account_id == account.id)
+        .order_by(PaperTrade.traded_at.asc())
+        .all()
+    )
+    # Per-trade realized PnL comes from closes (buys carry 0); use those for edge.
+    closed_pnls = [float(t.realized_pnl) for t in trades if t.realized_pnl != 0]
+    edge = trade_economics(closed_pnls)
+
+    total_fees = float(sum((t.fee for t in trades), Decimal("0")))
+    net_pnl = float(account.realized_pnl)
+    gross_pnl = net_pnl + total_fees  # net is already fee-deducted
+    fee_pct_of_gross = (total_fees / abs(gross_pnl)) if gross_pnl else 0.0
+    return {
+        "edge": edge,
+        "cost_bridge": {
+            "gross_pnl": gross_pnl,
+            "total_fees": total_fees,
+            "net_pnl": net_pnl,
+            "fee_pct_of_gross": fee_pct_of_gross,
+        },
+    }
 
 
 @router.get("/risk", response_model=PaperRiskStatusOut)

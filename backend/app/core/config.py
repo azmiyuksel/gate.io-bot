@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # of allocating a fixed notional. Never exceeds max_capital_per_trade_pct notional.
     risk_based_sizing_enabled: bool = False
 
+    # Correlation-aware entry filter (opt-in): skip a new entry whose returns are
+    # too correlated with an already-open position, so "8 positions" don't collapse
+    # into one concentrated directional bet.
+    correlation_filter_enabled: bool = False
+    max_position_correlation: float = 0.85
+
     # --- Volatility targeting (opt-in): scale size inversely to volatility ---
     vol_targeting_enabled: bool = False
     vol_target_atr_pct: float = 0.02          # target ATR as a fraction of price

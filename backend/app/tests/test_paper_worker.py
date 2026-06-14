@@ -166,3 +166,29 @@ def test_signal_diagnostics_aggregates_skip_reasons(db_session):
     assert list(result["reason_counts"])[0] == "below_200_ema"
     # Latest reason is tracked per symbol.
     assert result["latest_by_symbol"]["BTC_USDT"]["reason"] == "below_200_ema"
+
+
+def test_paper_economics_edge_and_cost_bridge(db_session):
+    from decimal import Decimal
+
+    from app.api.v1.paper import _get_or_create_account, economics
+    from app.models.entities import PaperTrade
+    from app.models.enums import OrderSide
+
+    account = _get_or_create_account(db_session)
+    account.realized_pnl = Decimal("30")  # net of fees
+    for pnl, fee in (("20", "1"), ("20", "1"), ("-10", "1")):
+        db_session.add(PaperTrade(
+            account_id=account.id, order_id=None, symbol="BTC_USDT", side=OrderSide.sell,
+            price=Decimal("100"), quantity=Decimal("1"), fee=Decimal(fee), realized_pnl=Decimal(pnl),
+        ))
+    db_session.commit()
+
+    result = economics(db_session)
+    assert result["edge"]["trades"] == 3
+    assert result["edge"]["has_edge"] is True
+    assert round(result["edge"]["expectancy_r"], 6) == 1.0       # expectancy 10 / avg loss 10
+    # Cost bridge: gross = net + fees.
+    assert result["cost_bridge"]["net_pnl"] == 30.0
+    assert result["cost_bridge"]["total_fees"] == 3.0
+    assert result["cost_bridge"]["gross_pnl"] == 33.0

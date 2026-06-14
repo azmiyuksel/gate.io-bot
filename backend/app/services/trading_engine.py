@@ -12,6 +12,7 @@ from app.market_data_quality.models import DataTradeStatus
 from app.market_regime.engine import MarketRegimeEngine
 from app.models.entities import Order, Position, SystemLog, Trade
 from app.models.enums import LogLevel, OrderSide, OrderStatus, PositionStatus
+from app.portfolio.correlation import CorrelationEngine, max_correlation
 from app.repositories.trading import (
     OrderRepository,
     PositionRepository,
@@ -155,6 +156,24 @@ class TradingEngine:
         if not decision.allowed:
             self._log("risk", f"{symbol}: {decision.reason}")
             return
+
+        # Correlation-aware portfolio guard (opt-in): block a new entry that is too
+        # correlated with an already-open position, so several "diversified" trades
+        # don't become one concentrated directional bet.
+        if get_settings().correlation_filter_enabled:
+            open_syms = [p.symbol for p in self.positions.open_positions() if p.symbol != symbol]
+            if open_syms:
+                corr = CorrelationEngine(self.db).calculate_correlation(
+                    [symbol, *open_syms], get_settings().market_data_interval
+                )
+                mx = max_correlation(corr.get("matrix", {}), symbol, open_syms)
+                if mx > float(get_settings().max_position_correlation):
+                    self._log(
+                        "correlation_filter",
+                        f"{symbol}: skipped, correlation {mx:.2f} with open positions "
+                        f"> {get_settings().max_position_correlation}",
+                    )
+                    return
 
         # Scale position quantity by regime, health and data-quality risk multipliers
         health_mult = Decimal(str(health_status.get("risk_multiplier", 1)))
