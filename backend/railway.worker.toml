@@ -1,0 +1,16 @@
+# Railway config for the PAPER-TRADING worker service.
+#
+# Point the worker service's "Config File" (Settings -> Config-as-code) at this
+# path (relative to the service Root Directory `backend`):
+#     railway.worker.toml
+#
+# It reuses the same Dockerfile/image as the API but overrides the start command
+# and, crucially, defines NO healthcheckPath: the worker has no HTTP server, so a
+# /health probe would fail forever and Railway would kill the container in a loop.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "./Dockerfile"
+
+[deploy]
+startCommand = "python -m app.workers.paper_worker"
+restartPolicyType = "always"
