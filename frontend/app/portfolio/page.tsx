@@ -218,7 +218,7 @@ export default function PortfolioPage() {
         />
         <Metric
           label="Portfoy Sharpe Orani"
-          value={metrics.length > 0 ? (metrics[metrics.length - 1].sharpe_ratio ?? 0).toFixed(2) : "-"}
+          value={metrics.length > 0 ? Number(metrics[metrics.length - 1].sharpe_ratio ?? 0).toFixed(2) : "-"}
           icon={<TrendingUp size={18} />}
         />
         <Metric
@@ -229,7 +229,7 @@ export default function PortfolioPage() {
         />
         <Metric
           label="Korelasyon Risk Skoru"
-          value={metrics.length > 0 ? (metrics[metrics.length - 1].correlation_risk_score ?? 0).toFixed(2) : "-"}
+          value={metrics.length > 0 ? Number(metrics[metrics.length - 1].correlation_risk_score ?? 0).toFixed(2) : "-"}
           icon={<Percent size={18} />}
         />
       </section>
@@ -247,13 +247,13 @@ export default function PortfolioPage() {
         />
         <Metric
           label="VaR %95 (Tarihsel)"
-          value={varData ? `${(varData.var * 100).toFixed(2)}%` : "-"}
+          value={varData ? `${(Number(varData.var) * 100).toFixed(2)}%` : "-"}
           icon={<ShieldAlert size={18} />}
           color="#b42318"
         />
         <Metric
           label="Volatility-Adj. Return"
-          value={metrics.length > 0 ? metrics[metrics.length - 1].volatility_adjusted_return.toFixed(2) : "-"}
+          value={metrics.length > 0 ? Number(metrics[metrics.length - 1].volatility_adjusted_return).toFixed(2) : "-"}
           icon={<Percent size={18} />}
         />
       </section>
@@ -381,12 +381,12 @@ export default function PortfolioPage() {
                     <tr key={sp.name} className="border-b border-border">
                       <td className="py-2.5 font-medium">{sp.name}</td>
                       <td className={sp.sharpe_ratio >= 0 ? "text-primary" : "text-danger"}>
-                        {(sp.sharpe_ratio ?? 0).toFixed(2)}
+                        {Number(sp.sharpe_ratio ?? 0).toFixed(2)}
                       </td>
-                      <td>{((sp.win_rate ?? 0) * 100).toFixed(0)}%</td>
-                      <td>{(sp.profit_factor ?? 0).toFixed(2)}</td>
-                      <td className="text-danger">{((sp.max_drawdown ?? 0) * 100).toFixed(1)}%</td>
-                      <td>{(sp.stability_score ?? 0).toFixed(2)}</td>
+                      <td>{Number((sp.win_rate ?? 0) * 100).toFixed(0)}%</td>
+                      <td>{Number(sp.profit_factor ?? 0).toFixed(2)}</td>
+                      <td className="text-danger">{Number((sp.max_drawdown ?? 0) * 100).toFixed(1)}%</td>
+                      <td>{Number(sp.stability_score ?? 0).toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -426,7 +426,7 @@ export default function PortfolioPage() {
                       <td className={pnl >= 0 ? "text-primary font-medium" : "text-danger font-medium"}>
                         ${money(asset.unrealized_pnl)}
                       </td>
-                      <td>%{asset.risk_contribution.toFixed(1)}</td>
+                      <td>%{Number(asset.risk_contribution).toFixed(1)}</td>
                     </tr>
                   );
                 })}
@@ -478,7 +478,7 @@ export default function PortfolioPage() {
                       if (isDiagonal) bgClass = "bg-slate-200 font-bold";
                       return (
                         <td key={s2} className={`rounded p-1 ${bgClass}`}>
-                          {corr.toFixed(2)}
+                          {Number(corr).toFixed(2)}
                         </td>
                       );
                     })}
