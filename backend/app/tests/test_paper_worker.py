@@ -23,7 +23,8 @@ async def test_paper_worker_creates_default_account(_settings):
     """If no PaperAccount exists, one must be created."""
     with patch("app.workers.paper_worker.SessionLocal") as mock_session_cls, \
          patch("app.workers.paper_worker.PaperTradingEngine") as mock_engine_cls, \
-         patch("app.workers.paper_worker.CapitalPreservationAdapter"):
+         patch("app.workers.paper_worker.CapitalPreservationAdapter"), \
+         patch("app.workers.paper_worker.PaperPortfolio") as mock_portfolio_cls:
 
         mock_db = MagicMock()
         mock_session_cls.return_value = mock_db
@@ -33,6 +34,9 @@ async def test_paper_worker_creates_default_account(_settings):
 
         mock_engine = AsyncMock()
         mock_engine_cls.return_value = mock_engine
+
+        mock_portfolio = MagicMock()
+        mock_portfolio_cls.return_value = mock_portfolio
 
         from app.workers.paper_worker import main
         await main()
@@ -48,16 +52,21 @@ async def test_paper_worker_reuses_existing_account(_settings):
     """If a PaperAccount already exists, it should be reused."""
     with patch("app.workers.paper_worker.SessionLocal") as mock_session_cls, \
          patch("app.workers.paper_worker.PaperTradingEngine") as mock_engine_cls, \
-         patch("app.workers.paper_worker.CapitalPreservationAdapter"):
+         patch("app.workers.paper_worker.CapitalPreservationAdapter"), \
+         patch("app.workers.paper_worker.PaperPortfolio") as mock_portfolio_cls:
 
         mock_db = MagicMock()
         mock_session_cls.return_value = mock_db
 
         existing_account = MagicMock()
+        existing_account.cash_balance = 10000
         mock_db.query.return_value.filter.return_value.first.return_value = existing_account
 
         mock_engine = AsyncMock()
         mock_engine_cls.return_value = mock_engine
+
+        mock_portfolio = MagicMock()
+        mock_portfolio_cls.return_value = mock_portfolio
 
         from app.workers.paper_worker import main
         await main()
@@ -72,7 +81,8 @@ async def test_paper_worker_always_closes_db(_settings):
     """DB session must be closed even if the engine raises."""
     with patch("app.workers.paper_worker.SessionLocal") as mock_session_cls, \
          patch("app.workers.paper_worker.PaperTradingEngine") as mock_engine_cls, \
-         patch("app.workers.paper_worker.CapitalPreservationAdapter"):
+         patch("app.workers.paper_worker.CapitalPreservationAdapter"), \
+         patch("app.workers.paper_worker.PaperPortfolio") as mock_portfolio_cls:
 
         mock_db = MagicMock()
         mock_session_cls.return_value = mock_db
@@ -81,6 +91,9 @@ async def test_paper_worker_always_closes_db(_settings):
         mock_engine = AsyncMock()
         mock_engine.start.side_effect = RuntimeError("exchange down")
         mock_engine_cls.return_value = mock_engine
+
+        mock_portfolio = MagicMock()
+        mock_portfolio_cls.return_value = mock_portfolio
 
         from app.workers.paper_worker import main
         with pytest.raises(RuntimeError, match="exchange down"):

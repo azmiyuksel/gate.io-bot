@@ -8,8 +8,8 @@ from sqlalchemy import func
 from app.models.entities import PaperAccount, PaperEquityCurve, PaperPosition
 
 # Minimum interval between equity curve recordings to prevent DB exhaustion.
-# Set to 1 hour (3600 seconds) — equity is sampled once per candle close.
-_EQUITY_RECORD_INTERVAL_SECONDS = 3600
+# Set to 5 minutes (300 seconds) — equity is sampled on each tick cycle.
+_EQUITY_RECORD_INTERVAL_SECONDS = 300
 
 
 class PaperPortfolio:

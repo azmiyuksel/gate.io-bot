@@ -65,7 +65,7 @@ services:
     depends_on:
       - backend
 
-  # ── Paper Trading (profiles: paper) ──────────────────────────────
+  # ── Paper Trading (always runs) ─────────────────────────────────
   paper-worker:
     build: ./backend
     restart: unless-stopped
@@ -75,7 +75,6 @@ services:
     command: python -m app.workers.paper_worker
     volumes:
       - ./backend:/app
-    profiles: ["paper"]
     depends_on:
       backend:
         condition: service_healthy

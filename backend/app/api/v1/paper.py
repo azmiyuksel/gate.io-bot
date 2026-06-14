@@ -26,7 +26,17 @@ router = APIRouter(prefix="/paper", tags=["paper"], dependencies=[Depends(curren
 @router.post("/start", dependencies=[Depends(require_admin)])
 def start_paper(payload: PaperStartRequest, db: DbSession) -> dict:
     account = _get_or_create_account(db, payload.account_name, payload.initial_balance)
+    # Reset cash_balance if it was drained to 0 (e.g. from previous losing trades)
+    try:
+        if account.cash_balance <= 0:
+            account.cash_balance = account.initial_balance
+            account.realized_pnl = Decimal("0")
+    except (TypeError, AttributeError):
+        pass
     account.status = PaperBotStatus.running
+    # Record initial equity point so the chart is never empty
+    portfolio = PaperPortfolio(db, account)
+    portfolio.record_equity()
     db.commit()
     return {"status": account.status, "account_id": account.id, "symbols": payload.symbols}
 
@@ -125,7 +135,17 @@ def pause_paper(db: DbSession) -> dict:
 @router.post("/resume", dependencies=[Depends(require_admin)])
 def resume_paper(db: DbSession) -> dict:
     account = _get_or_create_account(db)
+    # Reset cash_balance if it was drained to 0
+    try:
+        if account.cash_balance <= 0:
+            account.cash_balance = account.initial_balance
+            account.realized_pnl = Decimal("0")
+    except (TypeError, AttributeError):
+        pass
     account.status = PaperBotStatus.running
+    # Record equity point so chart updates immediately
+    portfolio = PaperPortfolio(db, account)
+    portfolio.record_equity()
     db.commit()
     return {"status": account.status, "account_id": account.id}
 
