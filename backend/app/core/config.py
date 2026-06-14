@@ -255,7 +255,9 @@ class Settings(BaseSettings):
         return self.environment.lower() in ("production", "prod", "staging")
 
     def validate_runtime_secrets(self) -> list[str]:
-        """Validate secrets. Returns warnings for misconfiguration."""
+        """Validate secrets/CORS. In production a misconfiguration is fatal and
+        raises RuntimeError (fail fast); in non-production the same problems are
+        returned as warnings so local dev still runs."""
         warnings: list[str] = []
         weak_secret = self.secret_key in ("", "change-me")
         if weak_secret:
@@ -282,6 +284,8 @@ class Settings(BaseSettings):
                         f"requests from the browser will be blocked. "
                         f"Set CORS_ORIGINS to your production domain."
                     )
+        if self.is_production and warnings:
+            raise RuntimeError("Insecure production configuration: " + "; ".join(warnings))
         return warnings
 
 

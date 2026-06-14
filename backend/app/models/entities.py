@@ -147,7 +147,9 @@ class StrategySettings(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True, default="capital_preservation_v1")
-    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Safe default: a new strategy is DISABLED until explicitly enabled (matches the
+    # capital-preservation activation gate; live entries also require BOT_ENABLED).
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     max_capital_per_trade_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.05"))
     daily_max_loss_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.05"))
     weekly_max_loss_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.15"))

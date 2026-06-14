@@ -23,14 +23,17 @@ _init_error: str | None = None
 async def lifespan(app: FastAPI):
     global _initialized, _init_error
     configure_logging()
-    for warning in settings.validate_runtime_secrets():
-        logger.warning("config_warning", extra={"warning": warning})
     try:
+        # In production this raises on insecure secrets/CORS (fail fast); capture
+        # it so the app boots but /health/ready reports not-ready instead of an
+        # unhandled lifespan crash. In non-production it returns warnings.
+        for warning in settings.validate_runtime_secrets():
+            logger.warning("config_warning", extra={"warning": warning})
         init_db()
         _initialized = True
     except Exception as exc:
-        logger.exception("database_init_failed")
-        _init_error = f"Database init failed: {exc}"
+        logger.exception("startup_failed")
+        _init_error = str(exc)
     yield
 
 
