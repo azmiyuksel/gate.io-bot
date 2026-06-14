@@ -143,7 +143,7 @@ def test_strategy_thresholds_loaded_from_config():
     from app.services.strategy.signals import CapitalPreservationStrategy
 
     strat = CapitalPreservationStrategy()
-    assert float(strat.rsi_threshold) == 45.0
+    assert float(strat.rsi_threshold) == 35.0
     assert float(strat.max_24h_range_pct) == 0.12
 
 
@@ -199,14 +199,14 @@ def test_trend_filter_blocks_entries_below_ema200():
     assert signal.reason == "below_200_ema"
 
 
-def test_paper_adapter_disables_trend_filter():
-    # Paper trading must remain trend-agnostic even though the live strategy
-    # enables the EMA200 trend filter by default.
+def test_paper_adapter_enables_trend_filter():
+    # Paper trading now enables the EMA200 trend filter to avoid buying in
+    # confirmed downtrends (capital preservation).
     from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
     from app.services.strategy.signals import CapitalPreservationStrategy
 
     assert CapitalPreservationStrategy().trend_filter_enabled is True
-    assert CapitalPreservationAdapter()._strategy.trend_filter_enabled is False
+    assert CapitalPreservationAdapter()._strategy.trend_filter_enabled is True
 
 
 async def test_candles_range_pages_past_1000_cap(monkeypatch):

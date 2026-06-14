@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # Risk-based position sizing (opt-in): size each trade so the loss-to-stop
     # equals max_risk_per_trade_pct of equity (true fixed-fractional risk), instead
     # of allocating a fixed notional. Never exceeds max_capital_per_trade_pct notional.
-    risk_based_sizing_enabled: bool = False
+    risk_based_sizing_enabled: bool = True
 
     # Correlation-aware entry filter (opt-in): skip a new entry whose returns are
     # too correlated with an already-open position, so "8 positions" don't collapse
@@ -75,14 +75,14 @@ class Settings(BaseSettings):
     vol_target_max_multiplier: float = 1.5
 
     # --- Live strategy entry thresholds (tunable per market) ---
-    strategy_rsi_threshold: float = 45.0
+    strategy_rsi_threshold: float = 35.0
     # EMA200 trend filter: when enabled, only enter long while price is above the
     # 200-period EMA (capital preservation — avoid buying in confirmed downtrends).
     strategy_trend_filter_enabled: bool = True
     # Number of candles fetched per scan. EMA200 needs >=200 and only converges
     # well with extra history, so fetch a generous window (bounded by max_query_limit).
     candle_history_limit: int = 400
-    strategy_ema20_distance_pct: float = 0.02
+    strategy_ema20_distance_pct: float = 0.015
     # Max 24h range as a fraction of price before an entry is rejected. 0.12
     # allows normal crypto volatility while still filtering extreme moves.
     strategy_max_24h_range_pct: float = 0.12

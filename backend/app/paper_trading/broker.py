@@ -195,9 +195,11 @@ class PaperBroker:
             if atr_str is not None:
                 try:
                     atr_value = Decimal(str(atr_str))
-                    stop_loss = price - atr_value * Decimal("6.0")
+                    # Tighter stop-loss: 2.5×ATR (was 6×ATR) for better risk management
+                    stop_loss = price - atr_value * Decimal("2.5")
                     risk_per_unit = price - stop_loss
-                    take_profit = price + risk_per_unit * Decimal("1.2")
+                    # Reward:Risk = 2:1 (was 1.2:1) for positive expectancy
+                    take_profit = price + risk_per_unit * Decimal("2.0")
                 except Exception:
                     pass
             if stop_loss is None:
@@ -213,6 +215,9 @@ class PaperBroker:
                     last_price=price,
                     stop_loss=stop_loss,
                     take_profit=take_profit,
+                    trailing_stop=stop_loss,
+                    highest_price=price,
+                    breakeven_triggered=False,
                 )
             )
 

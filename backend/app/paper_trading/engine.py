@@ -145,8 +145,6 @@ class PaperTradingEngine:
     async def execute_signal(self, signal: TradingSignal, data: MarketData) -> None:
         approved, reason = self.risk.approve_signal(signal, data)
         if not approved:
-            # Evaluation runs every few minutes (not per tick), so it is cheap to
-            # record every rejection with a structured reason for the dashboard.
             self._log("risk_check", f"{signal.symbol}: {reason}", {"symbol": signal.symbol, "reason": reason})
             if reason in {"daily_loss_limit_reached", "max_drawdown_reached"}:
                 await self.notifier.send(f"Paper trading paused: {reason}")
@@ -154,13 +152,32 @@ class PaperTradingEngine:
         self._log("risk_check", f"{signal.symbol}: approved", {"symbol": signal.symbol, "reason": "approved"})
         equity = self.portfolio.equity()
         price = Decimal(str(data.price))
+        config = get_settings()
         settings = StrategySettingsRepository(self.db).current()
         max_capital_pct = settings.max_capital_per_trade_pct if settings else Decimal("0.01")
-        notional = equity * max_capital_pct
-        if price > 0:
-            quantity = notional / price
+        max_risk_pct = Decimal(str(config.max_risk_per_trade_pct))
+
+        # Risk-based position sizing: size so that loss-to-stop equals max_risk_pct of equity
+        atr_str = signal.metadata.get("atr") if signal.metadata else None
+        if atr_str and config.risk_based_sizing_enabled:
+            try:
+                atr_value = Decimal(str(atr_str))
+                stop_distance = atr_value * Decimal("2.5")  # matches broker stop-loss
+                if stop_distance > 0:
+                    max_loss_per_trade = equity * max_risk_pct
+                    risk_based_qty = max_loss_per_trade / stop_distance
+                    # Cap at max notional
+                    max_notional = equity * max_capital_pct
+                    notional_capped_qty = max_notional / price if price > 0 else Decimal("0")
+                    quantity = min(risk_based_qty, notional_capped_qty)
+                else:
+                    quantity = (equity * max_capital_pct) / price if price > 0 else Decimal("0")
+            except Exception:
+                quantity = (equity * max_capital_pct) / price if price > 0 else Decimal("0")
         else:
-            quantity = Decimal("0")
+            notional = equity * max_capital_pct
+            quantity = notional / price if price > 0 else Decimal("0")
+
         if quantity <= 0:
             return
         order = self.order_manager.execute_signal(signal, quantity, data)
@@ -173,14 +190,36 @@ class PaperTradingEngine:
             .filter(PaperPosition.account_id == self.account.id, PaperPosition.symbol == data.symbol, PaperPosition.is_open.is_(True))
             .all()
         )
-        # Stream ticks carry no intra-bar range, so evaluate stops/TPs against the
-        # live tick price. With frequent ticks this catches level breaches promptly;
-        # the stop is checked before the take-profit to protect capital first.
         price = Decimal(str(data.price))
+        settings = get_settings()
+        breakeven_trigger = Decimal(str(settings.breakeven_stop_trigger_pct))
+        trailing_pct = Decimal(str(settings.strategy_trailing_stop_pct))
+
         for position in positions:
+            # Update highest price seen for trailing stop
+            if position.highest_price is None or price > position.highest_price:
+                position.highest_price = price
+
+            # Breakeven stop: move stop-loss to entry price when profit reaches trigger
+            if not position.breakeven_triggered and position.average_entry_price > 0:
+                profit_pct = (price - position.average_entry_price) / position.average_entry_price
+                if profit_pct >= breakeven_trigger:
+                    position.stop_loss = position.average_entry_price
+                    position.breakeven_triggered = True
+                    self._log("breakeven_stop", f"{data.symbol} stop moved to breakeven at {price}")
+
+            # Trailing stop: ratchet up as price rises (only after breakeven)
+            if position.breakeven_triggered and position.highest_price and trailing_pct > 0:
+                trailing_stop = position.highest_price * (Decimal("1") - trailing_pct)
+                if position.trailing_stop is None or trailing_stop > position.trailing_stop:
+                    position.trailing_stop = trailing_stop
+                    position.stop_loss = trailing_stop
+
+            # Check exits: stop-loss checked before take-profit (capital protection first)
             if position.stop_loss and price <= position.stop_loss:
-                self.broker.close_position(position, data, "stop_loss")
-                self._log("stop_loss_triggered", f"{data.symbol} stop loss triggered at ~{price}")
+                reason = "trailing_stop" if position.breakeven_triggered else "stop_loss"
+                self.broker.close_position(position, data, reason)
+                self._log(f"{reason}_triggered", f"{data.symbol} {reason} triggered at ~{price}")
             elif position.take_profit and price >= position.take_profit:
                 self.broker.close_position(position, data, "take_profit")
                 self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
