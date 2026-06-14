@@ -15,6 +15,7 @@ class PaperStatus(BaseModel):
     status: str
     cash_balance: Decimal
     equity: Decimal
+    initial_balance: Decimal
     realized_pnl: Decimal
     unrealized_pnl: Decimal
     exposure: Decimal

@@ -3,6 +3,7 @@ export type PaperStatus = {
   status: "RUNNING" | "PAUSED" | "STOPPED";
   cash_balance: string;
   equity: string;
+  initial_balance: string;
   realized_pnl: string;
   unrealized_pnl: string;
   exposure: string;

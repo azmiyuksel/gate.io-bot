@@ -56,6 +56,7 @@ def status(db: DbSession) -> PaperStatus:
         status=account.status,
         cash_balance=account.cash_balance,
         equity=portfolio.equity(),
+        initial_balance=account.initial_balance,
         realized_pnl=account.realized_pnl,
         unrealized_pnl=unrealized,
         exposure=portfolio.exposure_pct(),

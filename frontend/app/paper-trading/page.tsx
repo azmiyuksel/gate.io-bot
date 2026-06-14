@@ -35,7 +35,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LastUpdated } from "@/components/ui/last-updated";
 import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
-import { fmtUTC, money } from "@/lib/utils";
+import { fmtPrice, fmtQty, fmtUTC, fmtUTCShort, money } from "@/lib/utils";
 import {
   createPaperStream,
   getPaperEconomics,
@@ -78,54 +78,70 @@ export default function PaperTradingPage() {
   const [diagnostics, setDiagnostics] = useState<PaperSignalDiagnostics | null>(null);
   const [economics, setEconomics] = useState<PaperEconomics | null>(null);
 
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sseRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     setToken(getAccessToken());
   }, []);
 
-  const refresh = useCallback(async () => {
+  // Fast-changing state (status/positions/trades/risk) polls often; slow-changing
+  // state (equity is sampled hourly, economics/diagnostics every few minutes)
+  // polls less frequently to avoid wasteful load.
+  const fetchFast = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const [p, t, e, r, d, ec] = await Promise.all([
+      const [s, p, t, r] = await Promise.all([
+        getPaperStatus().catch(() => null),
         getPaperPositions().catch(() => []),
         getPaperTrades().catch(() => []),
-        getPaperEquity().catch(() => []),
         getPaperRiskStatus().catch(() => null),
-        getPaperSignalDiagnostics().catch(() => null),
-        getPaperEconomics().catch(() => null),
       ]);
+      if (s) setStatus(s);
       setPositions(p);
       setTrades(t);
-      setEquity(e);
       if (r) setRisk(r);
-      setDiagnostics(d);
-      setEconomics(ec);
       setLastUpdated(new Date());
     } finally {
       setLoading(false);
     }
   }, [token]);
 
+  const fetchSlow = useCallback(async () => {
+    if (!token) return;
+    const [e, d, ec] = await Promise.all([
+      getPaperEquity().catch(() => []),
+      getPaperSignalDiagnostics().catch(() => null),
+      getPaperEconomics().catch(() => null),
+    ]);
+    setEquity(e);
+    setDiagnostics(d);
+    setEconomics(ec);
+  }, [token]);
+
+  const refresh = useCallback(async () => {
+    await Promise.all([fetchFast(), fetchSlow()]);
+  }, [fetchFast, fetchSlow]);
+
   useEffect(() => {
     if (!token) return;
-    refresh();
-    // SSE stream for real-time status and equity updates
+    fetchFast();
+    fetchSlow();
+    // Real-time status via SSE; poll detailed data on fast/slow cadences.
     sseRef.current = createPaperStream((data) => {
       if (data) {
         setStatus(data);
         setLastUpdated(new Date());
       }
     });
-    // Poll for detailed data at reduced rate (15s instead of 5s)
-    intervalRef.current = setInterval(refresh, 15000);
+    const fast = setInterval(fetchFast, 10000);
+    const slow = setInterval(fetchSlow, 30000);
     return () => {
       if (sseRef.current) sseRef.current.close();
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      clearInterval(fast);
+      clearInterval(slow);
     };
-  }, [token, refresh]);
+  }, [token, fetchFast, fetchSlow]);
 
   async function action(fn: () => Promise<boolean>, successMsg: string, btnId = "") {
     setActionLoading(true);
@@ -147,20 +163,37 @@ export default function PaperTradingPage() {
 
   const botStatus = status?.status ?? "STOPPED";
 
+  const initialBalance = Number(status?.initial_balance ?? 0);
+  const totalReturnPct =
+    initialBalance > 0 ? ((Number(status?.equity ?? 0) - initialBalance) / initialBalance) * 100 : 0;
+
   const equityChartData = equity.map((p) => ({
-    time: new Date(p.timestamp).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
+    time: fmtUTCShort(p.timestamp),
     equity: p.equity,
-    drawdown: Math.abs(p.drawdown) * 100,
   }));
 
-  const dailyPnl = trades.reduce((acc, t) => {
-    const day = new Date(t.traded_at).toLocaleDateString("en-GB", { timeZone: "UTC", day: "2-digit", month: "2-digit" });
-    acc[day] = (acc[day] || 0) + Number(t.realized_pnl);
+  // Group realized PnL by UTC calendar day (keyed by ISO date for correct
+  // ordering), then take the most recent 14 days in chronological order.
+  const dailyMap = trades.reduce((acc, t) => {
+    const key = new Date(t.traded_at).toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+    acc[key] = (acc[key] || 0) + Number(t.realized_pnl);
     return acc;
   }, {} as Record<string, number>);
-  const dailyPnlData = Object.entries(dailyPnl)
+  const dailyPnlData = Object.entries(dailyMap)
+    .sort(([a], [b]) => a.localeCompare(b))
     .slice(-14)
-    .map(([date, pnl]) => ({ date, pnl: Number(pnl.toFixed(2)) }));
+    .map(([key, pnl]) => ({
+      date: new Date(`${key}T00:00:00Z`).toLocaleDateString("en-GB", {
+        timeZone: "UTC",
+        day: "2-digit",
+        month: "2-digit",
+      }),
+      pnl: Number(pnl.toFixed(2)),
+    }));
+
+  const maxReasonCount = diagnostics
+    ? Math.max(1, ...Object.values(diagnostics.reason_counts))
+    : 1;
 
   return (
     <main className="min-h-screen">
@@ -210,15 +243,24 @@ export default function PaperTradingPage() {
         )}
       </header>
 
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-4">
+      {!lastUpdated && (
+        <div className="mx-auto max-w-7xl px-6 pt-4 text-sm text-muted">İlk veriler yükleniyor…</div>
+      )}
+
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-5">
         <Metric label="Equity" value={`$${money(status?.equity ?? 0)}`} icon={<Activity size={18} />} />
+        <Metric
+          label="Toplam Getiri"
+          value={`${totalReturnPct >= 0 ? "+" : ""}${totalReturnPct.toFixed(2)}%`}
+          icon={totalReturnPct >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+        />
         <Metric
           label="Realized PnL"
           value={`$${money(status?.realized_pnl ?? 0)}`}
           icon={Number(status?.realized_pnl ?? 0) >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
         />
         <Metric
-          label="Win Rate"
+          label="Win Rate (son 100)"
           value={`${((status?.metrics?.win_rate_rolling_100 ?? 0) * 100).toFixed(1)}%`}
           icon={<Trophy size={18} />}
         />
@@ -234,7 +276,7 @@ export default function PaperTradingPage() {
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-base font-semibold">Equity Curve</h2>
             <span className="text-sm text-muted">
-              Sharpe {(status?.metrics?.rolling_sharpe ?? 0).toFixed(2)}
+              Sharpe (rolling) {(status?.metrics?.rolling_sharpe ?? 0).toFixed(2)}
             </span>
           </div>
           <div className="h-72">
@@ -303,17 +345,17 @@ export default function PaperTradingPage() {
                   return (
                     <tr key={pos.id} className="border-b border-border">
                       <td className="py-3 font-medium">{pos.symbol}</td>
-                      <td>{money(pos.quantity)}</td>
-                      <td>${money(pos.average_entry_price)}</td>
-                      <td>${money(pos.last_price)}</td>
+                      <td>{fmtQty(pos.quantity)}</td>
+                      <td>${fmtPrice(pos.average_entry_price)}</td>
+                      <td>${fmtPrice(pos.last_price)}</td>
                       <td className={pnl >= 0 ? "text-primary font-medium" : "text-danger font-medium"}>
                         ${money(pos.unrealized_pnl)}
                       </td>
                       <td className={pos.stop_loss ? "text-danger" : "text-muted"}>
-                        {pos.stop_loss ? `$${money(pos.stop_loss)}` : "-"}
+                        {pos.stop_loss ? `$${fmtPrice(pos.stop_loss)}` : "-"}
                       </td>
                       <td className={pos.take_profit ? "text-primary" : "text-muted"}>
-                        {pos.take_profit ? `$${money(pos.take_profit)}` : "-"}
+                        {pos.take_profit ? `$${fmtPrice(pos.take_profit)}` : "-"}
                       </td>
                     </tr>
                   );
@@ -397,9 +439,15 @@ export default function PaperTradingPage() {
                   ${money(economics.cost_bridge.net_pnl)}
                 </span>
               </div>
-              <p className="text-xs text-muted">
-                Ücretler brüt PnL&apos;in %{(economics.cost_bridge.fee_pct_of_gross * 100).toFixed(1)}&apos;ini götürdü.
-              </p>
+              {economics.cost_bridge.gross_pnl > 0 ? (
+                <p className="text-xs text-muted">
+                  Ücretler brüt PnL&apos;in %{(economics.cost_bridge.fee_pct_of_gross * 100).toFixed(1)}&apos;ini götürdü.
+                </p>
+              ) : (
+                <p className="text-xs text-muted">
+                  Toplam ücret ${money(economics.cost_bridge.total_fees)} (brüt PnL ≤ 0).
+                </p>
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted">Veri yok.</p>
@@ -433,8 +481,7 @@ export default function PaperTradingPage() {
           {diagnostics && Object.keys(diagnostics.reason_counts).length > 0 ? (
             <div className="space-y-2">
               {Object.entries(diagnostics.reason_counts).map(([reason, count]) => {
-                const max = Math.max(...Object.values(diagnostics.reason_counts));
-                const pct = max > 0 ? (count / max) * 100 : 0;
+                const pct = (count / maxReasonCount) * 100;
                 const approved = reason === "approved";
                 return (
                   <div key={reason}>
@@ -465,6 +512,7 @@ export default function PaperTradingPage() {
                 <tr>
                   <th className="py-2" scope="col">Sembol</th>
                   <th scope="col">Son Neden</th>
+                  <th scope="col">Zaman</th>
                 </tr>
               </thead>
               <tbody>
@@ -475,11 +523,12 @@ export default function PaperTradingPage() {
                       <td className={info.reason === "approved" ? "text-primary font-medium" : "text-muted"}>
                         {info.reason}
                       </td>
+                      <td className="text-xs text-muted">{info.at ? fmtUTC(info.at, true) : "-"}</td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td className="py-6 text-muted" colSpan={2}>Kayıt yok.</td>
+                    <td className="py-6 text-muted" colSpan={3}>Kayıt yok.</td>
                   </tr>
                 )}
               </tbody>
@@ -518,9 +567,9 @@ export default function PaperTradingPage() {
                           {trade.side === "buy" ? "AL" : "SAT"}
                         </span>
                       </td>
-                      <td>${money(trade.price)}</td>
-                      <td>{money(trade.quantity)}</td>
-                      <td className="text-muted">${money(trade.fee)}</td>
+                      <td>${fmtPrice(trade.price)}</td>
+                      <td>{fmtQty(trade.quantity)}</td>
+                      <td className="text-muted">${fmtPrice(trade.fee)}</td>
                       <td className={pnl >= 0 ? "font-medium text-primary" : "font-medium text-danger"}>
                         ${money(trade.realized_pnl)}
                       </td>
@@ -541,7 +590,7 @@ export default function PaperTradingPage() {
       <ConfirmDialog
         open={confirmReset}
         title="Paper Trading'i Sıfırla"
-        message="Tüm paper trading verileri sıfırlanacak. Emin misiniz?"
+        message="Bot durdurulacak ve tüm paper trading verileri (işlemler, pozisyonlar, equity) silinecek. Emin misiniz?"
         confirmLabel="Sıfırla"
         danger
         onConfirm={async () => {
