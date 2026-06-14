@@ -77,8 +77,12 @@ async def test_paper_worker_reuses_existing_account(_settings):
 
 
 @pytest.mark.asyncio
-async def test_paper_worker_always_closes_db(_settings):
-    """DB session must be closed even if the engine raises."""
+async def test_paper_worker_retries_then_exits_closing_db(_settings, monkeypatch):
+    """The worker retries (rather than crashing) when the engine errors, and the
+    DB session is closed on every iteration. It exits the retry loop once start()
+    returns normally."""
+    # No real backoff sleeps, so the test can't hang on the worker's retry loop.
+    monkeypatch.setattr("app.workers.paper_worker.asyncio.sleep", AsyncMock())
     with patch("app.workers.paper_worker.SessionLocal") as mock_session_cls, \
          patch("app.workers.paper_worker.PaperTradingEngine") as mock_engine_cls, \
          patch("app.workers.paper_worker.CapitalPreservationAdapter"), \
@@ -89,17 +93,16 @@ async def test_paper_worker_always_closes_db(_settings):
         mock_db.query.return_value.filter.return_value.first.return_value = MagicMock()
 
         mock_engine = AsyncMock()
-        mock_engine.start.side_effect = RuntimeError("exchange down")
+        # Fail once (worker should retry), then succeed so the loop breaks.
+        mock_engine.start.side_effect = [RuntimeError("exchange down"), None]
         mock_engine_cls.return_value = mock_engine
-
-        mock_portfolio = MagicMock()
-        mock_portfolio_cls.return_value = mock_portfolio
+        mock_portfolio_cls.return_value = MagicMock()
 
         from app.workers.paper_worker import main
-        with pytest.raises(RuntimeError, match="exchange down"):
-            await main()
+        await main()
 
-        mock_db.close.assert_called_once()
+        assert mock_engine.start.await_count == 2          # retried after the error
+        assert mock_db.close.call_count >= 2               # db closed each iteration
 
 
 # --- Paper engine redesign: real-candle entries, tick-only exits ---
