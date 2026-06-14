@@ -95,7 +95,10 @@ class Settings(BaseSettings):
     trading_symbols: str = (
         "BTC_USDT,ETH_USDT,BNB_USDT,XRP_USDT,SOL_USDT,DOGE_USDT,ADA_USDT,TRX_USDT,"
         "LINK_USDT,AVAX_USDT,DOT_USDT,LTC_USDT,BCH_USDT,ATOM_USDT,UNI_USDT,XLM_USDT,"
-        "NEAR_USDT,APT_USDT,ARB_USDT,OP_USDT,FIL_USDT,INJ_USDT"
+        "NEAR_USDT,APT_USDT,ARB_USDT,OP_USDT,FIL_USDT,INJ_USDT,"
+        "SUI_USDT,SEI_USDT,TIA_USDT,PENDLE_USDT,WLD_USDT,FET_USDT,RENDER_USDT,"
+        "STX_USDT,IMX_USDT,MANTA_USDT,JUP_USDT,PYTH_USDT,WIF_USDT,BONK_USDT,"
+        "PEPE_USDT,FLOKI_USDT,MEME_USDT,ORDI_USDT,SATS_USDT,1000SATS_USDT"
     )
     # Minimum volume ratio: reject entries when current volume is below this fraction
     # of the recent average volume (e.g., 0.3 = 30% of average).
