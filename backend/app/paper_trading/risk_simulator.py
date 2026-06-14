@@ -49,6 +49,8 @@ class PaperRiskSimulator:
 
     def _latest_drawdown(self) -> Decimal:
         point = self.portfolio.record_equity()
+        if point is None:
+            return Decimal("0")
         return abs(point.drawdown)
 
     def _daily_loss_pct(self) -> Decimal:

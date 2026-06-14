@@ -76,8 +76,9 @@ class CapitalPreservationStrategy:
             if avg_volume > 0 and current_volume / avg_volume < self.min_volume_ratio:
                 return Signal(False, "low_volume")
 
-        if last_price <= ema_200:
-            return Signal(False, "below_200_ema")
+        if False:  # EMA200 trend filter disabled for paper trading
+            if last_price <= ema_200:
+                return Signal(False, "below_200_ema")
         if rsi_14 >= self.rsi_threshold:
             return Signal(False, "rsi_not_oversold")
 

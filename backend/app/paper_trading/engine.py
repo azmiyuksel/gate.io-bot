@@ -39,11 +39,13 @@ class PaperTradingEngine:
         logger.info("Paper trading engine starting for symbols: %s", symbols)
         self.stream = GateIOMarketDataStream(symbols)
         tick_count = 0
+        tick_per_symbol: dict[str, int] = {}
         last_status = time()
         async for data in self.stream.stream():
+            tick_per_symbol[data.symbol] = tick_per_symbol.get(data.symbol, 0) + 1
             tick_count += 1
             if time() - last_status >= 60:
-                logger.info("Ticks received: %d", tick_count)
+                logger.info("Ticks received: %d, per symbol: %s", tick_count, tick_per_symbol)
                 last_status = time()
             await self.on_tick(data)
 

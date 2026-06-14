@@ -195,15 +195,15 @@ class PaperBroker:
             if atr_str is not None:
                 try:
                     atr_value = Decimal(str(atr_str))
-                    stop_loss = price - atr_value * Decimal("1.5")
+                    stop_loss = price - atr_value * Decimal("6.0")
                     risk_per_unit = price - stop_loss
-                    take_profit = price + risk_per_unit * Decimal("2")
+                    take_profit = price + risk_per_unit * Decimal("1.2")
                 except Exception:
                     pass
             if stop_loss is None:
-                stop_loss = price * Decimal("0.98")
+                stop_loss = price * Decimal("0.85")
             if take_profit is None:
-                take_profit = price * Decimal("1.04")
+                take_profit = price * Decimal("1.15")
             self.db.add(
                 PaperPosition(
                     account_id=self.account.id,
