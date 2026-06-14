@@ -69,5 +69,9 @@ class BaseStrategy:
     def generate_signal(self) -> TradingSignal | None:
         return None
 
+    def evaluate_real_candles(self, symbol: str, candles: list[dict]) -> TradingSignal | None:
+        """Evaluate entries on real OHLC candles. Returns a buy signal or None."""
+        return None
+
     def position_size(self, equity: float, price: float) -> float:
         return 0

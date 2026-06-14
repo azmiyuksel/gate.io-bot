@@ -87,3 +87,49 @@ async def test_paper_worker_always_closes_db(_settings):
             await main()
 
         mock_db.close.assert_called_once()
+
+
+# --- Paper engine redesign: real-candle entries, tick-only exits ---
+
+
+def test_evaluate_real_candles_maps_strategy_signal(monkeypatch):
+    from decimal import Decimal
+
+    from app.paper_trading.models import PaperSide
+    from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
+    from app.services.strategy.signals import Signal
+
+    adapter = CapitalPreservationAdapter()
+    monkeypatch.setattr(
+        adapter._strategy, "evaluate",
+        lambda candles: Signal(True, "long_entry", Decimal("100"), Decimal("2")),
+    )
+    sig = adapter.evaluate_real_candles("BTC_USDT", [{}])
+    assert sig is not None
+    assert sig.side == PaperSide.buy
+    assert sig.metadata["atr"] == "2"
+    assert sig.metadata["entry"] == "100"
+
+    monkeypatch.setattr(
+        adapter._strategy, "evaluate", lambda candles: Signal(False, "rsi_not_oversold")
+    )
+    assert adapter.evaluate_real_candles("BTC_USDT", [{}]) is None
+
+
+def test_stream_tick_has_no_intrabar_range():
+    import json
+
+    from app.paper_trading.market_data_stream import GateIOMarketDataStream
+
+    stream = GateIOMarketDataStream(["BTC_USDT"])
+    raw = json.dumps({
+        "result": {
+            "last": "100", "currency_pair": "BTC_USDT",
+            "base_volume": "5", "high_24h": "130", "low_24h": "70",
+        }
+    })
+    data = stream._parse(raw)
+    # 24h high/low must NOT leak into per-tick bar fields.
+    assert data.price == 100.0
+    assert data.high is None
+    assert data.low is None

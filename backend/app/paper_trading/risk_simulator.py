@@ -3,8 +3,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
-from app.models.entities import PaperAccount, PaperLog, PaperPosition
+from app.models.entities import PaperAccount, PaperLog
 from app.models.enums import LogLevel, PaperBotStatus
 from app.paper_trading.models import MarketData, TradingSignal
 from app.paper_trading.portfolio import PaperPortfolio
@@ -38,8 +37,11 @@ class PaperRiskSimulator:
         if self._daily_loss_pct() >= self.account.max_daily_loss_pct:
             self.pause("daily_loss_limit_reached")
             return False, "daily_loss_limit_reached"
-        if data.high and data.low and data.price and (data.high - data.low) / data.price > get_settings().strategy_max_24h_range_pct:
-            return False, "volatility_filter"
+        # NOTE: a volatility gate based on MarketData.high/low was removed here. Those
+        # fields previously carried 24h ticker range, so the check rejected almost
+        # every entry. Range filtering already happens in the strategy on real
+        # candles (excessive_24h_volatility), so this gate was both wrong and
+        # redundant.
         return True, "approved"
 
     def pause(self, reason: str) -> None:

@@ -57,13 +57,14 @@ class GateIOMarketDataStream:
         symbol = result.get("currency_pair")
         if not price or not symbol:
             return None
+        # A ticker tick has no intra-bar range; leave high/low unset rather than
+        # filling them with the 24h high/low, which downstream code would wrongly
+        # treat as a single bar's range (inflating slippage and tripping filters).
         return MarketData(
             symbol=symbol,
             timestamp=datetime.now(UTC),
             price=float(price),
             volume=float(result.get("base_volume") or 0),
-            high=float(result.get("high_24h") or price),
-            low=float(result.get("low_24h") or price),
         )
 
     def latest_or_missing(self, symbol: str) -> MarketData | None:

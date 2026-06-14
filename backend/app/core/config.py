@@ -100,6 +100,8 @@ class Settings(BaseSettings):
     max_equity_staleness_seconds: int = 1800
     gateio_ws_url: str = "wss://api.gateio.ws/ws/v4/"
     market_data_interval: str = "1h"
+    # How often the paper-trading engine re-evaluates entries on real candles.
+    paper_eval_interval_seconds: int = 300
 
     # --- Market Data Quality ---
     # Single-candle move beyond this fraction is flagged as a spike (0.01-0.10 typical).

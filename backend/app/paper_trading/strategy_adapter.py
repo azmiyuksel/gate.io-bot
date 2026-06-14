@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.paper_trading.models import BaseStrategy, MarketData, PaperSide, TradingSignal
 from app.services.strategy.signals import CapitalPreservationStrategy
@@ -46,6 +46,31 @@ class CapitalPreservationAdapter(BaseStrategy):
 
     def generate_signal(self) -> TradingSignal | None:
         return self._last_signal
+
+    def evaluate_real_candles(self, symbol: str, candles: list[dict]) -> TradingSignal | None:
+        """Evaluate the strategy on real OHLC candles (preferred path).
+
+        Mirrors the live engine: feed genuine candles to the strategy rather than
+        tick-aggregated synthetic bars, so EMA200/RSI/ATR are meaningful.
+        """
+        signal = self._strategy.evaluate(candles)
+        self._last_reason = signal.reason
+        self._candle_counts[symbol] = len(candles)
+        if not signal.should_buy:
+            return None
+        logger.info("[%s] candles=%d signal=BUY reason=%s", symbol, len(candles), signal.reason)
+        return TradingSignal(
+            symbol=symbol,
+            side=PaperSide.buy,
+            strength=0.8,
+            strategy=self._strategy.name,
+            timestamp=datetime.now(UTC),
+            metadata={
+                "reason": signal.reason,
+                "atr": str(signal.atr_value),
+                "entry": str(signal.entry_price),
+            },
+        )
 
     def prewarm_candles(self, symbol: str, candles: list[dict]) -> None:
         converted = []
