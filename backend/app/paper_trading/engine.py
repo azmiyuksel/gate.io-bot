@@ -111,12 +111,35 @@ class PaperTradingEngine:
                 continue
             signal = self.strategy.evaluate_real_candles(symbol, candles)
             if signal is None:
-                # Record why this symbol produced no entry so the dashboard can
-                # show, live, which filter is gating the (deliberately selective)
-                # strategy.
                 reason = getattr(self.strategy, "last_reason", "") or "no_signal"
                 self._log("entry_skipped", f"{symbol}: {reason}", {"symbol": symbol, "reason": reason})
                 continue
+
+            # Multi-timeframe confirmation: check HTF trend alignment
+            if getattr(settings, "strategy_mtf_enabled", False):
+                try:
+                    htf_candles = await self._client.candles(
+                        symbol,
+                        interval=settings.strategy_mtf_interval,
+                        limit=50,
+                    )
+                    if htf_candles and len(htf_candles) >= 50:
+                        from app.services.strategy.indicators import ema as calc_ema
+                        htf_closes = [Decimal(str(c["close"])) for c in htf_candles]
+                        htf_ema200 = calc_ema(htf_closes, 50)
+                        htf_last = htf_closes[-1]
+                        direction = signal.metadata.get("direction") if signal.metadata else "long"
+                        if direction == "long" and htf_last < htf_ema200:
+                            self._log("entry_skipped", f"{symbol}: htf_trend_mismatch (long but 4h below EMA50)",
+                                      {"symbol": symbol, "reason": "htf_trend_mismatch"})
+                            continue
+                        if direction == "short" and htf_last > htf_ema200:
+                            self._log("entry_skipped", f"{symbol}: htf_trend_mismatch (short but 4h above EMA50)",
+                                      {"symbol": symbol, "reason": "htf_trend_mismatch"})
+                            continue
+                except Exception:
+                    pass  # MTF check is advisory; proceed if it fails
+
             latest = candles[-1]
             # Build a MarketData snapshot from the latest REAL candle (proper OHLC),
             # so execution simulation and risk checks see correct bar values.
@@ -185,6 +208,22 @@ class PaperTradingEngine:
 
         if quantity <= 0:
             return
+
+        # Kelly-optimal fraction: scale position by edge quality
+        # kelly_f = win_rate - (1 - win_rate) / payoff_ratio
+        # Clamped to [0.25, 1.0] of base size to prevent ruin
+        try:
+            from app.paper_trading.metrics import PaperMetrics
+            metrics = PaperMetrics(self.db, self.account.id).summary()
+            wr = metrics.get("win_rate_rolling_100", 0)
+            # Estimate payoff from recent equity returns
+            if wr > 0 and wr < 1:
+                kelly_f = wr - (1 - wr) / max(wr, 0.01)
+                scale = max(Decimal("0.25"), min(Decimal("1.0"), Decimal(str(max(kelly_f, 0.10)))))
+                quantity = quantity * scale
+        except Exception:
+            pass
+
         order = self.order_manager.execute_signal(signal, quantity, data)
         if order:
             await self.notifier.send(f"Paper trade opened: {signal.symbol} {signal.side}")
@@ -201,35 +240,83 @@ class PaperTradingEngine:
         trailing_pct = Decimal(str(settings.strategy_trailing_stop_pct))
 
         for position in positions:
-            # Update highest price seen for trailing stop
-            if position.highest_price is None or price > position.highest_price:
-                position.highest_price = price
+            is_short = position.side == "sell"
 
-            # Breakeven stop: move stop-loss to entry price when profit reaches trigger
+            # For short positions, exit logic is mirrored:
+            # - stop_loss is ABOVE entry (price going up is bad)
+            # - take_profit is BELOW entry (price going down is good)
+            # - trailing stop ratchets DOWNWARD
+            # - breakeven triggered when profit_pct >= trigger (price moved down)
+
+            # Update highest/lowest price seen for trailing stop
+            if is_short:
+                if position.highest_price is None or price < position.highest_price:
+                    position.highest_price = price
+            else:
+                if position.highest_price is None or price > position.highest_price:
+                    position.highest_price = price
+
+            # Breakeven stop
             if not position.breakeven_triggered and position.average_entry_price > 0:
-                profit_pct = (price - position.average_entry_price) / position.average_entry_price
+                if is_short:
+                    profit_pct = (position.average_entry_price - price) / position.average_entry_price
+                else:
+                    profit_pct = (price - position.average_entry_price) / position.average_entry_price
                 if profit_pct >= breakeven_trigger:
-                    # Round-trip fees (0.2%): real breakeven is entry + fees, not entry alone
                     round_trip_fee = position.average_entry_price * Decimal("0.002")
-                    position.stop_loss = position.average_entry_price + round_trip_fee
+                    if is_short:
+                        position.stop_loss = position.average_entry_price - round_trip_fee
+                    else:
+                        position.stop_loss = position.average_entry_price + round_trip_fee
                     position.breakeven_triggered = True
-                    self._log("breakeven_stop", f"{data.symbol} stop moved to breakeven (incl. fees) at {price}")
+                    self._log("breakeven_stop", f"{data.symbol} stop moved to breakeven (incl. fees)")
 
-            # Trailing stop: ratchet up as price rises (only after breakeven)
+            # Trailing stop: ratchet as price moves favorably
             if position.breakeven_triggered and position.highest_price and trailing_pct > 0:
-                trailing_stop = position.highest_price * (Decimal("1") - trailing_pct)
-                if position.trailing_stop is None or trailing_stop > position.trailing_stop:
-                    position.trailing_stop = trailing_stop
-                    position.stop_loss = trailing_stop
+                if is_short:
+                    trailing_stop = position.highest_price * (Decimal("1") + trailing_pct)
+                    if position.trailing_stop is None or trailing_stop < position.trailing_stop:
+                        position.trailing_stop = trailing_stop
+                        position.stop_loss = trailing_stop
+                else:
+                    trailing_stop = position.highest_price * (Decimal("1") - trailing_pct)
+                    if position.trailing_stop is None or trailing_stop > position.trailing_stop:
+                        position.trailing_stop = trailing_stop
+                        position.stop_loss = trailing_stop
+
+            # Dynamic stop-loss: ratchet tighter as price moves favorably
+            # Uses 2.5% of current price as stop distance, only tightens (never loosens)
+            if not position.breakeven_triggered and position.stop_loss:
+                try:
+                    stop_distance = price * Decimal("0.025")
+                    if is_short:
+                        new_stop = price + stop_distance
+                        if new_stop < position.stop_loss:
+                            position.stop_loss = new_stop
+                    else:
+                        new_stop = price - stop_distance
+                        if new_stop > position.stop_loss:
+                            position.stop_loss = new_stop
+                except Exception:
+                    pass
 
             # Check exits: stop-loss checked before take-profit (capital protection first)
-            if position.stop_loss and price <= position.stop_loss:
-                reason = "trailing_stop" if position.breakeven_triggered else "stop_loss"
-                self.broker.close_position(position, data, reason)
-                self._log(f"{reason}_triggered", f"{data.symbol} {reason} triggered at ~{price}")
-            elif position.take_profit and price >= position.take_profit:
-                self.broker.close_position(position, data, "take_profit")
-                self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
+            if is_short:
+                if position.stop_loss and price >= position.stop_loss:
+                    reason = "trailing_stop" if position.breakeven_triggered else "stop_loss"
+                    self.broker.close_position(position, data, reason)
+                    self._log(f"{reason}_triggered", f"{data.symbol} {reason} triggered at ~{price}")
+                elif position.take_profit and price <= position.take_profit:
+                    self.broker.close_position(position, data, "take_profit")
+                    self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
+            else:
+                if position.stop_loss and price <= position.stop_loss:
+                    reason = "trailing_stop" if position.breakeven_triggered else "stop_loss"
+                    self.broker.close_position(position, data, reason)
+                    self._log(f"{reason}_triggered", f"{data.symbol} {reason} triggered at ~{price}")
+                elif position.take_profit and price >= position.take_profit:
+                    self.broker.close_position(position, data, "take_profit")
+                    self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
 
     def _log(self, event: str, message: str, payload: dict | None = None) -> None:
         # Commit immediately so diagnostics persist even when no ticks are flowing

@@ -100,75 +100,85 @@ class PaperBroker:
         )
         self._log("order_filled", f"{order.side} {order.symbol} qty={execution.filled_quantity}")
 
-    def close_position(self, position: PaperPosition, data: MarketData, reason: str) -> None:
+    def close_position(self, position: PaperPosition, data: MarketData, reason: str, quantity: Decimal | None = None) -> None:
         now = datetime.now(UTC)
+        close_qty = quantity if quantity is not None and quantity < position.quantity else position.quantity
+        is_short = position.side == "sell"
+        close_side = OrderSide.buy if is_short else OrderSide.sell
+        exit_price = Decimal(str(data.price))
+        exit_sim_side = PaperSide.buy if is_short else PaperSide.sell
+
         order = PaperOrder(
             account_id=self.account.id,
             symbol=position.symbol,
-            side=OrderSide.sell,
+            side=close_side,
             order_type=PaperOrderType.market,
             status=PaperOrderStatus.filled,
-            requested_quantity=position.quantity,
-            filled_quantity=position.quantity,
-            signal={"reason": reason, "type": "exit"},
+            requested_quantity=close_qty,
+            filled_quantity=close_qty,
+            signal={"reason": reason, "type": "partial" if close_qty < position.quantity else "exit"},
         )
         self.db.add(order)
         self.db.commit()
         self.db.refresh(order)
         execution = self.simulator.execute_market(
             order_id=order.id,
-            side=PaperSide.sell,
-            quantity=float(position.quantity),
+            side=exit_sim_side,
+            quantity=float(close_qty),
             data=data,
         )
         order.filled_quantity = Decimal(str(execution.filled_quantity))
-        order.average_fill_price = Decimal(str(execution.average_price))
+        order.average_fill_price = exit_price
         order.fee_paid = Decimal(str(execution.fee))
         order.latency_ms = execution.latency_ms
         order.filled_at = now
-        exit_price = Decimal(str(execution.average_price))
-        pnl = (exit_price - position.average_entry_price) * position.quantity - Decimal(str(execution.fee))
-        self.account.cash_balance += exit_price * position.quantity - Decimal(str(execution.fee))
+        if is_short:
+            pnl = (position.average_entry_price - exit_price) * close_qty - Decimal(str(execution.fee))
+        else:
+            pnl = (exit_price - position.average_entry_price) * close_qty - Decimal(str(execution.fee))
+        self.account.cash_balance += position.average_entry_price * close_qty + pnl
         self.account.realized_pnl += pnl
         position.realized_pnl += pnl
-        position.is_open = False
-        position.closed_at = now
+
+        if close_qty >= position.quantity:
+            position.is_open = False
+            position.closed_at = now
+        else:
+            position.quantity -= close_qty
+
         self.db.add(
             PaperTrade(
                 account_id=self.account.id,
                 order_id=order.id,
                 symbol=position.symbol,
-                side=OrderSide.sell,
+                side=close_side,
                 price=exit_price,
-                quantity=position.quantity,
+                quantity=close_qty,
                 fee=Decimal(str(execution.fee)),
                 realized_pnl=pnl,
+                exit_reason=reason,
             )
         )
-        self._log("trade_closed", f"{position.symbol} closed: {reason}", {"pnl": str(pnl)})
+        self._log("trade_closed", f"{position.symbol} {'partial ' if close_qty < position.quantity else ''}closed: {reason}", {"pnl": str(pnl)})
 
-        # Record Execution Quality metrics
         try:
             from app.execution_quality.engine import ExecutionQualityEngine
             eq_engine = ExecutionQualityEngine(self.db)
-            
             exec_order = eq_engine.record_order(
                 strategy_name="capital_preservation_v1",
                 symbol=position.symbol,
-                side="sell",
+                side=close_side.value if isinstance(close_side, OrderSide) else close_side,
                 expected_price=exit_price,
-                expected_quantity=position.quantity,
+                expected_quantity=close_qty,
                 signal_time=now,
                 submission_time=now,
             )
-            
             ack_time = now + timedelta(milliseconds=5)
             fill_time = datetime.now(UTC)
-            
             eq_engine.record_fill(
                 execution_order_id=exec_order.id,
                 fill_price=exit_price,
-                fill_quantity=position.quantity,
+                fill_quantity=close_qty,
                 fee=Decimal(str(execution.fee)),
                 fill_time=fill_time,
                 ack_time=ack_time
@@ -181,6 +191,27 @@ class PaperBroker:
         price = Decimal(str(execution.average_price))
         fee = Decimal(str(execution.fee))
         total_cost = quantity * price + fee
+
+        # Check if there's an existing open SHORT position to close (buy to cover)
+        existing_short = (
+            self.db.query(PaperPosition)
+            .filter(
+                PaperPosition.account_id == self.account.id,
+                PaperPosition.symbol == order.symbol,
+                PaperPosition.is_open.is_(True),
+                PaperPosition.side == "sell",
+            )
+            .first()
+        )
+        if existing_short:
+            self.close_position(
+                existing_short,
+                MarketData(order.symbol, datetime.now(UTC), float(price)),
+                "signal_cover",
+            )
+            return
+
+        # Open or add to a LONG position
         if self.account.cash_balance < total_cost:
             order.status = PaperOrderStatus.rejected
             self._log("order_rejected", "insufficient paper cash")
@@ -192,6 +223,7 @@ class PaperBroker:
                 PaperPosition.account_id == self.account.id,
                 PaperPosition.symbol == order.symbol,
                 PaperPosition.is_open.is_(True),
+                PaperPosition.side == "buy",
             )
             .first()
         )
@@ -210,10 +242,8 @@ class PaperBroker:
             if atr_str is not None:
                 try:
                     atr_value = Decimal(str(atr_str))
-                    # Tighter stop-loss: 2.5×ATR (was 6×ATR) for better risk management
                     stop_loss = price - atr_value * Decimal("2.5")
                     risk_per_unit = price - stop_loss
-                    # Reward:Risk = 2:1 (was 1.2:1) for positive expectancy
                     take_profit = price + risk_per_unit * Decimal("2.0")
                 except Exception:
                     pass
@@ -225,6 +255,7 @@ class PaperBroker:
                 PaperPosition(
                     account_id=self.account.id,
                     symbol=order.symbol,
+                    side="buy",
                     quantity=quantity,
                     average_entry_price=price,
                     last_price=price,
@@ -237,13 +268,64 @@ class PaperBroker:
             )
 
     def _apply_sell(self, order: PaperOrder, execution: PaperExecution) -> None:
-        position = (
+        quantity = Decimal(str(execution.filled_quantity))
+        price = Decimal(str(execution.average_price))
+        fee = Decimal(str(execution.fee))
+
+        # Check if there's an existing open LONG position to close
+        existing_long = (
             self.db.query(PaperPosition)
-            .filter(PaperPosition.account_id == self.account.id, PaperPosition.symbol == order.symbol, PaperPosition.is_open.is_(True))
+            .filter(
+                PaperPosition.account_id == self.account.id,
+                PaperPosition.symbol == order.symbol,
+                PaperPosition.is_open.is_(True),
+                PaperPosition.side == "buy",
+            )
             .first()
         )
-        if position:
-            self.close_position(position, MarketData(order.symbol, datetime.now(UTC), execution.average_price), "signal_sell")
+        if existing_long:
+            self.close_position(
+                existing_long,
+                MarketData(order.symbol, datetime.now(UTC), float(price)),
+                "signal_sell",
+            )
+            return
+
+        # Open a SHORT position (sell to open)
+        # For short: cash increases by sale proceeds minus fee
+        self.account.cash_balance += quantity * price - fee
+        stop_loss = None
+        take_profit = None
+        signal_metadata = order.signal if isinstance(order.signal, dict) else {}
+        atr_str = signal_metadata.get("metadata", {}).get("atr") if isinstance(signal_metadata.get("metadata"), dict) else signal_metadata.get("atr")
+        if atr_str is not None:
+            try:
+                atr_value = Decimal(str(atr_str))
+                # For short: stop is above entry, target is below entry
+                stop_loss = price + atr_value * Decimal("2.5")
+                risk_per_unit = stop_loss - price
+                take_profit = price - risk_per_unit * Decimal("2.0")
+            except Exception:
+                pass
+        if stop_loss is None:
+            stop_loss = price * Decimal("1.15")
+        if take_profit is None:
+            take_profit = price * Decimal("0.85")
+        self.db.add(
+            PaperPosition(
+                account_id=self.account.id,
+                symbol=order.symbol,
+                side="sell",
+                quantity=quantity,
+                average_entry_price=price,
+                last_price=price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                trailing_stop=stop_loss,
+                highest_price=None,
+                breakeven_triggered=False,
+            )
+        )
 
     def _log(self, event: str, message: str, payload: dict | None = None) -> None:
         self.db.add(

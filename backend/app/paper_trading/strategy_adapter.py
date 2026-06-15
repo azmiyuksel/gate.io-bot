@@ -60,13 +60,17 @@ class CapitalPreservationAdapter(BaseStrategy):
         """
         signal = self._strategy.evaluate(candles)
         self._last_reason = signal.reason
+        if signal.diagnostics:
+            self._last_reason = f"{signal.reason} (RSI={signal.diagnostics.get('rsi', '?')})"
         self._candle_counts[symbol] = len(candles)
-        if not signal.should_buy:
+        if not signal.should_enter:
             return None
-        logger.info("[%s] candles=%d signal=BUY reason=%s", symbol, len(candles), signal.reason)
+        direction = signal.direction
+        side = PaperSide.sell if direction == "short" else PaperSide.buy
+        logger.info("[%s] candles=%d signal=%s reason=%s", symbol, len(candles), direction.upper(), signal.reason)
         return TradingSignal(
             symbol=symbol,
-            side=PaperSide.buy,
+            side=side,
             strength=0.8,
             strategy=self._strategy.name,
             timestamp=datetime.now(UTC),
@@ -74,6 +78,7 @@ class CapitalPreservationAdapter(BaseStrategy):
                 "reason": signal.reason,
                 "atr": str(signal.atr_value),
                 "entry": str(signal.entry_price),
+                "direction": direction,
             },
         )
 
@@ -89,7 +94,6 @@ class CapitalPreservationAdapter(BaseStrategy):
             })
         self._candles[symbol] = deque(converted, maxlen=500)
         self._candle_counts[symbol] = len(converted)
-        # Trigger immediate evaluation if we have enough candles
         self._evaluate(symbol)
 
     @property
@@ -125,18 +129,20 @@ class CapitalPreservationAdapter(BaseStrategy):
                 logger.info("[%s] warming up: %d/%d candles", symbol, len(candles), self._min_candles)
             return
         signal = self._strategy.evaluate(candles)
-        if signal.should_buy:
+        if signal.should_enter:
+            direction = signal.direction
+            side = PaperSide.sell if direction == "short" else PaperSide.buy
             if self._current_data is not None:
                 self._last_signal = TradingSignal(
                     symbol=symbol,
-                    side=PaperSide.buy,
+                    side=side,
                     strength=0.8,
                     strategy="capital_preservation_v1",
                     timestamp=self._current_data.timestamp if self._current_data else datetime.now(UTC),
-                    metadata={"reason": signal.reason, "atr": str(signal.atr_value)},
+                    metadata={"reason": signal.reason, "atr": str(signal.atr_value), "direction": direction},
                 )
             self._last_reason = signal.reason
-            logger.info("[%s] candles=%d signal=BUY reason=%s", symbol, len(candles), signal.reason)
+            logger.info("[%s] candles=%d signal=%s reason=%s", symbol, len(candles), direction.upper(), signal.reason)
         else:
             self._last_reason = signal.reason
             if len(candles) == self._min_candles:

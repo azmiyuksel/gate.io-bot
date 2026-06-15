@@ -26,6 +26,7 @@ class PaperStatus(BaseModel):
 class PaperPositionOut(BaseModel):
     id: int
     symbol: str
+    side: str = "buy"
     quantity: Decimal
     average_entry_price: Decimal
     last_price: Decimal
@@ -46,9 +47,21 @@ class PaperTradeOut(BaseModel):
     quantity: Decimal
     fee: Decimal
     realized_pnl: Decimal
+    exit_reason: str | None = None
     traded_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ManualOrderRequest(BaseModel):
+    symbol: str
+    side: str  # "buy" or "sell"
+    quantity: Decimal
+    order_type: str = "market"
+
+
+class ClosePositionRequest(BaseModel):
+    quantity: Decimal | None = None  # None = full close
 
 
 class PaperOrderOut(BaseModel):

@@ -1,7 +1,7 @@
-from collections import deque
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from app.models.entities import PaperAccount, PaperEquityCurve, PaperLog
@@ -17,7 +17,6 @@ class PaperRiskSimulator:
         self.db = db
         self.account = account
         self.portfolio = PaperPortfolio(db, account)
-        self._equity_snapshots: deque[tuple[datetime, Decimal]] = deque()
 
     def approve_signal(self, signal: TradingSignal, data: MarketData) -> tuple[bool, str]:
         if self.account.status != PaperBotStatus.running:
@@ -43,18 +42,33 @@ class PaperRiskSimulator:
 
     def pause(self, reason: str) -> None:
         self.account.status = PaperBotStatus.paused
-        self._paused_reason = reason
-        self._paused_at = datetime.now(UTC)
-        self.db.add(PaperLog(account_id=self.account.id, level=LogLevel.warning, event="system_paused", message=reason))
+        self.db.add(PaperLog(
+            account_id=self.account.id,
+            level=LogLevel.warning,
+            event="system_paused",
+            message=reason,
+            payload={"reason": reason, "paused_at": datetime.now(UTC).isoformat()},
+        ))
         self.db.commit()
 
     def maybe_auto_resume(self) -> bool:
         if self.account.status != PaperBotStatus.paused:
             return False
-        if not hasattr(self, "_paused_at"):
+        last_pause = (
+            self.db.query(PaperLog)
+            .filter(
+                PaperLog.account_id == self.account.id,
+                PaperLog.event == "system_paused",
+            )
+            .order_by(desc(PaperLog.created_at))
+            .first()
+        )
+        if last_pause is None:
             return False
-        cooldown_hours = 4 if getattr(self, "_paused_reason", "") == "max_drawdown_reached" else 1
-        if datetime.now(UTC) - self._paused_at < timedelta(hours=cooldown_hours):
+        paused_at = last_pause.created_at
+        pause_reason = last_pause.message
+        cooldown_hours = 4 if "max_drawdown" in (pause_reason or "") else 1
+        if datetime.now(UTC) - paused_at < timedelta(hours=cooldown_hours):
             return False
         equity = self.portfolio.equity()
         if equity <= 0:
@@ -77,7 +91,7 @@ class PaperRiskSimulator:
         point = (
             self.db.query(PaperEquityCurve)
             .filter(PaperEquityCurve.account_id == self.account.id)
-            .order_by(PaperEquityCurve.timestamp.desc())
+            .order_by(desc(PaperEquityCurve.timestamp))
             .first()
         )
         if point is None:
@@ -85,16 +99,27 @@ class PaperRiskSimulator:
         return abs(point.drawdown)
 
     def _daily_loss_pct(self) -> Decimal:
+        """Compute 24h rolling loss using DB equity curve records."""
         equity = self.portfolio.equity()
         now = datetime.now(UTC)
         cutoff = now - _ROLLING_24H
-        self._equity_snapshots.append((now, equity))
-        while self._equity_snapshots and self._equity_snapshots[0][0] < cutoff:
-            self._equity_snapshots.popleft()
-        if not self._equity_snapshots:
+
+        peak_24h = (
+            self.db.query(func.max(PaperEquityCurve.equity))
+            .filter(
+                PaperEquityCurve.account_id == self.account.id,
+                PaperEquityCurve.timestamp >= cutoff,
+            )
+            .scalar()
+        )
+        if peak_24h is None:
+            peak_24h = self.account.initial_balance
+
+        peak = Decimal(str(peak_24h))
+        if peak <= 0:
             return Decimal("0")
-        peak_24h = max(snap[1] for snap in self._equity_snapshots)
-        if peak_24h <= 0:
-            return Decimal("0")
-        loss = max(peak_24h - equity, Decimal("0"))
-        return loss / peak_24h
+
+        # Also consider current equity (not yet recorded in DB)
+        peak = max(peak, equity)
+        loss = max(peak - equity, Decimal("0"))
+        return loss / peak

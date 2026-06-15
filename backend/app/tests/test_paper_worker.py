@@ -118,7 +118,7 @@ def test_evaluate_real_candles_maps_strategy_signal(monkeypatch):
     adapter = CapitalPreservationAdapter()
     monkeypatch.setattr(
         adapter._strategy, "evaluate",
-        lambda candles: Signal(True, "long_entry", Decimal("100"), Decimal("2")),
+        lambda candles: Signal(True, "long", "long_entry", Decimal("100"), Decimal("2")),
     )
     sig = adapter.evaluate_real_candles("BTC_USDT", [{}])
     assert sig is not None
@@ -127,7 +127,7 @@ def test_evaluate_real_candles_maps_strategy_signal(monkeypatch):
     assert sig.metadata["entry"] == "100"
 
     monkeypatch.setattr(
-        adapter._strategy, "evaluate", lambda candles: Signal(False, "rsi_not_oversold")
+        adapter._strategy, "evaluate", lambda candles: Signal(False, "", "rsi_not_oversold")
     )
     assert adapter.evaluate_real_candles("BTC_USDT", [{}]) is None
 

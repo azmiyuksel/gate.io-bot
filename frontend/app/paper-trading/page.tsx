@@ -4,7 +4,9 @@ import {
   Activity,
   BarChart3,
   CirclePause,
+  PieChart,
   Play,
+  Plus,
   RefreshCw,
   RotateCcw,
   ShieldAlert,
@@ -12,6 +14,8 @@ import {
   TrendingDown,
   TrendingUp,
   Trophy,
+  X,
+  Zap,
 } from "lucide-react";
 import {
   Area,
@@ -20,6 +24,8 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  PieChart as RePieChart,
+  Pie,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -37,14 +43,17 @@ import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import { fmtPrice, fmtQty, fmtUTC, fmtUTCShort, money } from "@/lib/utils";
 import {
+  closePaperPosition,
   createPaperStream,
   getPaperEconomics,
   getPaperEquity,
+  getPaperExitStats,
   getPaperPositions,
   getPaperRiskStatus,
   getPaperSignalDiagnostics,
   getPaperStatus,
   getPaperTrades,
+  manualPaperOrder,
   pausePaperTrading,
   resetPaperTrading,
   resumePaperTrading,
@@ -60,6 +69,16 @@ import type {
   PaperStatus,
   PaperTrade,
 } from "@/types/paper";
+
+const EXIT_COLORS: Record<string, string> = {
+  stop_loss: "#b42318",
+  trailing_stop: "#d97706",
+  take_profit: "#146c5d",
+  manual_close: "#6366f1",
+  signal_sell: "#0ea5e9",
+  signal_cover: "#8b5cf6",
+  manual_partial: "#ec4899",
+};
 
 export default function PaperTradingPage() {
   const { toast } = useToast();
@@ -77,16 +96,21 @@ export default function PaperTradingPage() {
   const [risk, setRisk] = useState<PaperRiskStatus | null>(null);
   const [diagnostics, setDiagnostics] = useState<PaperSignalDiagnostics | null>(null);
   const [economics, setEconomics] = useState<PaperEconomics | null>(null);
+  const [exitStats, setExitStats] = useState<Record<string, number> | null>(null);
+
+  // Quick trade form
+  const [quickSymbol, setQuickSymbol] = useState("BTC_USDT");
+  const [quickSide, setQuickSide] = useState<"buy" | "sell">("buy");
+  const [quickQty, setQuickQty] = useState("0.01");
 
   const sseRef = useRef<EventSource | null>(null);
+  const lastTradeCount = useRef(0);
+  const botStatusRef = useRef("STOPPED");
 
   useEffect(() => {
     setToken(getAccessToken());
   }, []);
 
-  // Fast-changing state (status/positions/trades/risk) polls often; slow-changing
-  // state (equity is sampled hourly, economics/diagnostics every few minutes)
-  // polls less frequently to avoid wasteful load.
   const fetchFast = useCallback(async () => {
     if (!token) return;
     setLoading(true);
@@ -109,32 +133,45 @@ export default function PaperTradingPage() {
 
   const fetchSlow = useCallback(async () => {
     if (!token) return;
-    const [e, d, ec] = await Promise.all([
+    const [e, d, ec, es] = await Promise.all([
       getPaperEquity().catch(() => []),
       getPaperSignalDiagnostics().catch(() => null),
       getPaperEconomics().catch(() => null),
+      getPaperExitStats().catch(() => null),
     ]);
     setEquity(e);
     setDiagnostics(d);
     setEconomics(ec);
+    setExitStats(es?.counts ?? null);
   }, [token]);
 
   const refresh = useCallback(async () => {
     await Promise.all([fetchFast(), fetchSlow()]);
   }, [fetchFast, fetchSlow]);
 
+  // Sound alert on new trades
+  useEffect(() => {
+    if (trades.length > lastTradeCount.current && lastTradeCount.current > 0) {
+      try {
+        const audio = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACAf39/f4B/f3+Af4CAgH9/f3+Af4B/f3+Af39/gH9/f3+Af39/gIB/f3+Af39/gH+Af39/gH+Af3+Af3+Af3+Af39/gH+Af3+Af3+Af39/gH9/f3+Af3+Af3+Af39/gH9/f3+Af39/gH+Af39/gH+Af3+Af3+Af39/gH9/f3+Af39/gH+Af39/gH9/f3+Af39/gH+Af3+Af39/gH+Af39/gH+Af3+Af39/gH+Af3+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gA==");
+        audio.volume = 0.3;
+        audio.play().catch(() => {});
+      } catch {}
+    }
+    lastTradeCount.current = trades.length;
+  }, [trades]);
+
   useEffect(() => {
     if (!token) return;
     fetchFast();
     fetchSlow();
-    // Real-time status via SSE; poll detailed data on fast/slow cadences.
     sseRef.current = createPaperStream((data) => {
       if (data) {
         setStatus(data);
         setLastUpdated(new Date());
       }
     });
-    const fast = setInterval(fetchFast, 10000);
+    const fast = setInterval(fetchFast, 5000);
     const slow = setInterval(fetchSlow, 30000);
     return () => {
       if (sseRef.current) sseRef.current.close();
@@ -142,6 +179,21 @@ export default function PaperTradingPage() {
       clearInterval(slow);
     };
   }, [token, fetchFast, fetchSlow]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const s = e.key.toLowerCase();
+      const st = botStatusRef.current;
+      if (s === "s" && st === "STOPPED") action(() => startPaperTrading(), "Başlatıldı", "start");
+      if (s === "p" && st === "RUNNING") action(() => pausePaperTrading(), "Duraklatıldı", "pause");
+      if (s === "r" && st === "PAUSED") action(() => resumePaperTrading(), "Devam ediliyor", "resume");
+      if (s === "x" && st !== "STOPPED") action(() => stopPaperTrading(), "Durduruldu", "stop");
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   async function action(fn: () => Promise<boolean>, successMsg: string, btnId = "") {
     setActionLoading(true);
@@ -162,20 +214,30 @@ export default function PaperTradingPage() {
   }
 
   const botStatus = status?.status ?? "STOPPED";
+  botStatusRef.current = botStatus;
 
   const initialBalance = Number(status?.initial_balance ?? 0);
   const totalReturnPct =
     initialBalance > 0 ? ((Number(status?.equity ?? 0) - initialBalance) / initialBalance) * 100 : 0;
+
+  // Trade markers on equity chart
+  const tradeMarkers = trades
+    .filter((t) => Number(t.realized_pnl) !== 0)
+    .map((t) => ({
+      time: fmtUTCShort(t.traded_at),
+      equity: Number(t.price) * Number(t.quantity),
+      pnl: Number(t.realized_pnl),
+      symbol: t.symbol,
+      side: t.side,
+    }));
 
   const equityChartData = equity.map((p) => ({
     time: fmtUTCShort(p.timestamp),
     equity: p.equity,
   }));
 
-  // Group realized PnL by UTC calendar day (keyed by ISO date for correct
-  // ordering), then take the most recent 14 days in chronological order.
   const dailyMap = trades.reduce((acc, t) => {
-    const key = new Date(t.traded_at).toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+    const key = new Date(t.traded_at).toISOString().slice(0, 10);
     acc[key] = (acc[key] || 0) + Number(t.realized_pnl);
     return acc;
   }, {} as Record<string, number>);
@@ -195,6 +257,18 @@ export default function PaperTradingPage() {
     ? Math.max(1, ...Object.values(diagnostics.reason_counts))
     : 1;
 
+  // Exit reason stats for pie chart
+  const exitPieData = exitStats
+    ? Object.entries(exitStats).map(([reason, count]) => ({ name: reason, value: count }))
+    : [];
+
+  const shortcuts = [
+    { key: "S", label: "Başlat", when: "STOPPED" },
+    { key: "P", label: "Duraklat", when: "RUNNING" },
+    { key: "R", label: "Devam Et", when: "PAUSED" },
+    { key: "X", label: "Durdur", when: "RUNNING/PAUSED" },
+  ];
+
   return (
     <main className="min-h-screen">
       <header className="border-b border-border bg-white">
@@ -210,35 +284,45 @@ export default function PaperTradingPage() {
           </div>
         </div>
         {token && (
-          <div className="mx-auto flex max-w-7xl flex-wrap gap-2 px-6 pb-4">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-2 px-6 pb-4">
             {botStatus === "STOPPED" && (
-              <Button onClick={() => action(startPaperTrading, "Paper trading başlatıldı", "start")} disabled={!!actionLoadingBtn}>
-                <Play size={15} /> Başlat
+              <Button onClick={() => action(() => startPaperTrading(), "Paper trading başlatıldı", "start")} disabled={!!actionLoadingBtn}>
+                <Play size={15} /> Başlat [S]
               </Button>
             )}
             {botStatus === "RUNNING" && (
               <>
-                <Button onClick={() => action(pausePaperTrading, "Duraklatıldı", "pause")} disabled={!!actionLoadingBtn} className="bg-amber-600">
-                  <CirclePause size={15} /> Duraklat
+                <Button onClick={() => action(() => pausePaperTrading(), "Duraklatıldı", "pause")} disabled={!!actionLoadingBtn} className="bg-amber-600">
+                  <CirclePause size={15} /> Duraklat [P]
                 </Button>
-                <Button onClick={() => action(stopPaperTrading, "Durduruldu", "stop")} disabled={!!actionLoadingBtn} className="bg-danger">
-                  <Square size={15} /> Durdur
+                <Button onClick={() => action(() => stopPaperTrading(), "Durduruldu", "stop")} disabled={!!actionLoadingBtn} className="bg-danger">
+                  <Square size={15} /> Durdur [X]
                 </Button>
               </>
             )}
             {botStatus === "PAUSED" && (
               <>
-                <Button onClick={() => action(resumePaperTrading, "Devam ediliyor", "resume")} disabled={!!actionLoadingBtn}>
-                  <Play size={15} /> Devam Et
+                <Button onClick={() => action(() => resumePaperTrading(), "Devam ediliyor", "resume")} disabled={!!actionLoadingBtn}>
+                  <Play size={15} /> Devam Et [R]
                 </Button>
-                <Button onClick={() => action(stopPaperTrading, "Durduruldu", "stop")} disabled={!!actionLoadingBtn} className="bg-danger">
-                  <Square size={15} /> Durdur
+                <Button onClick={() => action(() => stopPaperTrading(), "Durduruldu", "stop")} disabled={!!actionLoadingBtn} className="bg-danger">
+                  <Square size={15} /> Durdur [X]
                 </Button>
               </>
             )}
             <Button onClick={() => setConfirmReset(true)} disabled={!!actionLoadingBtn} className="bg-foreground/80">
               <RotateCcw size={15} /> Sıfırla
             </Button>
+          </div>
+        )}
+        {token && (
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-1 px-6 pb-3">
+            <span className="text-xs text-muted">Kısayollar:</span>
+            {shortcuts.map((s) => (
+              <kbd key={s.key} className="rounded border border-border bg-gray-50 px-1.5 py-0.5 text-xs text-muted">
+                {s.key}
+              </kbd>
+            ))}
           </div>
         )}
       </header>
@@ -254,6 +338,15 @@ export default function PaperTradingPage() {
             {status?.pause_reason ? ` (${status.pause_reason})` : ""} — bu yüzden ilk
             alımdan sonra yeni işlem açılmıyor. Devam etmek için yukarıdaki{" "}
             <strong>Devam Et</strong> butonunu kullanın.
+          </div>
+        </div>
+      )}
+
+      {/* Paper-Live parameter warning */}
+      {botStatus === "RUNNING" && (
+        <div className="mx-auto max-w-7xl px-6 pt-4">
+          <div className="rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-700">
+            <strong>Paper mod:</strong> 15dk mum, 30sn değerlendirme. Strateji live ile aynı parametrelerde (RSI &lt; 35, trend filtresi açık, EMA20 mesafesi %1.5). Long + short sinyal üretir.
           </div>
         </div>
       )}
@@ -281,6 +374,62 @@ export default function PaperTradingPage() {
           icon={<ShieldAlert size={18} />}
         />
       </section>
+
+      {/* Quick Trade Panel */}
+      {botStatus === "RUNNING" && (
+        <section className="mx-auto max-w-7xl px-6 pb-6">
+          <Card>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <Zap size={16} className="text-amber-500" />
+                <h3 className="text-sm font-semibold">Hızlı İşlem</h3>
+              </div>
+              <select
+                value={quickSymbol}
+                onChange={(e) => setQuickSymbol(e.target.value)}
+                className="rounded border border-border px-2 py-1.5 text-sm"
+              >
+                {["BTC_USDT", "ETH_USDT", "SOL_USDT", "XRP_USDT", "DOGE_USDT", "ADA_USDT", "LINK_USDT", "AVAX_USDT", "BNB_USDT", "DOT_USDT"].map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <select
+                value={quickSide}
+                onChange={(e) => setQuickSide(e.target.value as "buy" | "sell")}
+                className="rounded border border-border px-2 py-1.5 text-sm"
+              >
+                <option value="buy">AL (Long)</option>
+                <option value="sell">SAT (Short)</option>
+              </select>
+              <input
+                type="text"
+                value={quickQty}
+                onChange={(e) => setQuickQty(e.target.value)}
+                className="w-20 rounded border border-border px-2 py-1.5 text-sm"
+                placeholder="0.01"
+              />
+              <Button
+                className={`text-sm ${quickSide === "buy" ? "bg-primary" : "bg-danger"}`}
+                onClick={() => {
+                  const qty = parseFloat(quickQty);
+                  if (isNaN(qty) || qty <= 0) {
+                    toast("Geçerli bir miktar girin", "error");
+                    return;
+                  }
+                  action(
+                    () => manualPaperOrder(quickSymbol, quickSide, qty),
+                    `${quickSide === "buy" ? "AL" : "SAT"} ${quickSymbol} ${qty}`,
+                    "quick",
+                  );
+                }}
+                disabled={!!actionLoadingBtn}
+              >
+                <Plus size={14} /> {quickSide === "buy" ? "AL" : "SAT"}
+              </Button>
+            </div>
+          </Card>
+        </section>
+      )}
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[2fr_1fr]">
         <Card>
@@ -342,25 +491,38 @@ export default function PaperTradingPage() {
               <thead className="border-b border-border text-muted">
                 <tr>
                   <th className="py-2" scope="col">Sembol</th>
+                  <th scope="col">Yön</th>
                   <th scope="col">Miktar</th>
                   <th scope="col">Giriş</th>
                   <th scope="col">Güncel</th>
                   <th scope="col">PnL</th>
+                  <th scope="col">PnL%</th>
                   <th scope="col">Stop</th>
                   <th scope="col">Hedef</th>
+                  <th scope="col"></th>
                 </tr>
               </thead>
               <tbody>
                 {positions.map((pos) => {
                   const pnl = Number(pos.unrealized_pnl);
+                  const cost = Number(pos.quantity) * Number(pos.average_entry_price);
+                  const pnlPct = cost > 0 ? (pnl / cost) * 100 : 0;
                   return (
                     <tr key={pos.id} className="border-b border-border">
                       <td className="py-3 font-medium">{pos.symbol}</td>
+                      <td>
+                        <span className={`inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase text-white ${pos.side === "sell" ? "bg-danger" : "bg-primary"}`}>
+                          {pos.side === "sell" ? "SHORT" : "LONG"}
+                        </span>
+                      </td>
                       <td>{fmtQty(pos.quantity)}</td>
                       <td>${fmtPrice(pos.average_entry_price)}</td>
                       <td>${fmtPrice(pos.last_price)}</td>
                       <td className={pnl >= 0 ? "text-primary font-medium" : "text-danger font-medium"}>
                         ${money(pos.unrealized_pnl)}
+                      </td>
+                      <td className={pnlPct >= 0 ? "text-primary" : "text-danger"}>
+                        {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%
                       </td>
                       <td className={pos.stop_loss ? "text-danger" : "text-muted"}>
                         {pos.stop_loss ? `$${fmtPrice(pos.stop_loss)}` : "-"}
@@ -368,12 +530,21 @@ export default function PaperTradingPage() {
                       <td className={pos.take_profit ? "text-primary" : "text-muted"}>
                         {pos.take_profit ? `$${fmtPrice(pos.take_profit)}` : "-"}
                       </td>
+                      <td>
+                        <button
+                          onClick={() => action(() => closePaperPosition(pos.id), `${pos.symbol} kapatıldı`, `close-${pos.id}`)}
+                          disabled={!!actionLoadingBtn}
+                          className="rounded bg-danger/10 px-2 py-1 text-xs font-medium text-danger hover:bg-danger/20"
+                        >
+                          <X size={12} className="inline" /> Kapat
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
                 {positions.length === 0 && (
                   <tr>
-                    <td className="py-6 text-muted" colSpan={7}>Açık pozisyon yok.</td>
+                    <td className="py-6 text-muted" colSpan={10}>Açık pozisyon yok.</td>
                   </tr>
                 )}
               </tbody>
@@ -399,7 +570,7 @@ export default function PaperTradingPage() {
         </Card>
       </section>
 
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[1fr_1fr]">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[1fr_1fr_1fr]">
         <Card>
           <h2 className="mb-4 text-base font-semibold">Edge (İşlem Ekonomisi)</h2>
           {economics && economics.edge.trades > 0 ? (
@@ -464,6 +635,29 @@ export default function PaperTradingPage() {
             <p className="text-sm text-muted">Veri yok.</p>
           )}
         </Card>
+
+        <Card>
+          <div className="mb-4 flex items-center gap-2">
+            <PieChart size={17} />
+            <h2 className="text-base font-semibold">Çıkış Tipleri</h2>
+          </div>
+          {exitPieData.length > 0 ? (
+            <div className="h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <RePieChart>
+                  <Pie data={exitPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, value }) => `${name}: ${value}`}>
+                    {exitPieData.map((entry) => (
+                      <Cell key={entry.name} fill={EXIT_COLORS[entry.name] || "#94a3b8"} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </RePieChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-sm text-muted">Kapanmış işlem yok.</p>
+          )}
+        </Card>
       </section>
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[1fr_1fr]">
@@ -493,7 +687,7 @@ export default function PaperTradingPage() {
             <div className="space-y-2">
               {Object.entries(diagnostics.reason_counts).map(([reason, count]) => {
                 const pct = (count / maxReasonCount) * 100;
-                const approved = reason === "approved";
+                const approved = reason.startsWith("approved") || reason.startsWith("long_entry") || reason.startsWith("short_entry");
                 return (
                   <div key={reason}>
                     <div className="flex items-center justify-between text-sm">
@@ -531,7 +725,7 @@ export default function PaperTradingPage() {
                   Object.entries(diagnostics.latest_by_symbol).map(([symbol, info]) => (
                     <tr key={symbol} className="border-b border-border">
                       <td className="py-3 font-medium">{symbol}</td>
-                      <td className={info.reason === "approved" ? "text-primary font-medium" : "text-muted"}>
+                      <td className={info.reason.includes("entry") || info.reason === "approved" ? "text-primary font-medium" : "text-muted"}>
                         {info.reason}
                       </td>
                       <td className="text-xs text-muted">{info.at ? fmtUTC(info.at, true) : "-"}</td>
@@ -562,6 +756,7 @@ export default function PaperTradingPage() {
                   <th scope="col">Miktar</th>
                   <th scope="col">Ücret</th>
                   <th scope="col">PnL</th>
+                  <th scope="col">Çıkış</th>
                 </tr>
               </thead>
               <tbody>
@@ -584,12 +779,15 @@ export default function PaperTradingPage() {
                       <td className={pnl >= 0 ? "font-medium text-primary" : "font-medium text-danger"}>
                         ${money(trade.realized_pnl)}
                       </td>
+                      <td className="text-xs text-muted">
+                        {trade.exit_reason ? trade.exit_reason.replace(/_/g, " ") : "giriş"}
+                      </td>
                     </tr>
                   );
                 })}
                 {trades.length === 0 && (
                   <tr>
-                    <td className="py-6 text-muted" colSpan={7}>İşlem geçmişi yok.</td>
+                    <td className="py-6 text-muted" colSpan={8}>İşlem geçmişi yok.</td>
                   </tr>
                 )}
               </tbody>
@@ -605,7 +803,7 @@ export default function PaperTradingPage() {
         confirmLabel="Sıfırla"
         danger
         onConfirm={async () => {
-          await action(resetPaperTrading, "Sıfırlandı", "reset");
+          await action(() => resetPaperTrading(), "Sıfırlandı", "reset");
           setConfirmReset(false);
         }}
         onCancel={() => setConfirmReset(false)}

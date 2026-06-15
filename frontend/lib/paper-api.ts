@@ -186,3 +186,35 @@ export async function getPaperEconomics(): Promise<PaperEconomics | null> {
     return null;
   }
 }
+
+export async function manualPaperOrder(symbol: string, side: "buy" | "sell", quantity: number): Promise<boolean> {
+  try {
+    const res = await authFetch(`/paper/manual-order`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, side, quantity }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function closePaperPosition(positionId: number): Promise<boolean> {
+  try {
+    const res = await authFetch(`/paper/close-position/${positionId}`, { method: "POST" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function getPaperExitStats(): Promise<{ counts: Record<string, number>; total_closed: number } | null> {
+  try {
+    const res = await authFetch(`/paper/exit-stats`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}

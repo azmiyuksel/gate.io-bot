@@ -183,6 +183,7 @@ def test_trend_filter_blocks_entries_below_ema200():
     from app.services.strategy.signals import CapitalPreservationStrategy
 
     # Steady downtrend: last close sits well below the 200 EMA.
+    # Long entries blocked, short entries only if RSI is overbought.
     candles = []
     for i in range(400):
         price = Decimal("200") - Decimal(str(i)) * Decimal("0.25")
@@ -195,14 +196,14 @@ def test_trend_filter_blocks_entries_below_ema200():
     strat = CapitalPreservationStrategy()
     assert strat.trend_filter_enabled is True
     signal = strat.evaluate(candles)
-    assert signal.should_buy is False
-    assert signal.reason == "below_200_ema"
+    assert signal.should_enter is False
+    # In a downtrend, long entries are blocked; checks short conditions instead
+    assert signal.reason == "rsi_not_overbought"
 
 
 def test_paper_adapter_uses_looser_paper_thresholds():
-    # Live keeps the strict EMA200 trend filter; paper runs deliberately looser
-    # thresholds (trend filter off, higher RSI, wider EMA20 band) so the simulation
-    # produces enough activity to observe.
+    # Paper mirrors live thresholds by default (both use trend filter, same RSI/EMA20).
+    # Override env PAPER_TREND_FILTER_ENABLED=False etc. to intentionally relax.
     from decimal import Decimal
 
     from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
@@ -210,9 +211,9 @@ def test_paper_adapter_uses_looser_paper_thresholds():
 
     assert CapitalPreservationStrategy().trend_filter_enabled is True
     paper = CapitalPreservationAdapter()._strategy
-    assert paper.trend_filter_enabled is False
-    assert paper.rsi_threshold == Decimal("40")
-    assert paper.ema20_distance_pct == Decimal("0.025")
+    assert paper.trend_filter_enabled is True
+    assert paper.rsi_threshold == Decimal("35")
+    assert paper.ema20_distance_pct == Decimal("0.015")
 
 
 async def test_candles_range_pages_past_1000_cap(monkeypatch):

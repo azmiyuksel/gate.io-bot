@@ -14,6 +14,7 @@ export type PaperStatus = {
 export type PaperPosition = {
   id: number;
   symbol: string;
+  side: string;
   quantity: string;
   average_entry_price: string;
   last_price: string;
@@ -32,6 +33,7 @@ export type PaperTrade = {
   quantity: string;
   fee: string;
   realized_pnl: string;
+  exit_reason: string | null;
   traded_at: string;
 };
 

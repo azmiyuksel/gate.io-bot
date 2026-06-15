@@ -20,8 +20,13 @@ class PaperPortfolio:
 
     def equity(self) -> Decimal:
         open_positions = self.open_positions()
-        exposure_value = sum(position.quantity * position.last_price for position in open_positions)
-        return self.account.cash_balance + exposure_value
+        total_unrealized = Decimal("0")
+        for position in open_positions:
+            if position.side == "sell":
+                total_unrealized += (position.average_entry_price - position.last_price) * position.quantity
+            else:
+                total_unrealized += (position.last_price - position.average_entry_price) * position.quantity
+        return self.account.cash_balance + total_unrealized
 
     def open_positions(self) -> list[PaperPosition]:
         return (
@@ -42,7 +47,10 @@ class PaperPortfolio:
             if position.symbol != symbol:
                 continue
             position.last_price = price
-            position.unrealized_pnl = (price - position.average_entry_price) * position.quantity
+            if position.side == "sell":
+                position.unrealized_pnl = (position.average_entry_price - price) * position.quantity
+            else:
+                position.unrealized_pnl = (price - position.average_entry_price) * position.quantity
         self.db.commit()
 
     def record_equity(self) -> PaperEquityCurve | None:

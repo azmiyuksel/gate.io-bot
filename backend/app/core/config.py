@@ -87,12 +87,13 @@ class Settings(BaseSettings):
     # allows normal crypto volatility while still filtering extreme moves.
     strategy_max_24h_range_pct: float = 0.12
 
-    # --- Paper-trading entry threshold overrides (looser than live) ---
-    # Paper is for observing the simulation, so it runs deliberately more permissive
-    # thresholds than live (which stays strict for capital preservation).
-    paper_rsi_threshold: float = 40.0
-    paper_ema20_distance_pct: float = 0.025
-    paper_trend_filter_enabled: bool = False
+    # --- Paper-trading entry threshold overrides (mirrors live by default) ---
+    # Paper mirrors live thresholds so simulation accurately predicts real
+    # trading outcomes. Override via env PAPER_RSI_THRESHOLD, PAPER_EMA20_DISTANCE_PCT,
+    # PAPER_TREND_FILTER_ENABLED to intentionally relax for exploration.
+    paper_rsi_threshold: float = 35.0
+    paper_ema20_distance_pct: float = 0.015
+    paper_trend_filter_enabled: bool = True
     # Default trailing-stop distance (used when StrategySettings is missing).
     strategy_trailing_stop_pct: float = 0.03
     # Number of candles that represent a "daily" range (depends on candle interval).
@@ -126,9 +127,16 @@ class Settings(BaseSettings):
     # unsafe to size new positions against. Trading runs every 15m, so allow ~2 cycles.
     max_equity_staleness_seconds: int = 1800
     gateio_ws_url: str = "wss://api.gateio.ws/ws/v4/"
-    market_data_interval: str = "1h"
+    market_data_interval: str = "15m"
     # How often the paper-trading engine re-evaluates entries on real candles.
-    paper_eval_interval_seconds: int = 300
+    # 30s on 15m candles ensures new candle data is picked up within half a bar.
+    paper_eval_interval_seconds: int = 30
+    # Paper order type: "market" (default) or "limit" (maker, lower fees)
+    paper_order_type: str = "market"
+    # Multi-timeframe confirmation: when enabled, entries require the higher
+    # timeframe (4h) trend to align with the entry direction.
+    strategy_mtf_enabled: bool = True
+    strategy_mtf_interval: str = "4h"
 
     # --- Market Data Quality ---
     # Single-candle move beyond this fraction is flagged as a spike (0.01-0.10 typical).

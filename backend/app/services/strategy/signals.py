@@ -10,10 +10,12 @@ STRATEGY_NAME = "capital_preservation_v1"
 
 @dataclass(frozen=True)
 class Signal:
-    should_buy: bool
+    should_enter: bool
+    direction: str  # "long" or "short"
     reason: str
     entry_price: Decimal | None = None
     atr_value: Decimal | None = None
+    diagnostics: dict | None = None
 
 
 class CapitalPreservationStrategy:
@@ -27,6 +29,7 @@ class CapitalPreservationStrategy:
 
         settings = get_settings()
         self.rsi_threshold = Decimal(str(settings.strategy_rsi_threshold))
+        self.rsi_overbought = Decimal(str(getattr(settings, "strategy_rsi_overbought", "65")))
         self.ema20_distance_pct = Decimal(str(settings.strategy_ema20_distance_pct))
         self.max_24h_range_pct = Decimal(str(settings.strategy_max_24h_range_pct))
         self.daily_range_candles = settings.strategy_daily_range_candles
@@ -38,7 +41,7 @@ class CapitalPreservationStrategy:
 
     def evaluate(self, candles: list[dict]) -> Signal:
         if len(candles) < 200:
-            return Signal(False, "not_enough_history")
+            return Signal(False, "", "not_enough_history")
 
         closes = [Decimal(str(candle["close"])) for candle in candles]
         last_price = closes[-1]
@@ -47,22 +50,16 @@ class CapitalPreservationStrategy:
         rsi_14 = rsi(closes, 14)
         atr_14 = atr(candles, 14)
         if None in (ema_200, ema_20, rsi_14, atr_14):
-            return Signal(False, "indicator_unavailable")
+            return Signal(False, "", "indicator_unavailable")
 
-        # Guard against degenerate feeds: a zero/negative price or EMA would make
-        # the ratio checks below raise ZeroDivisionError and crash the scan.
         if last_price <= 0 or ema_20 <= 0 or ema_200 <= 0:
-            return Signal(False, "invalid_price_data")
+            return Signal(False, "", "invalid_price_data")
 
-        # --- Volume filter: reject low-volume entries ---
-        # Extract base volumes from candles (index 6 in GateIO v4 response, or derived from quote_volume/close)
         base_volumes: list[Decimal] = []
         for candle in candles:
-            # GateIOClient.candles() returns dicts with "volume" key (base volume)
             if "volume" in candle and candle["volume"] is not None:
                 base_volumes.append(Decimal(str(candle["volume"])))
             elif "quote_volume" in candle and candle["quote_volume"] is not None:
-                # Fallback: derive base volume from quote volume / close
                 close = Decimal(str(candle["close"])) if candle["close"] is not None else Decimal("0")
                 if close > 0:
                     base_volumes.append(Decimal(str(candle["quote_volume"])) / close)
@@ -71,25 +68,59 @@ class CapitalPreservationStrategy:
             else:
                 base_volumes.append(Decimal("0"))
 
-        if len(base_volumes) >= 20:  # Need enough samples for meaningful average
+        vol_ratio = Decimal("1")
+        if len(base_volumes) >= 20:
             recent_volumes = base_volumes[-20:]
             avg_volume = sum(recent_volumes) / Decimal(len(recent_volumes))
             current_volume = base_volumes[-1]
-            if avg_volume > 0 and current_volume / avg_volume < self.min_volume_ratio:
-                return Signal(False, "low_volume")
-
-        if self.trend_filter_enabled and last_price <= ema_200:
-            return Signal(False, "below_200_ema")
-        if rsi_14 >= self.rsi_threshold:
-            return Signal(False, "rsi_not_oversold")
+            if avg_volume > 0:
+                vol_ratio = current_volume / avg_volume
+                if vol_ratio < self.min_volume_ratio:
+                    return Signal(False, "", "low_volume",
+                        diagnostics={"rsi": float(rsi_14), "vol_ratio": float(vol_ratio)})
 
         distance_to_ema20 = abs(last_price - ema_20) / ema_20
-        if distance_to_ema20 > self.ema20_distance_pct:
-            return Signal(False, "not_near_20_ema")
+        distance_ok = distance_to_ema20 <= self.ema20_distance_pct
 
         n = min(self.daily_range_candles, len(closes))
         daily_range = max(closes[-n:]) - min(closes[-n:])
-        if daily_range / last_price > self.max_24h_range_pct:
-            return Signal(False, "excessive_24h_volatility")
+        daily_range_pct = daily_range / last_price
+        range_ok = daily_range_pct <= self.max_24h_range_pct
 
-        return Signal(True, "long_entry", last_price, atr_14)
+        trend_up = last_price > ema_200
+        rsi_oversold = rsi_14 < self.rsi_threshold
+
+        diag = {
+            "rsi": float(rsi_14),
+            "ema20": float(ema_20),
+            "ema200": float(ema_200),
+            "price": float(last_price),
+            "dist_ema20_pct": float(distance_to_ema20),
+            "range_pct": float(daily_range_pct),
+            "vol_ratio": float(vol_ratio),
+        }
+
+        if trend_up and rsi_oversold and distance_ok and range_ok:
+            return Signal(True, "long", "long_entry", last_price, atr_14, diagnostics=diag)
+
+        if self.trend_filter_enabled:
+            trend_down = last_price < ema_200
+            rsi_overbought = rsi_14 > self.rsi_overbought
+            if trend_down and rsi_overbought and distance_ok and range_ok:
+                return Signal(True, "short", "short_entry", last_price, atr_14, diagnostics=diag)
+
+        if self.trend_filter_enabled:
+            if not trend_up and not trend_down:
+                return Signal(False, "", "not_trending", diagnostics=diag)
+            if trend_up and not rsi_oversold:
+                return Signal(False, "", "rsi_not_oversold", diagnostics=diag)
+            if trend_down and not rsi_overbought and rsi_14 <= self.rsi_overbought:
+                return Signal(False, "", "rsi_not_overbought", diagnostics=diag)
+        else:
+            if not rsi_oversold:
+                return Signal(False, "", "rsi_not_oversold", diagnostics=diag)
+        if not distance_ok:
+            return Signal(False, "", "not_near_20_ema", diagnostics=diag)
+        if not range_ok:
+            return Signal(False, "", "excessive_24h_volatility", diagnostics=diag)
+        return Signal(False, "", "no_signal", diagnostics=diag)

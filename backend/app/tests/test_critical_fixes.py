@@ -31,7 +31,7 @@ def test_strategy_guards_against_zero_price() -> None:
     # 209 healthy candles followed by a corrupt zero-price candle.
     candles = [_candle(100.0) for _ in range(209)] + [_candle(0.0)]
     signal = CapitalPreservationStrategy().evaluate(candles)
-    assert signal.should_buy is False
+    assert signal.should_enter is False
     assert signal.reason == "invalid_price_data"
 
 

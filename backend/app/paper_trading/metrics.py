@@ -29,7 +29,16 @@ class PaperMetrics:
         wins = pnls[pnls > 0]
         equity = np.array([float(point.equity) for point in equity_points], dtype="float64")
         returns = np.diff(equity) / np.maximum(equity[:-1], 1) if len(equity) > 1 else np.array([])
-        sharpe = float((returns.mean() / returns.std()) * np.sqrt(365 * 24)) if returns.size and returns.std() else 0
+        # Annualization: compute actual observations per year from timestamps
+        if len(equity_points) >= 2:
+            first_ts = equity_points[0].timestamp
+            last_ts = equity_points[-1].timestamp
+            span_seconds = (last_ts - first_ts).total_seconds() if last_ts > first_ts else 300
+            obs_per_second = len(equity_points) / max(span_seconds, 1)
+            annual_factor = np.sqrt(obs_per_second * 86400 * 365)
+        else:
+            annual_factor = np.sqrt(365 * 24 * 12)  # 5-min default
+        sharpe = float(returns.mean() / returns.std() * annual_factor) if returns.size and returns.std() else 0
         drawdown = min([float(point.drawdown) for point in equity_points] + [0])
         return {
             "realized_pnl": float(sum((trade.realized_pnl for trade in trades), Decimal("0"))),

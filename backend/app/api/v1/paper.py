@@ -5,13 +5,17 @@ import json
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 
 from app.api.deps import DbSession, current_user_role, require_admin
 from app.models.entities import PaperAccount, PaperEquityCurve, PaperLog, PaperOrder, PaperPosition, PaperTrade
 from app.models.enums import PaperBotStatus
 from app.paper_trading.metrics import PaperMetrics
+from app.paper_trading.models import MarketData, PaperSide, TradingSignal
 from app.paper_trading.portfolio import PaperPortfolio
+from app.paper_trading.broker import PaperBroker
 from app.schemas.paper import (
+    ManualOrderRequest,
     PaperLogOut,
     PaperMetricsOut,
     PaperOrderOut,
@@ -214,11 +218,22 @@ def risk_status(db: DbSession) -> PaperRiskStatusOut:
     )
     current_dd = abs(float(equity_points[0].drawdown)) if equity_points else 0.0
     equity = portfolio.equity()
-    daily_loss = (
-        float(max(account.initial_balance - equity, Decimal("0")) / account.initial_balance)
-        if account.initial_balance > 0
-        else 0.0
+
+    # Daily loss from 24h rolling peak (consistent with risk simulator)
+    cutoff = datetime.now(UTC) - timedelta(hours=24)
+    peak_24h = (
+        db.query(func.max(PaperEquityCurve.equity))
+        .filter(
+            PaperEquityCurve.account_id == account.id,
+            PaperEquityCurve.timestamp >= cutoff,
+        )
+        .scalar()
     )
+    if peak_24h is None:
+        peak_24h = float(account.initial_balance)
+    peak = max(float(peak_24h), float(equity))
+    daily_loss = max(peak - float(equity), 0.0) / peak if peak > 0 else 0.0
+
     return PaperRiskStatusOut(
         max_daily_loss_pct=float(account.max_daily_loss_pct),
         current_daily_loss_pct=daily_loss,
@@ -230,6 +245,66 @@ def risk_status(db: DbSession) -> PaperRiskStatusOut:
         current_open_positions=len(portfolio.open_positions()),
         status=account.status,
     )
+
+
+@router.post("/manual-order")
+def manual_order(payload: ManualOrderRequest, db: DbSession) -> dict:
+    account = _get_or_create_account(db)
+    broker = PaperBroker(db, account)
+    now = datetime.now(UTC)
+    data = MarketData(
+        symbol=payload.symbol,
+        timestamp=now,
+        price=0.0,  # will be filled by latest market price or user-specified
+        volume=0.0,
+    )
+    signal = TradingSignal(
+        symbol=payload.symbol,
+        side=PaperSide.buy if payload.side == "buy" else PaperSide.sell,
+        strength=1.0,
+        strategy="manual",
+        timestamp=now,
+        metadata={"manual": True},
+    )
+    order = broker.submit_signal(signal, payload.quantity, data)
+    return {"order_id": order.id, "status": order.status, "side": payload.side, "symbol": payload.symbol}
+
+
+@router.post("/close-position/{position_id}")
+def close_position(position_id: int, db: DbSession) -> dict:
+    account = _get_or_create_account(db)
+    position = (
+        db.query(PaperPosition)
+        .filter(PaperPosition.id == position_id, PaperPosition.account_id == account.id, PaperPosition.is_open.is_(True))
+        .first()
+    )
+    if not position:
+        return {"error": "position not found or already closed"}
+    broker = PaperBroker(db, account)
+    data = MarketData(
+        symbol=position.symbol,
+        timestamp=datetime.now(UTC),
+        price=float(position.last_price),
+        volume=0.0,
+    )
+    broker.close_position(position, data, "manual_close")
+    return {"closed": True, "position_id": position_id}
+
+
+@router.get("/exit-stats")
+def exit_stats(db: DbSession) -> dict:
+    account = _get_or_create_account(db)
+    trades = (
+        db.query(PaperTrade)
+        .filter(PaperTrade.account_id == account.id, PaperTrade.exit_reason.isnot(None))
+        .all()
+    )
+    counts: dict[str, int] = {}
+    for t in trades:
+        reason = t.exit_reason or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    total_closed = sum(counts.values())
+    return {"counts": counts, "total_closed": total_closed}
 
 
 @router.get("/logs", response_model=list[PaperLogOut])

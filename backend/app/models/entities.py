@@ -343,6 +343,7 @@ class PaperTrade(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     fee: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
     realized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
+    exit_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     traded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
@@ -352,6 +353,7 @@ class PaperPosition(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("paper_accounts.id", ondelete="CASCADE"))
     symbol: Mapped[str] = mapped_column(String(32), index=True)
+    side: Mapped[str] = mapped_column(String(8), default="buy")
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     average_entry_price: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     last_price: Mapped[Decimal] = mapped_column(Numeric(24, 10))
