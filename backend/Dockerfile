@@ -31,6 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 
 COPY --from=builder /opt/venv /opt/venv
 COPY . .
+# Remove the stale app package installed into site-packages by the builder,
+# so Python always imports from the fresh /app/app/ source (COPY . . above).
+RUN rm -rf /opt/venv/lib/python*/site-packages/app /opt/venv/lib/python*/site-packages/gateio_capital_bot*
 RUN chown -R appuser:appuser /app
 
 USER appuser
