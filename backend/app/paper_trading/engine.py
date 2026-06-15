@@ -37,7 +37,9 @@ class PaperTradingEngine:
         self._running = False
 
     async def start(self, symbols: list[str]) -> None:
-        self.account.status = PaperBotStatus.running
+        if self.account.status != PaperBotStatus.running:
+            logger.info("Engine start skipped: account status is %s", self.account.status)
+            return
         self._log("system_started", "Paper trading started")
         self.db.commit()
         logger.info("Paper trading engine starting for symbols: %s", symbols)
@@ -60,24 +62,38 @@ class PaperTradingEngine:
         tick_count = 0
         tick_per_symbol: dict[str, int] = {}
         last_status = time()
+        last_db_check = time()
         async for data in self.stream.stream():
             tick_per_symbol[data.symbol] = tick_per_symbol.get(data.symbol, 0) + 1
             tick_count += 1
             if time() - last_status >= 60:
                 logger.info("Ticks received: %d, per symbol: %s", tick_count, tick_per_symbol)
                 last_status = time()
+            # Check stop signal from API every 5s (DB status is the source of truth)
+            if time() - last_db_check >= 5:
+                try:
+                    self.db.refresh(self.account)
+                except Exception:
+                    pass
+                last_db_check = time()
+                if self.account.status != PaperBotStatus.running:
+                    logger.info("Tick loop stopping: account status is %s", self.account.status)
+                    self.stream.stop()
+                    return
             await self.on_tick(data)
 
     async def _run_entry_loop(self, symbols: list[str]) -> None:
         """Evaluate entries periodically on real candles (independent of ticks)."""
         settings = get_settings()
         while self._running:
-            # Honour pause/stop toggled via the API (different DB session).
             try:
                 self.db.refresh(self.account)
             except Exception:
                 pass
-            # Auto-resume from PAUSED after cooldown if risk limits recovered
+            # Stop signal from API — exit the loop
+            if self.account.status == PaperBotStatus.stopped:
+                logger.info("Entry loop stopping: account status is STOPPED")
+                return
             if self.account.status == PaperBotStatus.paused:
                 self.risk.maybe_auto_resume()
             if self.account.status == PaperBotStatus.running:
