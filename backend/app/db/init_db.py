@@ -21,5 +21,25 @@ def init_db() -> None:
         # Stamp the head revision so Alembic knows all tables are already present,
         # then future deploys only apply pending migrations.
         command.stamp(alembic_cfg, "head")
+        # One-time cleanup of old paper trading data from the create_all era.
+        _cleanup_paper_data()
     else:
         command.upgrade(alembic_cfg, "head")
+
+
+def _cleanup_paper_data() -> None:
+    """Clear stale paper trading data left over from create_all deployments."""
+    from sqlalchemy import text
+
+    from app.db.session import engine
+
+    with engine.connect() as conn:
+        tables = ("paper_logs", "paper_equity_curve", "paper_orders",
+                   "paper_trades", "paper_positions")
+        for t in tables:
+            conn.execute(text(f"DELETE FROM {t}"))
+        conn.execute(text(
+            "UPDATE paper_accounts SET cash_balance = initial_balance, "
+            "realized_pnl = 0, updated_at = NOW()"
+        ))
+        conn.commit()
