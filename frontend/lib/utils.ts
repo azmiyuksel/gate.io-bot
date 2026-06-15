@@ -68,3 +68,8 @@ export function fmtUTC(value: string | number | Date, withSeconds = false): stri
   });
   return `${s} UTC`;
 }
+
+export function num(v: string | number | null | undefined): number {
+  if (v === null || v === undefined) return 0;
+  return typeof v === "number" ? v : Number(v);
+}

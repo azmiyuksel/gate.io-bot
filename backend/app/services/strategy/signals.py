@@ -29,15 +29,12 @@ class CapitalPreservationStrategy:
 
         settings = get_settings()
         self.rsi_threshold = Decimal(str(settings.strategy_rsi_threshold))
-        self.rsi_overbought = Decimal(str(getattr(settings, "strategy_rsi_overbought", "65")))
+        self.rsi_overbought = Decimal(str(settings.strategy_rsi_overbought))
         self.ema20_distance_pct = Decimal(str(settings.strategy_ema20_distance_pct))
         self.max_24h_range_pct = Decimal(str(settings.strategy_max_24h_range_pct))
         self.daily_range_candles = settings.strategy_daily_range_candles
-        # Volume filter: reject entries when current volume is below this fraction
-        # of the recent average volume. Default 50%.
-        self.min_volume_ratio = Decimal(str(getattr(settings, "strategy_min_volume_ratio", "0.5")))
-        # EMA200 trend filter (capital preservation): block longs below the 200 EMA.
-        self.trend_filter_enabled = bool(getattr(settings, "strategy_trend_filter_enabled", True))
+        self.min_volume_ratio = Decimal(str(settings.strategy_min_volume_ratio))
+        self.trend_filter_enabled = settings.strategy_trend_filter_enabled
 
     def evaluate(self, candles: list[dict]) -> Signal:
         if len(candles) < 200:

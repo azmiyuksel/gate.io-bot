@@ -17,7 +17,7 @@ export async function getDataQualityStatus(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching data quality status for ${symbol}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching data quality status for ${symbol}:`, err);
   }
   return null;
 }
@@ -33,7 +33,7 @@ export async function getDataQualityAnomalies(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching anomalies for ${symbol}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching anomalies for ${symbol}:`, err);
   }
   return [];
 }
@@ -49,7 +49,7 @@ export async function getDataQualityHealthLogs(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching health logs for ${symbol}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching health logs for ${symbol}:`, err);
   }
   return [];
 }
@@ -65,7 +65,7 @@ export async function getDataQualityReport(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching data quality report for ${symbol}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching data quality report for ${symbol}:`, err);
   }
   return null;
 }
@@ -83,7 +83,7 @@ export async function revalidateDataQuality(
     });
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error revalidating data quality for ${symbol}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error revalidating data quality for ${symbol}:`, err);
   }
   return null;
 }

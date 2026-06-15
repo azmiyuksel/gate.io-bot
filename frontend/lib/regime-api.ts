@@ -6,7 +6,7 @@ export async function getCurrentRegime(symbol: string = "BTC_USDT", timeframe: s
     const res = await authFetch(`/regime/current?symbol=${symbol}&timeframe=${timeframe}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching current regime:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching current regime:", err);
   }
   return null;
 }
@@ -16,7 +16,7 @@ export async function getRegimeHistory(symbol: string = "BTC_USDT", timeframe: s
     const res = await authFetch(`/regime/history?symbol=${symbol}&timeframe=${timeframe}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching regime history:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching regime history:", err);
   }
   return [];
 }
@@ -26,7 +26,7 @@ export async function getConfidenceHistory(symbol: string = "BTC_USDT"): Promise
     const res = await authFetch(`/regime/confidence?symbol=${symbol}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching confidence history:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching confidence history:", err);
   }
   return [];
 }
@@ -36,7 +36,7 @@ export async function getRegimePerformance(): Promise<RegimePerformance[]> {
     const res = await authFetch(`/regime/performance`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching regime performance:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching regime performance:", err);
   }
   return [];
 }
@@ -50,7 +50,7 @@ export async function recalculateRegime(symbol: string = "BTC_USDT", timeframe: 
     });
     return res.ok;
   } catch (err) {
-    console.error("Error recalculating regime:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error recalculating regime:", err);
   }
   return false;
 }
@@ -60,7 +60,7 @@ export async function getRegimeTransitions(symbol: string = "BTC_USDT"): Promise
     const res = await authFetch(`/regime/transitions?symbol=${symbol}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching regime transitions:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching regime transitions:", err);
   }
   return [];
 }

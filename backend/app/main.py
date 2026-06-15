@@ -2,10 +2,11 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.deps import require_admin
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, correlation_id, get_logger
@@ -127,7 +128,7 @@ def metrics() -> Response:
     return Response(content=payload, media_type=content_type)
 
 
-@app.get("/debug/config")
+@app.get("/debug/config", dependencies=[Depends(require_admin)])
 def debug_config() -> dict:
     """Return initialization status for debugging deployments."""
     return {

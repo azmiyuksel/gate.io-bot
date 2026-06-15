@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import { Navbar } from "@/components/navbar";
 import { ToastProvider } from "@/components/ui/toast";
+import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
   title: "Gate.io Capital Bot",
@@ -16,8 +17,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           İçeriğe atla
         </a>
         <ToastProvider>
-          <Navbar />
-          <div id="main-content" className="min-h-screen lg:ml-56">{children}</div>
+          <AuthProvider>
+            <Navbar />
+            <div id="main-content" className="min-h-screen lg:ml-56">{children}</div>
+          </AuthProvider>
         </ToastProvider>
       </body>
     </html>

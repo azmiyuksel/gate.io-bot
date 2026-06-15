@@ -87,13 +87,82 @@ class TradingEngine:
         self.notifier = TelegramNotifier()
         self._health_anomaly_detector = StrategyAnomalyDetector()
 
+    # ------------------------------------------------------------------
+    # Orchestration
+    # ------------------------------------------------------------------
+
     async def scan_symbol(self, symbol: str, equity: Decimal) -> None:
-        signal_time = datetime.now(UTC)
-        # Global kill-switch: no new entries while tripped.
-        if self.breaker.is_tripped():
-            self._log("circuit_breaker", f"{symbol}: skipped, circuit breaker tripped")
+        if not self._check_circuit_breaker(symbol):
             return
 
+        result = await self._fetch_and_validate_candles(symbol)
+        if result is None:
+            return
+        candles, data_risk_mult = result
+
+        signal = self._evaluate_strategy_signal(symbol, candles)
+        if signal is None:
+            return
+
+        # Convert exchange candles to list of dicts for feature calculation
+        candles_list = [
+            {
+                "open": float(c["open"]),
+                "high": float(c["high"]),
+                "low": float(c["low"]),
+                "close": float(c["close"]),
+                "volume": float(c["volume"]),
+                "timestamp": c["timestamp"],
+            }
+            for c in candles
+        ]
+
+        allowed, _reason, risk_mult = self._check_regime_filter(symbol, candles_list)
+        if not allowed:
+            return
+
+        strategy_name = self.strategy.name
+
+        health_status = self._check_strategy_health(strategy_name)
+        health_state = health_status.get("state")
+        if health_state in ("PAUSED", "DISABLED"):
+            self._log("health_filter", f"{symbol} trade blocked: strategy health is {health_state}")
+            self.db.commit()
+            return
+
+        health_mult = Decimal(str(health_status.get("risk_multiplier", 1)))
+
+        result = self._approve_risk_and_size(symbol, equity, signal, risk_mult, health_mult, data_risk_mult)
+        if result is None:
+            return
+        final_quantity, stop_loss, take_profit = result
+
+        if not self._check_correlation_filter(symbol):
+            return
+
+        if not await self._check_slippage_guard(symbol, signal):
+            return
+
+        await self._execute_entry(symbol, signal, final_quantity, stop_loss, take_profit, strategy_name)
+
+    # ------------------------------------------------------------------
+    # Private helpers — extracted from scan_symbol
+    # ------------------------------------------------------------------
+
+    def _check_circuit_breaker(self, symbol: str) -> bool:
+        """Global kill-switch: no new entries while tripped."""
+        if self.breaker.is_tripped():
+            self._log("circuit_breaker", f"{symbol}: skipped, circuit breaker tripped")
+            self.db.commit()
+            return False
+        return True
+
+    async def _fetch_and_validate_candles(self, symbol: str):
+        """Fetch candles and run through the market-data quality pipeline.
+
+        Returns (candles, data_risk_mult) on success, None when data is invalid
+        and mdq_pause_on_invalid is enabled.
+        """
         _settings = get_settings()
         candles = await self.client.candles(
             symbol,
@@ -103,80 +172,71 @@ class TradingEngine:
 
         # Market Data Quality gate: run the feed through the quality pipeline and
         # block trading on unreliable data, de-risk on degraded data.
-        mdq_result = MarketDataQualityEngine(self.db).ingest(candles, symbol, get_settings().market_data_interval, source="gateio")
+        mdq_result = MarketDataQualityEngine(self.db).ingest(
+            candles, symbol, get_settings().market_data_interval, source="gateio"
+        )
         data_status = mdq_result.trade_status
         if data_status == DataTradeStatus.invalid and get_settings().mdq_pause_on_invalid:
             self._log(
                 "data_quality",
                 f"{symbol}: trading paused, data INVALID (health={mdq_result.health.score})",
             )
-            return
+            self.db.commit()
+            return None
         degraded_mult = Decimal(str(get_settings().mdq_degraded_risk_multiplier))
         data_risk_mult = degraded_mult if data_status == DataTradeStatus.degraded else Decimal("1")
+        return candles, data_risk_mult
 
+    def _evaluate_strategy_signal(self, symbol: str, candles: list):
+        """Run the strategy against the candle feed.
+
+        Returns the signal object when a valid buy signal is present; returns None
+        (after logging and committing) otherwise.
+        """
         signal = self.strategy.evaluate(candles)
         if not signal.should_buy or signal.entry_price is None or signal.atr_value is None:
             self._log("strategy", f"{symbol}: {signal.reason}")
-            return
+            self.db.commit()
+            return None
+        return signal
 
-        # Market Regime Detection Filter
+    def _check_regime_filter(self, symbol: str, candles_list: list):
+        """Update market regime and check whether the strategy is allowed to trade.
+
+        Returns (allowed: bool, reason: str, risk_mult: Decimal).  Logs and
+        commits when trading is blocked by the regime filter.
+        """
         regime_engine = MarketRegimeEngine(self.db)
-        
-        # Convert exchange candles to list of dicts for feature calculation
-        candles_list = [
-            {
-                "open": float(c["open"]),
-                "high": float(c["high"]),
-                "low": float(c["low"]),
-                "close": float(c["close"]),
-                "volume": float(c["volume"]),
-                "timestamp": c["timestamp"]
-            }
-            for c in candles
-        ]
-        
         regime_engine.update_regime(symbol, get_settings().market_data_interval, candles_list)
         strategy_name = self.strategy.name
         allowed, reason, risk_mult = regime_engine.should_trade(strategy_name, symbol)
-        
         if not allowed:
             self._log("regime_filter", f"{symbol} trade blocked by regime: {reason}")
-            return
+            self.db.commit()
+        return allowed, reason, risk_mult
 
-        # Strategy Health Filter
+    def _check_strategy_health(self, strategy_name: str) -> dict:
+        """Run the strategy-health engine and return the health-status dict."""
         health_engine = StrategyHealthEngine(self.db, anomaly_detector=self._health_anomaly_detector)
         health_status = health_engine.update_health(strategy_name) or {}
+        return health_status
 
-        health_state = health_status.get("state")
-        if health_state in ("PAUSED", "DISABLED"):
-            self._log("health_filter", f"{symbol} trade blocked: strategy health is {health_state}")
-            return
+    def _approve_risk_and_size(
+        self, symbol: str, equity: Decimal, signal, risk_mult: Decimal,
+        health_mult: Decimal, data_risk_mult: Decimal,
+    ):
+        """Run the risk manager and scale the position quantity by all active
+        risk multipliers (regime, health, data-quality, drawdown).
 
+        Returns (final_quantity, stop_loss, take_profit) on success, None when
+        the risk manager rejects the entry or the scaled quantity is <= 0.
+        """
         decision = self.risk.approve_entry(equity, signal.entry_price, signal.atr_value)
         if not decision.allowed:
             self._log("risk", f"{symbol}: {decision.reason}")
-            return
+            self.db.commit()
+            return None
 
-        # Correlation-aware portfolio guard (opt-in): block a new entry that is too
-        # correlated with an already-open position, so several "diversified" trades
-        # don't become one concentrated directional bet.
-        if get_settings().correlation_filter_enabled:
-            open_syms = [p.symbol for p in self.positions.open_positions() if p.symbol != symbol]
-            if open_syms:
-                corr = CorrelationEngine(self.db).calculate_correlation(
-                    [symbol, *open_syms], get_settings().market_data_interval
-                )
-                mx = max_correlation(corr.get("matrix", {}), symbol, open_syms)
-                if mx > float(get_settings().max_position_correlation):
-                    self._log(
-                        "correlation_filter",
-                        f"{symbol}: skipped, correlation {mx:.2f} with open positions "
-                        f"> {get_settings().max_position_correlation}",
-                    )
-                    return
-
-        # Scale position quantity by regime, health and data-quality risk multipliers
-        health_mult = Decimal(str(health_status.get("risk_multiplier", 1)))
         # Graded de-risking as account drawdown deepens (recovery-math aware).
         dd_mult = Decimal("1")
         _s = get_settings()
@@ -188,25 +248,67 @@ class TradingEngine:
             )
         final_quantity = decision.quantity * risk_mult * health_mult * data_risk_mult * dd_mult
         if final_quantity <= 0:
-            self._log("risk_filter", f"{symbol} trade quantity scaled to zero by risk filters (regime: {risk_mult}x, health: {health_mult}x, data: {data_risk_mult}x, drawdown: {dd_mult}x)")
-            return
+            self._log(
+                "risk_filter",
+                f"{symbol} trade quantity scaled to zero by risk filters "
+                f"(regime: {risk_mult}x, health: {health_mult}x, data: {data_risk_mult}x, drawdown: {dd_mult}x)",
+            )
+            self.db.commit()
+            return None
+        return final_quantity, decision.stop_loss, decision.take_profit
 
-        # Pre-trade slippage guard: a market BUY has no price cap, so if the live
-        # price has already run away from the signal price, abort rather than chase
-        # the fill into adverse slippage.
+    def _check_correlation_filter(self, symbol: str) -> bool:
+        """Correlation-aware portfolio guard: block a new entry that is too
+        correlated with an already-open position, so several "diversified" trades
+        don't become one concentrated directional bet."""
+        if not get_settings().correlation_filter_enabled:
+            return True
+        open_syms = [p.symbol for p in self.positions.open_positions() if p.symbol != symbol]
+        if not open_syms:
+            return True
+        corr = CorrelationEngine(self.db).calculate_correlation(
+            [symbol, *open_syms], get_settings().market_data_interval
+        )
+        mx = max_correlation(corr.get("matrix", {}), symbol, open_syms)
+        if mx > float(get_settings().max_position_correlation):
+            self._log(
+                "correlation_filter",
+                f"{symbol}: skipped, correlation {mx:.2f} with open positions "
+                f"> {get_settings().max_position_correlation}",
+            )
+            self.db.commit()
+            return False
+        return True
+
+    async def _check_slippage_guard(self, symbol: str, signal) -> bool:
+        """Pre-trade slippage guard: a market BUY has no price cap, so if the live
+        price has already run away from the signal price, abort rather than chase
+        the fill into adverse slippage."""
+        _settings = get_settings()
         entry_slip_band = Decimal(str(_settings.entry_max_slippage_pct))
-        if entry_slip_band > 0:
-            live_price = await self.client.last_price(symbol)
-            if live_price is not None and live_price > 0:
-                adverse_move = (live_price - signal.entry_price) / signal.entry_price
-                if adverse_move > entry_slip_band:
-                    self._log(
-                        "slippage_guard",
-                        f"{symbol}: entry skipped, price moved {adverse_move:.4%} "
-                        f"(live={live_price} signal={signal.entry_price}) > max {entry_slip_band:.2%}",
-                    )
-                    return
+        if entry_slip_band <= 0:
+            return True
+        live_price = await self.client.last_price(symbol)
+        if live_price is None or live_price <= 0:
+            return True
+        adverse_move = (live_price - signal.entry_price) / signal.entry_price
+        if adverse_move > entry_slip_band:
+            self._log(
+                "slippage_guard",
+                f"{symbol}: entry skipped, price moved {adverse_move:.4%} "
+                f"(live={live_price} signal={signal.entry_price}) > max {entry_slip_band:.2%}",
+            )
+            self.db.commit()
+            return False
+        return True
 
+    async def _execute_entry(
+        self, symbol: str, signal, final_quantity: Decimal,
+        stop_loss: Decimal, take_profit: Decimal, strategy_name: str,
+    ) -> None:
+        """Place a market buy, persist Position + Order, record execution quality,
+        and notify.  Handles OrderBelowMinimum gracefully."""
+        signal_time = datetime.now(UTC)
         submission_time = datetime.now(UTC)
         # Market BUY on Gate.io spot takes a QUOTE (USDT) amount to spend.
         quote_amount = final_quantity * signal.entry_price
@@ -216,10 +318,12 @@ class TradingEngine:
             self._log("order_min", f"{symbol}: buy skipped, {exc}")
             return
         ack_time = datetime.now(UTC)
+
         # Use the ACTUAL fill price for the entry, not the signal price.
         fill_price = Decimal(str(response.get("avg_deal_price") or signal.entry_price))
         if fill_price <= 0:
             fill_price = signal.entry_price
+
         # --- Slippage guard: log warning if fill deviates too far from signal price ---
         # Even when slippage exceeds the threshold, the exchange order (IOC) may
         # have been fully or partially filled.  We MUST persist the position and
@@ -237,6 +341,7 @@ class TradingEngine:
                     f"Position will be tracked for reconciliation.",
                     LogLevel.warning,
                 )
+
         # Derive the base quantity actually credited from the real fill (not the
         # pre-order estimate) and subtract any fee charged in the base currency —
         # Gate.io deducts the spot BUY fee from the coin received, so the tracked
@@ -245,15 +350,17 @@ class TradingEngine:
         actual_base_qty = gross_base_qty - _fee_in_base(response, symbol)
         if actual_base_qty <= 0:
             actual_base_qty = gross_base_qty
+
         position = Position(
             symbol=symbol,
             entry_price=fill_price,
             quantity=actual_base_qty,
-            stop_loss=decision.stop_loss,
-            take_profit=decision.take_profit,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
         )
         self.db.add(position)
         self.db.flush()
+
         order = Order(
             exchange_order_id=str(response.get("id")),
             position_id=position.id,
@@ -289,6 +396,9 @@ class TradingEngine:
 
         await self.notifier.send(f"Opened {symbol}: qty={actual_base_qty} entry={fill_price}")
 
+    # ------------------------------------------------------------------
+    # Position management
+    # ------------------------------------------------------------------
 
     async def manage_open_positions(self) -> None:
         for position in self.positions.open_positions():
@@ -337,6 +447,7 @@ class TradingEngine:
                     f"{position.symbol}: {exc}",
                     LogLevel.error,
                 )
+                self.db.commit()
 
     async def close_position(self, position: Position, reason: str, _retry: int = 3) -> Order:
         last_exc: Exception | None = None
@@ -352,7 +463,7 @@ class TradingEngine:
                         LogLevel.warning,
                     )
                     await self.notifier.send(
-                        f"⚠️ {position.symbol} close attempt {attempt + 1} failed: {exc}"
+                        f"\u26a0\ufe0f {position.symbol} close attempt {attempt + 1} failed: {exc}"
                     )
                     import asyncio
                     await asyncio.sleep(1)
@@ -363,7 +474,7 @@ class TradingEngine:
             LogLevel.error,
         )
         await self.notifier.send(
-            f"🔴 CRITICAL: {position.symbol} FAILED to close ({reason}) after {_retry} attempts! "
+            f"\U0001f534 CRITICAL: {position.symbol} FAILED to close ({reason}) after {_retry} attempts! "
             f"Manual intervention may be required. Last error: {last_exc}"
         )
         raise last_exc  # type: ignore[misc]
@@ -529,5 +640,3 @@ class TradingEngine:
 
     def _log(self, source: str, message: str, level: LogLevel = LogLevel.info) -> None:
         self.db.add(SystemLog(level=level, source=source, message=message))
-        self.db.commit()
-

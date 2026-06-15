@@ -36,6 +36,7 @@ import { Pagination, usePagination } from "@/components/ui/pagination";
 import { useToast } from "@/components/ui/toast";
 import StrategyDetailSheet from "@/components/strategy-detail-sheet";
 import { getAccessToken } from "@/lib/auth-api";
+import { num } from "@/lib/utils";
 import {
   getABTests,
   getExperiments,
@@ -72,11 +73,6 @@ const HYP_COLORS: Record<string, string> = {
   INCONCLUSIVE: "#d97706",
   UNTESTED: "#6b7280",
 };
-
-function num(v: string | number | null | undefined): number {
-  if (v === null || v === undefined) return 0;
-  return typeof v === "number" ? v : Number(v);
-}
 
 function downloadCSV(headers: string[], rows: string[][], filename: string) {
   const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");

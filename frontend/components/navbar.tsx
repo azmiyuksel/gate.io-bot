@@ -9,6 +9,7 @@ import {
   Database,
   LineChart,
   LayoutDashboard,
+  LogOut,
   Menu,
   PieChart,
   Play,
@@ -19,6 +20,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -37,6 +39,7 @@ const NAV_ITEMS = [
 export function Navbar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { isAuthenticated, logout } = useAuth();
 
   useEffect(() => {
     setMobileOpen(false);
@@ -114,6 +117,15 @@ export function Navbar() {
 
         {/* Footer */}
         <div className="border-t border-border px-4 py-3">
+          {isAuthenticated && (
+            <button
+              onClick={logout}
+              className="mb-2 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted transition hover:bg-red-50 hover:text-red-600"
+            >
+              <LogOut size={14} />
+              Çıkış Yap
+            </button>
+          )}
           <p className="text-xs text-muted">v0.1.0 · Sermaye Koruma</p>
         </div>
       </aside>

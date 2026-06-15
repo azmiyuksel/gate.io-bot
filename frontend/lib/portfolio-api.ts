@@ -14,7 +14,7 @@ export async function getPortfolio(): Promise<Portfolio | null> {
     const res = await authFetch(`/portfolio`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching portfolio:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching portfolio:", err);
   }
   return null;
 }
@@ -24,7 +24,7 @@ export async function getPortfolioCorrelations(): Promise<PortfolioCorrelations 
     const res = await authFetch(`/portfolio/correlations`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching correlations:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching correlations:", err);
   }
   return null;
 }
@@ -34,7 +34,7 @@ export async function getPortfolioMetrics(): Promise<PortfolioMetric[]> {
     const res = await authFetch(`/portfolio/metrics`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching portfolio metrics:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching portfolio metrics:", err);
   }
   return [];
 }
@@ -44,7 +44,7 @@ export async function getPortfolioAllocations(): Promise<Allocation[]> {
     const res = await authFetch(`/portfolio/allocations`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching portfolio allocations:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching portfolio allocations:", err);
   }
   return [];
 }
@@ -54,7 +54,7 @@ export async function getPortfolioVaR(): Promise<{ var: number; cvar: number } |
     const res = await authFetch(`/portfolio/var`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching VaR:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching VaR:", err);
   }
   return null;
 }
@@ -64,7 +64,7 @@ export async function getStrategyPerformance(): Promise<StrategyPerformance[]> {
     const res = await authFetch(`/portfolio/strategy-performance`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching strategy performance:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching strategy performance:", err);
   }
   return [];
 }
@@ -76,7 +76,7 @@ export async function triggerRebalance(): Promise<boolean> {
     });
     return res.ok;
   } catch (err) {
-    console.error("Error triggering rebalance:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error triggering rebalance:", err);
   }
   return false;
 }
@@ -88,7 +88,7 @@ export async function resetPortfolio(): Promise<boolean> {
     });
     return res.ok;
   } catch (err) {
-    console.error("Error resetting portfolio:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error resetting portfolio:", err);
   }
   return false;
 }
@@ -100,7 +100,7 @@ export async function runStressTest(scenarioName: string): Promise<RiskSnapshot 
     });
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error running stress test:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error running stress test:", err);
   }
   return null;
 }
@@ -110,7 +110,7 @@ export async function getRebalanceHistory(): Promise<RebalanceEvent[]> {
     const res = await authFetch(`/portfolio/rebalances`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching rebalance history:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching rebalance history:", err);
   }
   return [];
 }

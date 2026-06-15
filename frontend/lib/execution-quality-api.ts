@@ -13,7 +13,7 @@ export async function getStrategyExecutionStatus(
     const res = await authFetch(`/execution-quality/${strategyName}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching execution status for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching execution status for ${strategyName}:`, err);
   }
   return null;
 }
@@ -28,7 +28,7 @@ export async function getSlippageLogs(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching slippage logs for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching slippage logs for ${strategyName}:`, err);
   }
   return [];
 }
@@ -43,7 +43,7 @@ export async function getLatencyLogs(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching latency logs for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching latency logs for ${strategyName}:`, err);
   }
   return [];
 }
@@ -58,7 +58,7 @@ export async function getExecutionReport(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching execution report for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching execution report for ${strategyName}:`, err);
   }
   return null;
 }
@@ -73,7 +73,7 @@ export async function recalculateExecutionQuality(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error recalculating execution quality for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error recalculating execution quality for ${strategyName}:`, err);
   }
   return null;
 }

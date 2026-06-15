@@ -25,6 +25,7 @@ import { Metric } from "@/components/ui/metric";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
+import { num } from "@/lib/utils";
 import {
   approvePromotion,
   getDiscoveredFeatures,
@@ -51,11 +52,6 @@ const KNOW_COLORS: Record<string, string> = {
   FEATURE: "#146c5d",
   META: "#d97706",
 };
-
-function num(v: string | number | null | undefined): number {
-  if (v === null || v === undefined) return 0;
-  return typeof v === "number" ? v : Number(v);
-}
 
 export default function LearningPage() {
   const { toast } = useToast();

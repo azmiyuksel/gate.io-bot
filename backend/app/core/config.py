@@ -76,6 +76,7 @@ class Settings(BaseSettings):
 
     # --- Live strategy entry thresholds (tunable per market) ---
     strategy_rsi_threshold: float = 35.0
+    strategy_rsi_overbought: float = 65.0
     # EMA200 trend filter: when enabled, only enter long while price is above the
     # 200-period EMA (capital preservation — avoid buying in confirmed downtrends).
     strategy_trend_filter_enabled: bool = True

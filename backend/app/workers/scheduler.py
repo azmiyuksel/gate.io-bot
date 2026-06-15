@@ -1,4 +1,5 @@
 import asyncio
+import signal
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -334,10 +335,17 @@ async def main() -> None:
     scheduler.add_job(weekly_learning_report, "cron", day_of_week="mon", hour=8, minute=0)
     scheduler.add_job(daily_report, "cron", hour=21, minute=0)
     scheduler.start()
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except NotImplementedError:
+            pass
     try:
-        while True:
-            await asyncio.sleep(3600)
+        await stop_event.wait()
     finally:
+        scheduler.shutdown(wait=False)
         ws_client.stop()
         ws_task.cancel()
 

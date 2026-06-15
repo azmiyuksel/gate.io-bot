@@ -33,7 +33,7 @@ services:
     build: ./backend
     restart: unless-stopped
     env_file: .env
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     volumes:
@@ -54,7 +54,7 @@ services:
   frontend:
     build: ./frontend
     restart: unless-stopped
-    command: npm run dev
+    command: node server.js
     environment:
       BACKEND_URL: http://backend:8000
     ports:
@@ -75,6 +75,12 @@ services:
     command: python -m app.workers.paper_worker
     volumes:
       - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       backend:
         condition: service_healthy

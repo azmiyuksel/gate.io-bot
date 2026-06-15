@@ -14,7 +14,7 @@ async function getJson<T>(path: string, fallback: T): Promise<T> {
     const res = await authFetch(path);
     if (res.ok) return (await res.json()) as T;
   } catch (err) {
-    console.error(`Error fetching ${path}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching ${path}:`, err);
   }
   return fallback;
 }
@@ -53,7 +53,7 @@ export async function startLearning(
     });
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error starting learning:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error starting learning:", err);
   }
   return null;
 }
@@ -71,7 +71,7 @@ export async function approvePromotion(
     });
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error approving promotion:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error approving promotion:", err);
   }
   return null;
 }
@@ -89,7 +89,7 @@ export async function rejectPromotion(
     });
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error rejecting promotion:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error rejecting promotion:", err);
   }
   return null;
 }

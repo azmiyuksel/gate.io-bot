@@ -12,12 +12,8 @@ import {
   YAxis,
 } from "recharts";
 import { getStrategyDetail } from "@/lib/strategy-research-api";
+import { num } from "@/lib/utils";
 import type { StrategyDetail } from "@/types/strategy-research";
-
-function num(v: string | number | null | undefined): number {
-  if (v === null || v === undefined) return 0;
-  return typeof v === "number" ? v : Number(v);
-}
 
 interface Props {
   strategyId: number;

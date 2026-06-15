@@ -18,7 +18,7 @@ export async function getStrategies(status?: string): Promise<ResearchStrategy[]
     const res = await authFetch(`/research/strategies${qs}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching strategies:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching strategies:", err);
   }
   return [];
 }
@@ -28,7 +28,7 @@ export async function getLeaderboard(limit = 25): Promise<StrategyVersion[]> {
     const res = await authFetch(`/research/leaderboard?limit=${limit}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching leaderboard:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching leaderboard:", err);
   }
   return [];
 }
@@ -38,7 +38,7 @@ export async function getExperiments(limit = 100): Promise<ResearchExperiment[]>
     const res = await authFetch(`/research/experiments?limit=${limit}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching experiments:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching experiments:", err);
   }
   return [];
 }
@@ -53,7 +53,7 @@ export async function getFeatures(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching features:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching features:", err);
   }
   return [];
 }
@@ -63,7 +63,7 @@ export async function getHypotheses(limit = 50): Promise<HypothesisTest[]> {
     const res = await authFetch(`/research/hypotheses?limit=${limit}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching hypotheses:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching hypotheses:", err);
   }
   return [];
 }
@@ -81,7 +81,7 @@ export async function runResearch(
     });
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error running research:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error running research:", err);
   }
   return null;
 }
@@ -97,7 +97,7 @@ export async function recomputeFeatures(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error recomputing features:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error recomputing features:", err);
   }
   return [];
 }
@@ -113,7 +113,7 @@ export async function testHypotheses(
     );
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error testing hypotheses:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error testing hypotheses:", err);
   }
   return [];
 }
@@ -127,7 +127,7 @@ export async function promoteStrategy(
     });
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error promoting strategy:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error promoting strategy:", err);
   }
   return null;
 }
@@ -137,7 +137,7 @@ export async function getStrategyDetail(id: number): Promise<StrategyDetail | nu
     const res = await authFetch(`/research/strategies/${id}/detail`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching strategy detail:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching strategy detail:", err);
   }
   return null;
 }
@@ -147,7 +147,7 @@ export async function getABTests(limit = 50): Promise<ABTest[]> {
     const res = await authFetch(`/research/ab-tests?limit=${limit}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching AB tests:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching AB tests:", err);
   }
   return [];
 }
@@ -157,7 +157,7 @@ export async function getResearchSymbols(): Promise<ResearchSymbol[]> {
     const res = await authFetch(`/research/symbols`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error fetching symbols:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error fetching symbols:", err);
   }
   return [];
 }
@@ -174,7 +174,7 @@ export async function testCustomHypothesis(
     });
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error("Error testing custom hypothesis:", err);
+    if (process.env.NODE_ENV !== "production") console.error("Error testing custom hypothesis:", err);
   }
   return null;
 }

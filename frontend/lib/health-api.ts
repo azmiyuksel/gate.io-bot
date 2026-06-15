@@ -14,7 +14,7 @@ export async function getStrategyHealth(
     const res = await authFetch(`/strategy-health/${strategyName}`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching strategy health for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching strategy health for ${strategyName}:`, err);
   }
   return null;
 }
@@ -26,7 +26,7 @@ export async function getHealthMetrics(
     const res = await authFetch(`/strategy-health/${strategyName}/metrics`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching health metrics for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching health metrics for ${strategyName}:`, err);
   }
   return [];
 }
@@ -38,7 +38,7 @@ export async function getStrategyAlerts(
     const res = await authFetch(`/strategy-health/${strategyName}/alerts`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching strategy alerts for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching strategy alerts for ${strategyName}:`, err);
   }
   return [];
 }
@@ -52,7 +52,7 @@ export async function recalculateStrategyHealth(
     });
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error recalculating strategy health for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error recalculating strategy health for ${strategyName}:`, err);
   }
   return null;
 }
@@ -66,7 +66,7 @@ export async function pauseStrategy(
     });
     return res.ok;
   } catch (err) {
-    console.error(`Error pausing strategy ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error pausing strategy ${strategyName}:`, err);
   }
   return false;
 }
@@ -80,7 +80,7 @@ export async function resumeStrategy(
     });
     return res.ok;
   } catch (err) {
-    console.error(`Error resuming strategy ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error resuming strategy ${strategyName}:`, err);
   }
   return false;
 }
@@ -92,7 +92,7 @@ export async function getStrategyBaseline(
     const res = await authFetch(`/strategy-health/${strategyName}/baseline`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching strategy baseline for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching strategy baseline for ${strategyName}:`, err);
   }
   return null;
 }
@@ -104,7 +104,7 @@ export async function getTransitions(
     const res = await authFetch(`/strategy-health/${strategyName}/transitions`);
     if (res.ok) return await res.json();
   } catch (err) {
-    console.error(`Error fetching state transitions for ${strategyName}:`, err);
+    if (process.env.NODE_ENV !== "production") console.error(`Error fetching state transitions for ${strategyName}:`, err);
   }
   return [];
 }

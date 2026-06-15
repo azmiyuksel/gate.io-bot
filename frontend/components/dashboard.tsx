@@ -22,7 +22,8 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { LastUpdated } from "@/components/ui/last-updated";
 import { useToast } from "@/components/ui/toast";
 import { money } from "@/lib/utils";
-import { authFetch, getAccessToken, login, logout, register } from "@/lib/auth-api";
+import { authFetch, login as apiLogin, register as apiRegister } from "@/lib/auth-api";
+import { useAuth } from "@/lib/auth-context";
 import type { DashboardSummary } from "@/types/dashboard";
 
 const fallback: DashboardSummary = {
@@ -83,6 +84,7 @@ interface EconomicsData {
 
 export function Dashboard() {
   const { toast } = useToast();
+  const { token, login: setAuth, logout: doLogout } = useAuth();
   const [summary, setSummary] = useState<DashboardSummary>(fallback);
   const [charts, setCharts] = useState<ChartsData>({
     equity_curve: [],
@@ -91,7 +93,6 @@ export function Dashboard() {
     max_drawdown: 0,
   });
   const [economics, setEconomics] = useState<EconomicsData | null>(null);
-  const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -108,7 +109,7 @@ export function Dashboard() {
         setSummary(await response.json());
         setLastUpdated(new Date());
       } else if (response.status === 401) {
-        setToken("");
+        doLogout();
         setAuthError("Oturum süresi doldu, tekrar giriş yapın.");
         return;
       } else {
@@ -155,8 +156,8 @@ export function Dashboard() {
   async function handleLogin() {
     setAuthError("");
     try {
-      const tokens = await login(email, password);
-      setToken(tokens.access_token);
+      const tokens = await apiLogin(email, password);
+      setAuth(tokens.access_token, tokens.refresh_token);
       setPassword("");
       toast("Giriş başarılı", "success");
     } catch (err) {
@@ -167,8 +168,8 @@ export function Dashboard() {
   async function handleRegister() {
     setAuthError("");
     try {
-      const tokens = await register(email, password);
-      setToken(tokens.access_token);
+      const tokens = await apiRegister(email, password);
+      setAuth(tokens.access_token, tokens.refresh_token);
       setPassword("");
       toast("Kayıt başarılı", "success");
     } catch (err) {
@@ -177,16 +178,10 @@ export function Dashboard() {
   }
 
   async function handleLogout() {
-    await logout();
-    setToken("");
+    await doLogout();
     setSummary(fallback);
     toast("Çıkış yapıldı", "info");
   }
-
-  useEffect(() => {
-    const stored = getAccessToken();
-    if (stored) setToken(stored);
-  }, []);
 
   useEffect(() => {
     refresh();

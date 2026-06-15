@@ -34,6 +34,7 @@ import { Metric } from "@/components/ui/metric";
 import { PageSkeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
+import { num } from "@/lib/utils";
 import {
   getDataQualityAnomalies,
   getDataQualityHealthLogs,
@@ -64,11 +65,6 @@ const SEVERITY_COLORS: Record<string, string> = {
   WARNING: "#d97706",
   CRITICAL: "#b42318",
 };
-
-function num(value: string | number | null | undefined): number {
-  if (value === null || value === undefined) return 0;
-  return typeof value === "number" ? value : Number(value);
-}
 
 export default function DataQualityPage() {
   const [token, setToken] = useState("");
