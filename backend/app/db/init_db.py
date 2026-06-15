@@ -17,20 +17,30 @@ def init_db() -> None:
 
     inspector = inspect(engine)
     if not inspector.has_table("alembic_version"):
-        # Tables exist from a previous create_all() but alembic_version doesn't.
-        # Stamp the head revision so Alembic knows all tables are already present,
-        # then future deploys only apply pending migrations.
         command.stamp(alembic_cfg, "head")
-        # One-time cleanup of old paper trading data from the create_all era.
         _cleanup_paper_data()
+        _mark_cleanup_done()
     else:
         command.upgrade(alembic_cfg, "head")
+        _cleanup_if_needed()
+
+
+def _cleanup_if_needed() -> None:
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM strategy_settings WHERE name = 'paper_cleanup_done')"
+        )).fetchone()
+        if not row or not row[0]:
+            _cleanup_paper_data()
+            _mark_cleanup_done()
 
 
 def _cleanup_paper_data() -> None:
     """Clear stale paper trading data left over from create_all deployments."""
     from sqlalchemy import text
-
     from app.db.session import engine
 
     with engine.connect() as conn:
@@ -41,5 +51,18 @@ def _cleanup_paper_data() -> None:
         conn.execute(text(
             "UPDATE paper_accounts SET cash_balance = initial_balance, "
             "realized_pnl = 0, updated_at = NOW()"
+        ))
+        conn.commit()
+
+
+def _mark_cleanup_done() -> None:
+    from sqlalchemy import text
+    from app.db.session import engine
+
+    with engine.connect() as conn:
+        conn.execute(text(
+            "INSERT INTO strategy_settings (name, is_enabled) "
+            "VALUES ('paper_cleanup_done', true) "
+            "ON CONFLICT (name) DO NOTHING"
         ))
         conn.commit()
