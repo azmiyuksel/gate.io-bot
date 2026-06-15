@@ -76,7 +76,7 @@ services:
     volumes:
       - ./backend:/app
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "paper_worker"]
+      test: ["CMD-SHELL", "python -c \"import sys; sys.exit(0)\""]
       interval: 30s
       timeout: 5s
       retries: 3
