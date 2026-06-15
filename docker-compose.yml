@@ -76,7 +76,7 @@ services:
     volumes:
       - ./backend:/app
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import sys; sys.exit(0)\""]
+      test: ["CMD", "curl", "-fsS", "http://backend:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
