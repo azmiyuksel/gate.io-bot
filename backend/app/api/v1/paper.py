@@ -128,6 +128,8 @@ def equity(db: DbSession) -> list[dict]:
 def reset(db: DbSession) -> dict:
     account = _get_or_create_account(db)
     db.query(PaperEquityCurve).filter(PaperEquityCurve.account_id == account.id).delete()
+    db.query(PaperLog).filter(PaperLog.account_id == account.id).delete()
+    db.query(PaperOrder).filter(PaperOrder.account_id == account.id).delete()
     db.query(PaperTrade).filter(PaperTrade.account_id == account.id).delete()
     db.query(PaperPosition).filter(PaperPosition.account_id == account.id).delete()
     account.cash_balance = account.initial_balance
