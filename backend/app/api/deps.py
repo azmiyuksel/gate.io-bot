@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
@@ -14,16 +14,27 @@ DbSession = Annotated[Session, Depends(get_db)]
 bearer = HTTPBearer(auto_error=False)
 
 
+def _resolve_token(credentials: HTTPAuthorizationCredentials | None, request: Request) -> str:
+    if credentials is not None:
+        return credentials.credentials
+    token = request.query_params.get("token")
+    if token:
+        return token
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+
+
 def current_user_role(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    request: Request,
 ) -> UserRole:
-    if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
     try:
-        payload = decode_access_token(credentials.credentials)
+        token = _resolve_token(credentials, request)
+        payload = decode_access_token(token)
         if payload.get("type") not in (None, "access"):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
         return UserRole(payload.get("role", UserRole.viewer))
+    except HTTPException:
+        raise
     except (InvalidTokenError, ValueError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from None
 
@@ -35,16 +46,17 @@ def require_admin(role: Annotated[UserRole, Depends(current_user_role)]) -> None
 
 def current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+    request: Request,
     db: DbSession,
 ) -> User:
-    """Resolve and return the authenticated user (for audit attribution)."""
-    if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
     try:
-        payload = decode_access_token(credentials.credentials)
+        token = _resolve_token(credentials, request)
+        payload = decode_access_token(token)
         if payload.get("type") not in (None, "access"):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
         user_id = int(payload["sub"])
+    except HTTPException:
+        raise
     except (InvalidTokenError, ValueError, KeyError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from None
     user = db.get(User, user_id)

@@ -1,0 +1,50 @@
+# Railway.app monorepo configuration
+# Deploy with: railway up
+
+# ── Backend API server ──────────────────────────────────────
+[services.backend]
+path = "backend"
+dockerfilePath = "backend/Dockerfile"
+healthcheckPath = "/health"
+healthcheckTimeout = 10
+healthcheckInterval = 30
+restartPolicyType = "always"
+
+[services.backend.build]
+builder = "dockerfile"
+
+[services.backend.deploy]
+numReplicas = 1
+sleepApplication = false
+
+# ── Paper Trading worker ────────────────────────────────────
+[services.paper-worker]
+path = "backend"
+dockerfilePath = "backend/Dockerfile.worker"
+restartPolicyType = "always"
+
+[services.paper-worker.build]
+builder = "dockerfile"
+
+[services.paper-worker.deploy]
+numReplicas = 1
+sleepApplication = false
+
+# ── Frontend dashboard ──────────────────────────────────────
+[services.frontend]
+path = "frontend"
+dockerfilePath = "frontend/Dockerfile"
+healthcheckPath = "/"
+healthcheckTimeout = 10
+healthcheckInterval = 30
+restartPolicyType = "always"
+
+[services.frontend.build]
+builder = "dockerfile"
+buildArgs = { }
+# Set build-time vars in Railway dashboard:
+#   NEXT_PUBLIC_API_URL  = https://{backend-domain}  (backend's public Railway URL)
+
+[services.frontend.deploy]
+numReplicas = 1
+sleepApplication = false

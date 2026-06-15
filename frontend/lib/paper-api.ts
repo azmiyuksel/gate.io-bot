@@ -15,7 +15,8 @@ import { authFetch, getAccessToken } from "@/lib/auth-api";
 export function createPaperStream(onData: (data: PaperStatus) => void): EventSource | null {
   const token = getAccessToken();
   if (!token) return null;
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const publicUrl = process.env.NEXT_PUBLIC_API_URL || "";
+  const baseUrl = publicUrl || "";  // empty → use relative path via Next.js proxy
   const url = `${baseUrl}/api/v1/paper/stream?token=${encodeURIComponent(token)}`;
   const es = new EventSource(url);
   es.onmessage = (event) => {
