@@ -13,8 +13,11 @@ class VirtualBroker:
         spread_rate: float = 0.0002,
         order_latency_candles: int = 1,
         maker_fee_rate: float | None = None,
+        funding_daily_rate: float = 0.0,
     ) -> None:
         self.portfolio = portfolio
+        # Financing carry (perp funding / spot borrow) per day of holding.
+        self.funding_daily_rate = funding_daily_rate
         # Taker fee applies to market orders and stop-loss exits that cross the
         # spread; maker fee applies to resting limit entries and take-profit exits.
         self.commission_rate = commission_rate
@@ -130,7 +133,21 @@ class VirtualBroker:
             fill_price = self._sell_fill_price(price)  # market exit crosses the spread
             fee_rate = self.taker_fee_rate
         fee = fill_price * position.quantity * fee_rate
+        # Charge financing carry for the holding period so multi-day holds are not
+        # cost-free — funding/borrow is a first-order cost for any real position.
+        fee += self._funding_cost(position, candle.name)
         self.portfolio.close_position(position, candle.name, fill_price, fee, reason)
+
+    def _funding_cost(self, position: BacktestPosition, exit_time) -> float:
+        if self.funding_daily_rate <= 0:
+            return 0.0
+        try:
+            held_days = (exit_time - position.entry_time).total_seconds() / 86_400.0
+        except (TypeError, AttributeError):
+            return 0.0
+        if held_days <= 0:
+            return 0.0
+        return position.entry_price * position.quantity * self.funding_daily_rate * held_days
 
     def _is_triggered(self, order: SimulatedOrder, candle: pd.Series) -> bool:
         high = float(candle["high"])

@@ -10,6 +10,55 @@ def _matrix(symbols: list[str], cov: Dict[str, Dict[str, float]]) -> np.ndarray:
     )
 
 
+def _nearest_psd(sigma: np.ndarray, floor: float = 1e-12) -> np.ndarray:
+    """Project a (possibly non-PSD) covariance matrix onto the nearest PSD matrix
+    by clipping negative eigenvalues. No-op when the matrix is already PSD, so
+    well-formed inputs are returned unchanged. Pairwise-estimated or fill-padded
+    covariance matrices are frequently non-PSD, which makes inversion/risk-parity
+    produce nonsense; this guards against that."""
+    sym = (sigma + sigma.T) / 2.0
+    try:
+        eigvals, eigvecs = np.linalg.eigh(sym)
+    except np.linalg.LinAlgError:
+        return sym
+    if eigvals.min() >= 0:
+        return sym
+    clipped = np.clip(eigvals, floor, None)
+    repaired = (eigvecs * clipped) @ eigvecs.T
+    return (repaired + repaired.T) / 2.0
+
+
+def _shrink_covariance(sigma: np.ndarray, intensity: float) -> np.ndarray:
+    """Ledoit-Wolf-style shrinkage toward a diagonal target (shrink correlations
+    toward zero). intensity in [0, 1]; 0 = raw sample covariance. Reduces the
+    estimation error that the Markowitz optimizer otherwise maximizes."""
+    if intensity <= 0:
+        return sigma
+    intensity = min(intensity, 1.0)
+    target = np.diag(np.diag(sigma))
+    return (1.0 - intensity) * sigma + intensity * target
+
+
+def _cap_weights(weights: np.ndarray, max_weight: float, iterations: int = 50) -> np.ndarray:
+    """Cap each weight at max_weight and redistribute the excess to uncapped
+    names, preserving the sum. Prevents single-asset concentration."""
+    w = weights.copy()
+    n = len(w)
+    if max_weight <= 0 or max_weight >= 1 or n == 0 or 1.0 / n > max_weight:
+        return w
+    for _ in range(iterations):
+        over = w > max_weight + 1e-12
+        if not over.any():
+            break
+        excess = (w[over] - max_weight).sum()
+        w[over] = max_weight
+        free = ~over
+        if not free.any():
+            break
+        w[free] += excess * (w[free] / w[free].sum())
+    return w
+
+
 class PortfolioOptimizer:
     @staticmethod
     def covariance_from_correlation(
@@ -31,11 +80,23 @@ class PortfolioOptimizer:
         expected_returns: Dict[str, float],
         covariance: Dict[str, Dict[str, float]],
         long_only: bool = True,
+        shrinkage: float = 0.0,
+        ridge: float = 0.0,
+        max_weight: float | None = None,
     ) -> Dict[str, float]:
         """Markowitz max-Sharpe (tangency) weights: w ∝ Σ⁻¹ μ.
 
         Long-only by default (negative weights clipped, then renormalized), which
         is the standard practical approximation for a spot, no-short portfolio.
+
+        Robustness controls (all default to a no-op so the raw Markowitz solution
+        is preserved unless requested):
+          - ``shrinkage`` (0..1): Ledoit-Wolf-style shrinkage of Σ toward its
+            diagonal, taming the estimation error Markowitz amplifies.
+          - ``ridge``: add ``ridge`` to the diagonal of Σ for invertibility.
+          - ``max_weight``: per-asset weight cap to avoid concentration.
+        The covariance is always projected to the nearest PSD matrix first (a
+        no-op when already PSD) to avoid garbage from non-PSD inputs.
         """
         symbols = list(expected_returns.keys())
         if not symbols:
@@ -43,7 +104,10 @@ class PortfolioOptimizer:
         if len(symbols) == 1:
             return {symbols[0]: 1.0}
         mu = np.array([float(expected_returns[s]) for s in symbols], dtype="float64")
-        sigma = _matrix(symbols, covariance)
+        sigma = _nearest_psd(_matrix(symbols, covariance))
+        sigma = _shrink_covariance(sigma, shrinkage)
+        if ridge > 0:
+            sigma = sigma + ridge * np.eye(len(symbols))
         # Pseudo-inverse for numerical robustness against singular matrices.
         raw = np.linalg.pinv(sigma) @ mu
         if long_only:
@@ -52,6 +116,8 @@ class PortfolioOptimizer:
         if total <= 0:
             return {s: 1.0 / len(symbols) for s in symbols}
         weights = raw / total
+        if max_weight is not None:
+            weights = _cap_weights(weights, max_weight)
         return {s: float(w) for s, w in zip(symbols, weights)}
 
     @staticmethod
@@ -69,7 +135,7 @@ class PortfolioOptimizer:
             return {}
         if len(symbols) == 1:
             return {symbols[0]: 1.0}
-        sigma = _matrix(symbols, covariance)
+        sigma = _nearest_psd(_matrix(symbols, covariance))
         variances = np.clip(np.diag(sigma), 1e-12, None)
         w = 1.0 / np.sqrt(variances)  # inverse-vol start
         w /= w.sum()

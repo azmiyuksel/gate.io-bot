@@ -100,6 +100,26 @@ class PaperBroker:
         )
         self._log("order_filled", f"{order.side} {order.symbol} qty={execution.filled_quantity}")
 
+    def _funding_cost(self, position: PaperPosition, close_qty: Decimal, exit_time: datetime) -> Decimal:
+        """Conservative financing carry on the closed notional over the holding
+        period. Disabled when ``funding_cost_enabled`` is off."""
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        if not settings.funding_cost_enabled or settings.funding_daily_rate_pct <= 0:
+            return Decimal("0")
+        opened = position.opened_at
+        if opened is None:
+            return Decimal("0")
+        if opened.tzinfo is None:
+            opened = opened.replace(tzinfo=UTC)
+        held_seconds = (exit_time - opened).total_seconds()
+        if held_seconds <= 0:
+            return Decimal("0")
+        held_days = Decimal(str(held_seconds / 86_400.0))
+        rate = Decimal(str(settings.funding_daily_rate_pct))
+        return position.average_entry_price * close_qty * rate * held_days
+
     def close_position(self, position: PaperPosition, data: MarketData, reason: str, quantity: Decimal | None = None) -> None:
         now = datetime.now(UTC)
         close_qty = quantity if quantity is not None and quantity < position.quantity else position.quantity
@@ -136,6 +156,10 @@ class PaperBroker:
             pnl = (position.average_entry_price - exit_price) * close_qty - Decimal(str(execution.fee))
         else:
             pnl = (exit_price - position.average_entry_price) * close_qty - Decimal(str(execution.fee))
+        # Financing carry (perp funding / spot borrow): a multi-day hold is not
+        # cost-free. Deduct a conservative daily cost on notional so simulated PnL
+        # is not overstated relative to live trading.
+        pnl -= self._funding_cost(position, close_qty, now)
         self.account.cash_balance += position.average_entry_price * close_qty + pnl
         self.account.realized_pnl += pnl
         position.realized_pnl += pnl

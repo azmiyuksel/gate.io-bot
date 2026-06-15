@@ -4,7 +4,14 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.repositories.trading import PositionRepository, StrategySettingsRepository, TradeRepository
+from app.repositories.trading import (
+    AccountSnapshotRepository,
+    PositionRepository,
+    StrategySettingsRepository,
+    TradeRepository,
+    day_start_utc,
+    week_start_utc,
+)
 
 
 @dataclass(frozen=True)
@@ -49,18 +56,43 @@ def vol_target_multiplier(
 
 class RiskManager:
     def __init__(self, db: Session) -> None:
+        self.db = db
         self.positions = PositionRepository(db)
         self.trades = TradeRepository(db)
         self.settings = StrategySettingsRepository(db)
+        self.snapshots = AccountSnapshotRepository(db)
 
-    def approve_entry(self, equity: Decimal, entry: Decimal, atr_value: Decimal) -> RiskDecision:
+    def _period_pnl(self, current_equity: Decimal, since) -> Decimal:
+        """Mark-to-market PnL for the period: current equity minus equity carried
+        into the period (includes UNREALIZED PnL of open positions, since
+        `current_equity` is marked to market). Falls back to realized-only PnL
+        when no equity snapshots exist. This stops an open position from blowing
+        through the loss limit while reporting zero realized loss."""
+        start_equity = self.snapshots.equity_at_period_start(since)
+        if start_equity is not None and start_equity > 0:
+            return current_equity - start_equity
+        return self.trades.pnl_since(since)
+
+    def approve_entry(
+        self, equity: Decimal, entry: Decimal, atr_value: Decimal, side: str = "long"
+    ) -> RiskDecision:
         # Master env kill-switch: live entries require BOT_ENABLED=true as well
         # as the strategy's own enable flag (defense-in-depth alongside scheduler).
         if not get_settings().bot_enabled:
             return RiskDecision(False, "bot_disabled")
         if entry <= 0 or atr_value <= 0:
             return RiskDecision(False, "invalid_price_data")
-        settings = self.settings.current()
+        # Defense-in-depth: never open a new position while the circuit breaker is
+        # tripped, even if some other path failed to halt the strategy.
+        from app.services.risk.circuit_breaker import CircuitBreaker
+
+        if CircuitBreaker(self.db).is_tripped():
+            return RiskDecision(False, "circuit_breaker_tripped")
+        # Lock the (single-row) StrategySettings for the duration of the
+        # transaction so concurrent approvals serialize: the check below and the
+        # caller's subsequent position insert cannot interleave and both pass the
+        # max_open_positions / exposure guards (no-op on SQLite).
+        settings = self.settings.current_for_update()
         if not settings.is_enabled:
             return RiskDecision(False, "strategy_disabled")
         if self.positions.open_count() >= settings.max_open_positions:
@@ -80,16 +112,27 @@ class RiskManager:
 
         daily_limit = -(equity * settings.daily_max_loss_pct)
         weekly_limit = -(equity * settings.weekly_max_loss_pct)
-        if self.trades.daily_pnl() <= daily_limit:
+        if self._period_pnl(equity, day_start_utc()) <= daily_limit:
             return RiskDecision(False, "daily_loss_limit")
-        if self.trades.weekly_pnl() <= weekly_limit:
+        if self._period_pnl(equity, week_start_utc()) <= weekly_limit:
             return RiskDecision(False, "weekly_loss_limit")
 
-        # Risk levels first — sizing may depend on the stop distance.
-        stop_loss = entry - (atr_value * settings.atr_multiplier)
-        risk_per_unit = entry - stop_loss
-        take_profit = entry + (risk_per_unit * settings.min_reward_risk)
-        if stop_loss <= 0 or take_profit <= entry or risk_per_unit <= 0:
+        # Risk levels first — sizing may depend on the stop distance. The stop is
+        # on the LOSS side of entry and the target on the PROFIT side, mirrored by
+        # direction, so shorts get a valid protective stop ABOVE entry (a long-only
+        # formula would put a short's stop below entry where it can never trigger).
+        stop_distance = atr_value * settings.atr_multiplier
+        is_long = side != "short"
+        if is_long:
+            stop_loss = entry - stop_distance
+            take_profit = entry + (stop_distance * settings.min_reward_risk)
+            valid = stop_loss > 0 and take_profit > entry
+        else:
+            stop_loss = entry + stop_distance
+            take_profit = entry - (stop_distance * settings.min_reward_risk)
+            valid = take_profit > 0 and stop_loss > entry
+        risk_per_unit = stop_distance
+        if not valid or risk_per_unit <= 0:
             return RiskDecision(False, "invalid_risk_levels")
 
         app_settings = get_settings()

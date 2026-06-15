@@ -194,7 +194,7 @@ class TradingEngine:
         (after logging and committing) otherwise.
         """
         signal = self.strategy.evaluate(candles)
-        if not signal.should_buy or signal.entry_price is None or signal.atr_value is None:
+        if not signal.should_enter or signal.entry_price is None or signal.atr_value is None:
             self._log("strategy", f"{symbol}: {signal.reason}")
             self.db.commit()
             return None
@@ -231,7 +231,9 @@ class TradingEngine:
         Returns (final_quantity, stop_loss, take_profit) on success, None when
         the risk manager rejects the entry or the scaled quantity is <= 0.
         """
-        decision = self.risk.approve_entry(equity, signal.entry_price, signal.atr_value)
+        decision = self.risk.approve_entry(
+            equity, signal.entry_price, signal.atr_value, side=getattr(signal, "direction", "long")
+        )
         if not decision.allowed:
             self._log("risk", f"{symbol}: {decision.reason}")
             self.db.commit()

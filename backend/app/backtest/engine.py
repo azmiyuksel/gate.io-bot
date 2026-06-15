@@ -141,6 +141,7 @@ class BacktestEngine:
             spread_rate=config.spread_rate,
             order_latency_candles=config.order_latency_candles,
             maker_fee_rate=config.maker_fee_rate,
+            funding_daily_rate=config.funding_daily_rate,
         )
         trailing_pct = float(config.parameters.get("trailing_stop_pct", 0.01))
         breakeven_pct = float(config.parameters.get("breakeven_stop_trigger_pct", 0.02))

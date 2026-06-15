@@ -39,6 +39,9 @@ class BacktestConfig:
     maker_fee_rate: float = 0.0008  # maker fee (resting limit entries / take-profit exits)
     slippage_rate: float = 0.0005
     spread_rate: float = 0.0002
+    # Financing carry (perp funding / spot borrow) charged per day of holding on
+    # the position notional. ~0.01% per 8h funding ≈ 0.03%/day in a neutral market.
+    funding_daily_rate: float = 0.0003
     order_latency_candles: int = 1
     # Entry execution: "market" (taker, always fills next open) or
     # "limit" (maker, fills next bar only if price trades down to the signal price).

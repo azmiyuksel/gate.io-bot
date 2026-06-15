@@ -33,6 +33,7 @@ class CapitalPreservationAdapter(BaseStrategy):
         self._current_data: MarketData | None = None
         self._last_reason: str = ""
         self._candle_counts: dict[str, int] = {}
+        self._last_atr: float | None = None
 
     def on_market_data(self, data: MarketData) -> None:
         self._current_data = data
@@ -52,6 +53,7 @@ class CapitalPreservationAdapter(BaseStrategy):
         if signal.diagnostics:
             self._last_reason = f"{signal.reason} (RSI={signal.diagnostics.get('rsi', '?')})"
         self._candle_counts[symbol] = len(candles)
+        self._last_atr = float(signal.atr_value) if signal.atr_value else None
         if not signal.should_enter:
             return None
         direction = signal.direction
@@ -80,6 +82,17 @@ class CapitalPreservationAdapter(BaseStrategy):
         return dict(self._candle_counts)
 
     def position_size(self, equity: float, price: float) -> float:
+        """ATR/risk-based sizing: size so the loss-to-stop equals
+        ``paper_position_risk_pct`` of equity, scaled by the ATR stop distance,
+        capped at ``paper_max_capital_per_trade_pct`` of equity. Falls back to a
+        conservative fixed-notional fraction when ATR is unavailable."""
         if price <= 0:
             return 0.0
-        return equity * 0.02 / price
+        settings = get_settings()
+        notional_cap = equity * settings.paper_max_capital_per_trade_pct / price
+        if self._last_atr and self._last_atr > 0:
+            stop_distance = settings.paper_atr_stop_multiplier * self._last_atr
+            if stop_distance > 0:
+                risk_budget = equity * settings.paper_position_risk_pct
+                return min(risk_budget / stop_distance, notional_cap)
+        return min(equity * settings.paper_fallback_capital_pct / price, notional_cap)

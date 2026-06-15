@@ -9,7 +9,13 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models.entities import CircuitBreakerEvent, SystemLog
 from app.models.enums import CircuitBreakerScope, CircuitBreakerState, LogLevel
-from app.repositories.trading import StrategySettingsRepository, TradeRepository
+from app.repositories.trading import (
+    AccountSnapshotRepository,
+    StrategySettingsRepository,
+    TradeRepository,
+    day_start_utc,
+    week_start_utc,
+)
 
 
 @dataclass(frozen=True)
@@ -24,7 +30,16 @@ class CircuitBreaker:
         self.db = db
         self.trades = TradeRepository(db)
         self.settings_repo = StrategySettingsRepository(db)
+        self.snapshots = AccountSnapshotRepository(db)
         self.config = get_settings()
+
+    def _period_pnl(self, current_equity: Decimal, since) -> Decimal:
+        """Mark-to-market period PnL (includes unrealized), falling back to
+        realized-only when no equity snapshots exist."""
+        start_equity = self.snapshots.equity_at_period_start(since)
+        if start_equity is not None and start_equity > 0:
+            return current_equity - start_equity
+        return self.trades.pnl_since(since)
 
     def current(self) -> CircuitBreakerEvent | None:
         return (
@@ -41,15 +56,17 @@ class CircuitBreaker:
         """Check limits against current PnL/drawdown without mutating state."""
         settings = self.settings_repo.current()
 
+        daily_pnl = self._period_pnl(equity, day_start_utc())
         daily_limit = -(equity * settings.daily_max_loss_pct)
-        if self.trades.daily_pnl() <= daily_limit:
+        if daily_pnl <= daily_limit:
             return BreakerCheck(True, CircuitBreakerScope.daily_loss,
-                                f"daily PnL {self.trades.daily_pnl()} <= limit {daily_limit}")
+                                f"daily PnL {daily_pnl} <= limit {daily_limit}")
 
+        weekly_pnl = self._period_pnl(equity, week_start_utc())
         weekly_limit = -(equity * settings.weekly_max_loss_pct)
-        if self.trades.weekly_pnl() <= weekly_limit:
+        if weekly_pnl <= weekly_limit:
             return BreakerCheck(True, CircuitBreakerScope.weekly_loss,
-                                f"weekly PnL {self.trades.weekly_pnl()} <= limit {weekly_limit}")
+                                f"weekly PnL {weekly_pnl} <= limit {weekly_limit}")
 
         if drawdown_pct is not None:
             max_dd = Decimal(str(self.config.max_account_drawdown_pct))

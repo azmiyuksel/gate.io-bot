@@ -28,6 +28,7 @@ class MacdStrategy(BaseStrategy):
         self.atr_multiplier = float(params.get("atr_multiplier", 2.0))
         self.reward_risk = float(params.get("reward_risk", 2.0))
         self.max_capital_per_trade_pct = float(params.get("max_capital_per_trade_pct", 0.01))
+        self.max_risk_per_trade_pct = float(params.get("max_risk_per_trade_pct", 0.02))
         self.current: pd.Series | None = None
 
     def prepare(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -63,7 +64,20 @@ class MacdStrategy(BaseStrategy):
         return False
 
     def position_size(self, equity: float, price: float) -> float:
-        return (equity * self.max_capital_per_trade_pct) / price
+        if price <= 0:
+            return 0.0
+        # Fixed-fractional RISK sizing: size so the loss if stopped out equals
+        # max_risk_per_trade_pct of equity, scaled by the ATR stop distance, so
+        # per-trade dollar risk is steady across calm/volatile regimes. Capped at
+        # the notional limit (max_capital_per_trade_pct) to bound gross exposure.
+        notional_cap = (equity * self.max_capital_per_trade_pct) / price
+        if self.current is not None:
+            atr = float(self.current.get("atr", 0.0) or 0.0)
+            stop_distance = atr * self.atr_multiplier
+            if stop_distance > 0:
+                risk_budget = equity * self.max_risk_per_trade_pct
+                return min(risk_budget / stop_distance, notional_cap)
+        return notional_cap
 
     def risk_levels(self, entry: float) -> tuple[float, float]:
         if self.current is None:
@@ -85,6 +99,7 @@ class BollingerBandsStrategy(BaseStrategy):
         self.atr_multiplier = float(params.get("atr_multiplier", 1.5))
         self.reward_risk = float(params.get("reward_risk", 2.5))
         self.max_capital_per_trade_pct = float(params.get("max_capital_per_trade_pct", 0.01))
+        self.max_risk_per_trade_pct = float(params.get("max_risk_per_trade_pct", 0.02))
         self.current: pd.Series | None = None
 
     def prepare(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -125,7 +140,20 @@ class BollingerBandsStrategy(BaseStrategy):
         return False
 
     def position_size(self, equity: float, price: float) -> float:
-        return (equity * self.max_capital_per_trade_pct) / price
+        if price <= 0:
+            return 0.0
+        # Fixed-fractional RISK sizing: size so the loss if stopped out equals
+        # max_risk_per_trade_pct of equity, scaled by the ATR stop distance, so
+        # per-trade dollar risk is steady across calm/volatile regimes. Capped at
+        # the notional limit (max_capital_per_trade_pct) to bound gross exposure.
+        notional_cap = (equity * self.max_capital_per_trade_pct) / price
+        if self.current is not None:
+            atr = float(self.current.get("atr", 0.0) or 0.0)
+            stop_distance = atr * self.atr_multiplier
+            if stop_distance > 0:
+                risk_budget = equity * self.max_risk_per_trade_pct
+                return min(risk_budget / stop_distance, notional_cap)
+        return notional_cap
 
     def risk_levels(self, entry: float) -> tuple[float, float]:
         if self.current is None:
@@ -147,6 +175,7 @@ class EmaRsiAtrStrategy(BaseStrategy):
         self.atr_multiplier = float(params.get("atr_multiplier", 1.5))
         self.reward_risk = float(params.get("reward_risk", 2))
         self.max_capital_per_trade_pct = float(params.get("max_capital_per_trade_pct", 0.01))
+        self.max_risk_per_trade_pct = float(params.get("max_risk_per_trade_pct", 0.02))
         self.current: pd.Series | None = None
 
     def prepare(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -187,7 +216,20 @@ class EmaRsiAtrStrategy(BaseStrategy):
         return False
 
     def position_size(self, equity: float, price: float) -> float:
-        return (equity * self.max_capital_per_trade_pct) / price
+        if price <= 0:
+            return 0.0
+        # Fixed-fractional RISK sizing: size so the loss if stopped out equals
+        # max_risk_per_trade_pct of equity, scaled by the ATR stop distance, so
+        # per-trade dollar risk is steady across calm/volatile regimes. Capped at
+        # the notional limit (max_capital_per_trade_pct) to bound gross exposure.
+        notional_cap = (equity * self.max_capital_per_trade_pct) / price
+        if self.current is not None:
+            atr = float(self.current.get("atr", 0.0) or 0.0)
+            stop_distance = atr * self.atr_multiplier
+            if stop_distance > 0:
+                risk_budget = equity * self.max_risk_per_trade_pct
+                return min(risk_budget / stop_distance, notional_cap)
+        return notional_cap
 
     def risk_levels(self, entry: float) -> tuple[float, float]:
         if self.current is None:

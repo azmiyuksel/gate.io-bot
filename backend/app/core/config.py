@@ -88,6 +88,22 @@ class Settings(BaseSettings):
     # allows normal crypto volatility while still filtering extreme moves.
     strategy_max_24h_range_pct: float = 0.12
 
+    # --- Paper-trading position sizing (ATR/risk-based, mirrors live) ---
+    # Size each paper trade so the loss-to-stop equals this fraction of equity
+    # (true fixed-fractional risk), scaled by ATR, capped at a notional limit.
+    paper_position_risk_pct: float = 0.02
+    paper_atr_stop_multiplier: float = 2.0
+    paper_max_capital_per_trade_pct: float = 0.10
+    # Fallback notional fraction when ATR is unavailable (conservative).
+    paper_fallback_capital_pct: float = 0.02
+
+    # --- Financing / funding carry on held positions ---
+    # Perpetual funding / spot borrow drag, modeled as a conservative daily cost
+    # on notional over the holding period so simulated PnL is not overstated.
+    # ~0.01% per 8h funding ≈ 0.03%/day is a typical neutral-market baseline.
+    funding_cost_enabled: bool = True
+    funding_daily_rate_pct: float = 0.0003
+
     # --- Paper-trading entry threshold overrides (mirrors live by default) ---
     # Paper mirrors live thresholds so simulation accurately predicts real
     # trading outcomes. Override via env PAPER_RSI_THRESHOLD, PAPER_EMA20_DISTANCE_PCT,
