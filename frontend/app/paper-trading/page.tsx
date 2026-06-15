@@ -84,7 +84,6 @@ export default function PaperTradingPage() {
   const { toast } = useToast();
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
   const [actionLoadingBtn, setActionLoadingBtn] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -196,21 +195,19 @@ export default function PaperTradingPage() {
   }, []);
 
   async function action(fn: () => Promise<boolean>, successMsg: string, btnId = "") {
-    setActionLoading(true);
-    if (btnId) setActionLoadingBtn(btnId);
+    setActionLoadingBtn(btnId);
+    let ok = false;
     try {
-      const ok = await fn();
-      if (ok) {
-        toast(successMsg, "success");
-      } else {
-        toast("İşlem başarısız", "error");
-      }
+      ok = await fn();
     } catch (err) {
       toast(err instanceof Error ? err.message : "İşlem başarısız", "error");
+      setActionLoadingBtn("");
+      return;
     }
-    await refresh();
-    setActionLoading(false);
     setActionLoadingBtn("");
+    toast(ok ? successMsg : "İşlem başarısız", ok ? "success" : "error");
+    // Refresh fast data in background — don't block the button
+    fetchFast();
   }
 
   const botStatus = status?.status ?? "STOPPED";
