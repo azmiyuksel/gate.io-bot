@@ -1,12 +1,13 @@
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.exc import OperationalError
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import SessionLocal
-from app.models.entities import PaperAccount
+from app.models.entities import PaperAccount, PaperLog
 from app.models.enums import PaperBotStatus
 from app.paper_trading.engine import PaperTradingEngine
 from app.paper_trading.portfolio import PaperPortfolio
@@ -15,6 +16,7 @@ from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
 logger = logging.getLogger(__name__)
 
 MAX_RETRY_DELAY = 60  # seconds
+LOG_RETENTION_DAYS = 7
 
 
 async def main() -> None:
@@ -41,6 +43,22 @@ async def main() -> None:
             portfolio = PaperPortfolio(db, account)
             portfolio.record_equity()
             db.commit()
+
+            # Clean up old log entries
+            try:
+                cutoff = datetime.now(UTC) - timedelta(days=LOG_RETENTION_DAYS)
+                deleted = (
+                    db.query(PaperLog)
+                    .filter(PaperLog.account_id == account.id, PaperLog.created_at < cutoff)
+                    .delete(synchronize_session=False)
+                )
+                if deleted:
+                    db.commit()
+                    logger.info("Paper worker: cleaned %s old log entries", deleted)
+            except Exception:
+                db.rollback()
+                logger.warning("Paper worker: log cleanup failed", exc_info=True)
+
             logger.info("Paper worker starting: account=%s cash=%s status=%s", account.id, account.cash_balance, account.status)
             strategy = CapitalPreservationAdapter()
             engine = PaperTradingEngine(db, account, strategy=strategy)
@@ -49,12 +67,28 @@ async def main() -> None:
                 await engine.start(settings.symbols)
             else:
                 logger.info("Paper worker: account not running (status=%s), waiting for start signal", account.status)
+                refresh_failures = 0
                 while account.status != PaperBotStatus.running:
                     await asyncio.sleep(5)
                     try:
                         db.refresh(account)
+                        refresh_failures = 0
                     except Exception:
-                        pass
+                        refresh_failures += 1
+                        if refresh_failures >= 3:
+                            logger.warning("Paper worker: DB refresh failed %s times, recreating session", refresh_failures)
+                            try:
+                                db.close()
+                            except Exception:
+                                pass
+                            db = SessionLocal()
+                            account = db.query(PaperAccount).filter(PaperAccount.name == "default").first()
+                            if account is None:
+                                account = PaperAccount()
+                                db.add(account)
+                                db.commit()
+                                db.refresh(account)
+                            refresh_failures = 0
                 db.close()
                 continue
             break

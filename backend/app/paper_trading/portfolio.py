@@ -43,6 +43,7 @@ class PaperPortfolio:
         return exposure / equity
 
     def mark_price(self, symbol: str, price: Decimal) -> None:
+        changed = False
         for position in self.open_positions():
             if position.symbol != symbol:
                 continue
@@ -51,7 +52,9 @@ class PaperPortfolio:
                 position.unrealized_pnl = (position.average_entry_price - price) * position.quantity
             else:
                 position.unrealized_pnl = (price - position.average_entry_price) * position.quantity
-        self.db.commit()
+            changed = True
+        if changed:
+            self.db.commit()
 
     def record_equity(self) -> PaperEquityCurve | None:
         """Record equity curve point, throttled to once per interval.

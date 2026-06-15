@@ -16,23 +16,35 @@ export function createPaperStream(onData: (data: PaperStatus) => void): EventSou
   const token = getAccessToken();
   if (!token) return null;
   const publicUrl = process.env.NEXT_PUBLIC_API_URL || "";
-  const baseUrl = publicUrl || "";  // empty → use relative path via Next.js proxy
+  const baseUrl = publicUrl || "";
   const url = `${baseUrl}/api/v1/paper/stream?token=${encodeURIComponent(token)}`;
-  const es = new EventSource(url);
-  es.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      if (data.status !== "error") {
-        onData(data as PaperStatus);
+
+  let es: EventSource;
+  let reconnectDelay = 1000;
+  const maxReconnectDelay = 30000;
+
+  function connect() {
+    es = new EventSource(url);
+    es.onmessage = (event) => {
+      reconnectDelay = 1000;
+      try {
+        const data = JSON.parse(event.data);
+        if (data.status !== "error") {
+          onData(data as PaperStatus);
+        }
+      } catch {
+        // ignore parse errors
       }
-    } catch {
-      // ignore parse errors
-    }
-  };
-  es.onerror = () => {
-    es.close();
-  };
-  return es;
+    };
+    es.onerror = () => {
+      es.close();
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+    };
+  }
+
+  connect();
+  return es!;
 }
 
 export async function startPaperTrading(

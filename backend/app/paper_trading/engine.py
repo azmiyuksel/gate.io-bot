@@ -35,6 +35,10 @@ class PaperTradingEngine:
         self.stream: GateIOMarketDataStream | None = None
         self._client: GateIOClient | None = None
         self._running = False
+        self._lock = asyncio.Lock()
+        self._last_risk_log_ts: float = 0
+        self._log_batch: list = []
+        self._last_log_commit = time()
 
     async def start(self, symbols: list[str]) -> None:
         if self.account.status != PaperBotStatus.running:
@@ -84,8 +88,8 @@ class PaperTradingEngine:
 
     async def _run_entry_loop(self, symbols: list[str]) -> None:
         """Evaluate entries periodically on real candles (independent of ticks)."""
-        settings = get_settings()
         while self._running:
+            settings = get_settings()
             try:
                 self.db.refresh(self.account)
             except Exception:
@@ -187,11 +191,15 @@ class PaperTradingEngine:
     async def execute_signal(self, signal: TradingSignal, data: MarketData) -> None:
         approved, reason = self.risk.approve_signal(signal, data)
         if not approved:
-            self._log("risk_check", f"{signal.symbol}: {reason}", {"symbol": signal.symbol, "reason": reason})
+            if time() - self._last_risk_log_ts >= 10:
+                self._log("risk_check", f"{signal.symbol}: {reason}", {"symbol": signal.symbol, "reason": reason})
+                self._last_risk_log_ts = time()
             if reason in {"daily_loss_limit_reached", "max_drawdown_reached"}:
                 await self.notifier.send(f"Paper trading paused: {reason}")
             return
-        self._log("risk_check", f"{signal.symbol}: approved", {"symbol": signal.symbol, "reason": "approved"})
+        if time() - self._last_risk_log_ts >= 10:
+            self._log("risk_check", f"{signal.symbol}: approved", {"symbol": signal.symbol, "reason": "approved"})
+            self._last_risk_log_ts = time()
         equity = self.portfolio.equity()
         price = Decimal(str(data.price))
         config = get_settings()
@@ -335,8 +343,6 @@ class PaperTradingEngine:
                     self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
 
     def _log(self, event: str, message: str, payload: dict | None = None) -> None:
-        # Commit immediately so diagnostics persist even when no ticks are flowing
-        # (e.g. the WS feed is down but REST entry evaluation still runs).
         self.db.add(
             PaperLog(
                 account_id=self.account.id,
@@ -347,4 +353,6 @@ class PaperTradingEngine:
                 created_at=datetime.now(UTC),
             )
         )
-        self.db.commit()
+        if time() - self._last_log_commit >= 5:
+            self.db.commit()
+            self._last_log_commit = time()

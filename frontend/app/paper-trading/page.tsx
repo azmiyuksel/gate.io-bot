@@ -53,6 +53,7 @@ import type {
 
 import {
   EquityChart,
+  ErrorBoundary,
   OrdersTradesTable,
   PaperControls,
   PositionsTable,
@@ -93,8 +94,10 @@ export default function PaperTradingPage() {
   const [quickQty, setQuickQty] = useState("0.01");
 
   const sseRef = useRef<EventSource | null>(null);
-  const lastTradeCount = useRef(0);
   const botStatusRef = useRef("STOPPED");
+  const actionRef = useRef<
+    (fn: () => Promise<boolean>, successMsg: string, btnId?: string) => Promise<void>
+  >(async () => {});
 
   useEffect(() => {
     setToken(getAccessToken());
@@ -139,17 +142,6 @@ export default function PaperTradingPage() {
   }, [fetchFast, fetchSlow]);
 
   useEffect(() => {
-    if (trades.length > lastTradeCount.current && lastTradeCount.current > 0) {
-      try {
-        const audio = new Audio("data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACAf39/f4B/f3+Af4CAgH9/f3+Af4B/f3+Af39/gH9/f3+Af39/gIB/f3+Af39/gH+Af39/gH+Af3+Af3+Af3+Af39/gH+Af3+Af3+Af39/gH9/f3+Af3+Af3+Af39/gH9/f3+Af39/gH+Af39/gH+Af3+Af3+Af39/gH9/f3+Af39/gH+Af39/gH9/f3+Af39/gH+Af3+Af39/gH+Af39/gH+Af3+Af39/gH+Af3+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gH+Af39/gA==");
-        audio.volume = 0.3;
-        audio.play().catch(() => {});
-      } catch {}
-    }
-    lastTradeCount.current = trades.length;
-  }, [trades]);
-
-  useEffect(() => {
     if (!token) return;
     fetchFast();
     fetchSlow();
@@ -168,20 +160,6 @@ export default function PaperTradingPage() {
     };
   }, [token, fetchFast, fetchSlow]);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      const s = e.key.toLowerCase();
-      const st = botStatusRef.current;
-      if (s === "s" && st === "STOPPED") action(() => startPaperTrading(), "Başlatıldı", "start");
-      if (s === "p" && st === "RUNNING") action(() => pausePaperTrading(), "Duraklatıldı", "pause");
-      if (s === "r" && st === "PAUSED") action(() => resumePaperTrading(), "Devam ediliyor", "resume");
-      if (s === "x" && st !== "STOPPED") action(() => stopPaperTrading(), "Durduruldu", "stop");
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   async function action(fn: () => Promise<boolean>, successMsg: string, btnId = "") {
     setActionLoadingBtn(btnId);
     let ok = false;
@@ -197,22 +175,31 @@ export default function PaperTradingPage() {
     fetchFast();
   }
 
+  useEffect(() => {
+    actionRef.current = action;
+  });
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const s = e.key.toLowerCase();
+      const st = botStatusRef.current;
+      const act = actionRef.current;
+      if (s === "s" && st === "STOPPED") act(() => startPaperTrading(), "Başlatıldı", "start");
+      if (s === "p" && st === "RUNNING") act(() => pausePaperTrading(), "Duraklatıldı", "pause");
+      if (s === "r" && st === "PAUSED") act(() => resumePaperTrading(), "Devam ediliyor", "resume");
+      if (s === "x" && st !== "STOPPED") act(() => stopPaperTrading(), "Durduruldu", "stop");
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const botStatus = status?.status ?? "STOPPED";
   botStatusRef.current = botStatus;
 
   const initialBalance = Number(status?.initial_balance ?? 0);
   const totalReturnPct =
     initialBalance > 0 ? ((Number(status?.equity ?? 0) - initialBalance) / initialBalance) * 100 : 0;
-
-  const tradeMarkers = trades
-    .filter((t) => Number(t.realized_pnl) !== 0)
-    .map((t) => ({
-      time: fmtUTCShort(t.traded_at),
-      equity: Number(t.price) * Number(t.quantity),
-      pnl: Number(t.realized_pnl),
-      symbol: t.symbol,
-      side: t.side,
-    }));
 
   const equityChartData = equity.map((p) => ({
     time: fmtUTCShort(p.timestamp),
@@ -252,6 +239,7 @@ export default function PaperTradingPage() {
   ];
 
   return (
+    <ErrorBoundary>
     <main className="min-h-screen">
       <header className="border-b border-border bg-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4">
@@ -294,7 +282,7 @@ export default function PaperTradingPage() {
       {botStatus === "RUNNING" && (
         <div className="mx-auto max-w-7xl px-6 pt-4">
           <div className="rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-700">
-            <strong>Paper mod:</strong> 15dk mum, 30sn değerlendirme. Strateji live ile aynı parametrelerde (RSI &lt; 35, trend filtresi açık, EMA20 mesafesi %1.5). Long + short sinyal üretir.
+            <strong>Paper mod:</strong> Gerçek OHLC mum verileriyle değerlendirme. Strateji live ile aynı parametrelerde (RSI &lt; 35, trend filtresi açık, EMA20 mesafesi %1.5). Long + short sinyal üretir.
           </div>
         </div>
       )}
@@ -463,6 +451,7 @@ export default function PaperTradingPage() {
         onCancel={() => setConfirmReset(false)}
       />
     </main>
+    </ErrorBoundary>
   );
 }
 

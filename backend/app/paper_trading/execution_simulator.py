@@ -19,7 +19,7 @@ class ExecutionSimulator:
         self.random = random.Random(seed)
 
     def execute_market(self, order_id: int, side: PaperSide, quantity: float, data: MarketData) -> PaperExecution:
-        volatility_factor = self._volatility_factor(data)
+        volatility_factor = max(self._volatility_factor(data), 1.0)
         filled, avg_price = self._tiered_fill(quantity, data)
         extra_slip = abs(self.random.uniform(-0.001, 0.001)) * volatility_factor
         fill_price = avg_price * (1 + extra_slip if side == PaperSide.buy else 1 - extra_slip)

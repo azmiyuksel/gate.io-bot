@@ -28,7 +28,7 @@ class PaperMetrics:
         pnls = np.array([float(trade.realized_pnl) for trade in trades], dtype="float64")
         wins = pnls[pnls > 0]
         equity = np.array([float(point.equity) for point in equity_points], dtype="float64")
-        returns = np.diff(equity) / np.maximum(equity[:-1], 1) if len(equity) > 1 else np.array([])
+        returns = np.log(equity[1:] / np.maximum(equity[:-1], 1)) if len(equity) > 1 else np.array([])
         # Annualization: compute actual observations per year from timestamps
         if len(equity_points) >= 2:
             first_ts = equity_points[0].timestamp

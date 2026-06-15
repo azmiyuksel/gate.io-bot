@@ -128,7 +128,7 @@ class PaperBroker:
             data=data,
         )
         order.filled_quantity = Decimal(str(execution.filled_quantity))
-        order.average_fill_price = exit_price
+        order.average_fill_price = Decimal(str(execution.average_price))
         order.fee_paid = Decimal(str(execution.fee))
         order.latency_ms = execution.latency_ms
         order.filled_at = now
@@ -204,10 +204,12 @@ class PaperBroker:
             .first()
         )
         if existing_short:
+            cover_qty = min(quantity, existing_short.quantity)
             self.close_position(
                 existing_short,
                 MarketData(order.symbol, datetime.now(UTC), float(price)),
                 "signal_cover",
+                quantity=cover_qty,
             )
             return
 

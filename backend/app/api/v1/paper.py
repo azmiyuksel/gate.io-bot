@@ -249,15 +249,32 @@ def risk_status(db: DbSession) -> PaperRiskStatusOut:
     )
 
 
+async def _fetch_current_price(symbol: str) -> float:
+    from app.services.exchange.gateio import GateIOClient
+    client = GateIOClient()
+    try:
+        ticker = await client.ticker(symbol)
+        if ticker and float(ticker.get("last", 0)) > 0:
+            return float(ticker["last"])
+    except Exception:
+        pass
+    finally:
+        await client.close()
+    return 0.0
+
+
 @router.post("/manual-order")
-def manual_order(payload: ManualOrderRequest, db: DbSession) -> dict:
+async def manual_order(payload: ManualOrderRequest, db: DbSession) -> dict:
     account = _get_or_create_account(db)
     broker = PaperBroker(db, account)
     now = datetime.now(UTC)
+    price = await _fetch_current_price(payload.symbol)
+    if price <= 0:
+        return {"error": "could not fetch current market price"}
     data = MarketData(
         symbol=payload.symbol,
         timestamp=now,
-        price=0.0,  # will be filled by latest market price or user-specified
+        price=price,
         volume=0.0,
     )
     signal = TradingSignal(
@@ -273,7 +290,7 @@ def manual_order(payload: ManualOrderRequest, db: DbSession) -> dict:
 
 
 @router.post("/close-position/{position_id}")
-def close_position(position_id: int, db: DbSession) -> dict:
+async def close_position(position_id: int, db: DbSession) -> dict:
     account = _get_or_create_account(db)
     position = (
         db.query(PaperPosition)
@@ -282,11 +299,16 @@ def close_position(position_id: int, db: DbSession) -> dict:
     )
     if not position:
         return {"error": "position not found or already closed"}
+    price = await _fetch_current_price(position.symbol)
+    if price <= 0:
+        price = float(position.last_price) if position.last_price > 0 else 0.0
+    if price <= 0:
+        return {"error": "could not determine current market price"}
     broker = PaperBroker(db, account)
     data = MarketData(
         symbol=position.symbol,
         timestamp=datetime.now(UTC),
-        price=float(position.last_price),
+        price=price,
         volume=0.0,
     )
     broker.close_position(position, data, "manual_close")
@@ -345,10 +367,10 @@ def signal_diagnostics(db: DbSession, hours: int = 24) -> dict:
     reason_counts: dict[str, int] = {}
     latest_by_symbol: dict[str, dict] = {}
     total = 0
-    last_evaluation_at = rows[0].created_at.isoformat() if rows and rows[0].created_at else None
+    last_evaluation_at = rows[0].created_at.isoformat() if rows else None
     for row in rows:
         payload = row.payload or {}
-        reason = payload.get("reason") or row.message
+        reason = payload.get("reason") or "unknown"
         symbol = payload.get("symbol")
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
         total += 1
@@ -370,33 +392,33 @@ def signal_diagnostics(db: DbSession, hours: int = 24) -> dict:
 @router.get("/stream")
 async def stream_paper(request: Request, db: DbSession) -> StreamingResponse:
     async def event_stream():
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    account = db.query(PaperAccount).filter(PaperAccount.name == "default").first()
-                    if account:
-                        portfolio = PaperPortfolio(db, account)
-                        open_positions = portfolio.open_positions()
-                        unrealized = sum((position.unrealized_pnl for position in open_positions), Decimal("0"))
-                        metrics = PaperMetrics(db, account.id).summary()
-                        payload = {
-                            "account_id": account.id,
-                            "status": account.status,
-                            "cash_balance": float(account.cash_balance),
-                            "equity": float(portfolio.equity()),
-                            "realized_pnl": float(account.realized_pnl),
-                            "unrealized_pnl": float(unrealized),
-                            "exposure": float(portfolio.exposure_pct()),
-                            "metrics": metrics,
-                        }
-                        yield f"data: {json.dumps(payload)}\n\n"
-                except Exception:
-                    yield f"data: {json.dumps({'status': 'error'})}\n\n"
-                await asyncio.sleep(2)
-        except asyncio.CancelledError:
-            pass
+        from app.db.session import SessionLocal
+        while True:
+            if await request.is_disconnected():
+                break
+            local_db = SessionLocal()
+            try:
+                account = _get_or_create_account(local_db)
+                portfolio = PaperPortfolio(local_db, account)
+                open_positions = portfolio.open_positions()
+                unrealized = sum((position.unrealized_pnl for position in open_positions), Decimal("0"))
+                metrics = PaperMetrics(local_db, account.id).summary()
+                payload = {
+                    "account_id": account.id,
+                    "status": account.status,
+                    "cash_balance": float(account.cash_balance),
+                    "equity": float(portfolio.equity()),
+                    "realized_pnl": float(account.realized_pnl),
+                    "unrealized_pnl": float(unrealized),
+                    "exposure": float(portfolio.exposure_pct()),
+                    "metrics": metrics,
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+            except Exception:
+                yield f"data: {json.dumps({'status': 'error'})}\n\n"
+            finally:
+                local_db.close()
+            await asyncio.sleep(2)
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 

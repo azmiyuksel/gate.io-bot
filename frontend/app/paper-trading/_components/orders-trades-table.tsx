@@ -47,7 +47,9 @@ export default function OrdersTradesTable({ trades }: Props) {
                     ${money(trade.realized_pnl)}
                   </td>
                   <td className="text-xs text-muted">
-                    {trade.exit_reason ? trade.exit_reason.replace(/_/g, " ") : "giriş"}
+                    {trade.exit_reason ? trade.exit_reason.replace(/_/g, " ") : (
+                      <span className="rounded bg-blue-100 px-1.5 py-0.5 text-blue-700">AÇILIŞ</span>
+                    )}
                   </td>
                 </tr>
               );

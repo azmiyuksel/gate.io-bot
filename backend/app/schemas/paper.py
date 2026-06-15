@@ -101,6 +101,8 @@ class PaperMetricsOut(BaseModel):
     rolling_sharpe: float
     drawdown: float
 
+    model_config = {"from_attributes": True}
+
 
 class PaperRiskStatusOut(BaseModel):
     max_daily_loss_pct: float

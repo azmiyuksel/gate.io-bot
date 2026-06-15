@@ -13,7 +13,7 @@ interface Props {
 
 export default function SignalDiagnostics({ diagnostics, maxReasonCount }: Props) {
   return (
-    <section className="mx-auto grid max-w-7xl gap-5 lg:grid-cols-[1fr_1fr]">
+    <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[1fr_1fr]">
       <Card>
         <div className="mb-1 flex items-center gap-2">
           <Activity size={17} />

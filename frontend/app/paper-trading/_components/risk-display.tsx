@@ -18,9 +18,9 @@ export default function RiskDisplay({ risk }: Props) {
       </div>
       {risk ? (
         <div className="space-y-5">
-          <RiskItem label="Günlük Zarar" current={risk.current_daily_loss_pct * 100} max={risk.max_daily_loss_pct * 100} unit="%" color={risk.current_daily_loss_pct / risk.max_daily_loss_pct > 0.7 ? "#b42318" : "#146c5d"} />
-          <RiskItem label="Drawdown" current={risk.current_drawdown * 100} max={risk.max_drawdown_pct * 100} unit="%" color={risk.current_drawdown / risk.max_drawdown_pct > 0.7 ? "#b42318" : "#146c5d"} />
-          <RiskItem label="Exposure" current={risk.current_exposure * 100} max={risk.max_exposure_pct * 100} unit="%" color={risk.current_exposure / risk.max_exposure_pct > 0.7 ? "#b42318" : "#146c5d"} />
+          <RiskItem label="Günlük Zarar" current={risk.current_daily_loss_pct * 100} max={risk.max_daily_loss_pct * 100} unit="%" color={risk.max_daily_loss_pct > 0 && risk.current_daily_loss_pct / risk.max_daily_loss_pct > 0.7 ? "#b42318" : "#146c5d"} />
+          <RiskItem label="Drawdown" current={risk.current_drawdown * 100} max={risk.max_drawdown_pct * 100} unit="%" color={risk.max_drawdown_pct > 0 && risk.current_drawdown / risk.max_drawdown_pct > 0.7 ? "#b42318" : "#146c5d"} />
+          <RiskItem label="Exposure" current={risk.current_exposure * 100} max={risk.max_exposure_pct * 100} unit="%" color={risk.max_exposure_pct > 0 && risk.current_exposure / risk.max_exposure_pct > 0.7 ? "#b42318" : "#146c5d"} />
           <RiskItem label="Açık Pozisyon" current={risk.current_open_positions} max={risk.max_open_positions} unit="" color={risk.current_open_positions >= risk.max_open_positions ? "#b42318" : "#146c5d"} />
         </div>
       ) : (
