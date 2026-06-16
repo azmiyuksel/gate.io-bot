@@ -32,7 +32,9 @@ class PaperAccount(Base):
     realized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
     max_daily_loss_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.05"))
     max_drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.25"))
-    max_exposure_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.50"))
+    # Futures: total open notional may reach leverage * equity, so the exposure cap
+    # is expressed in leverage terms (5x) rather than a spot <=1 fraction.
+    max_exposure_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=Decimal("5.00"))
     max_open_positions: Mapped[int] = mapped_column(default=8)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

@@ -93,14 +93,50 @@ class Settings(BaseSettings):
     # allows normal crypto volatility while still filtering extreme moves.
     strategy_max_24h_range_pct: float = 0.12
 
-    # --- Paper-trading position sizing (ATR/risk-based, mirrors live) ---
+    # --- Paper-trading position sizing (ATR/risk-based, leverage-aware) ---
     # Size each paper trade so the loss-to-stop equals this fraction of equity
-    # (true fixed-fractional risk), scaled by ATR, capped at a notional limit.
-    paper_position_risk_pct: float = 0.02
+    # (true fixed-fractional risk), scaled by ATR, capped at a leverage notional
+    # limit. 0.5% risk/trade is the frequent-trading default (many small bets).
+    paper_position_risk_pct: float = 0.005
     paper_atr_stop_multiplier: float = 2.0
+    # Reward:risk for the fixed take-profit (trailing handles the rest of the run).
+    paper_tp_rr: float = 1.5
     paper_max_capital_per_trade_pct: float = 0.10
     # Fallback notional fraction when ATR is unavailable (conservative).
     paper_fallback_capital_pct: float = 0.02
+
+    # --- Futures simulation: leverage + fees ---
+    # Notional per trade may reach paper_leverage * equity (margin trading). The
+    # per-trade RISK is still bounded by paper_position_risk_pct above; leverage only
+    # raises the notional CEILING so small-stop breakouts can take a meaningful size.
+    paper_leverage: float = 5.0
+    # Gate.io futures taker/maker fees. Taker 5 bps, maker 2 bps.
+    paper_taker_fee: float = 0.0005
+    paper_maker_fee: float = 0.0002
+    # Kelly position scaling needs a track record; off by default so cold-start sizing
+    # is deterministic (pure fixed-fractional risk).
+    paper_kelly_enabled: bool = False
+    # Legacy fixed-pct dynamic stop (tightens to a flat % of price before breakeven).
+    # OFF by default: it silently overrides the ATR stop the position was sized to,
+    # mis-stating realised risk. ATR stop + trailing govern exits instead.
+    paper_dynamic_pct_stop_enabled: bool = False
+
+    # --- Momentum / breakout strategy (momentum_breakout_v1) ---
+    # Active paper strategy. "momentum_breakout_v1" (frequent, long+short) or
+    # "capital_preservation_v1" (low-frequency mean-reversion).
+    paper_strategy: str = "momentum_breakout_v1"
+    momentum_ema_fast: int = 9
+    momentum_ema_slow: int = 21
+    momentum_ema_trend: int = 50
+    momentum_donchian_lookback: int = 20
+    momentum_vol_spike_mult: float = 1.3
+    momentum_rsi_long_max: float = 80.0
+    momentum_rsi_short_min: float = 20.0
+    # Minimum ATR as a fraction of price; below this the move can't clear costs.
+    momentum_min_atr_pct: float = 0.0015
+    # Breakout must clear the prior extreme by this fraction of ATR (noise filter).
+    momentum_breakout_buffer_atr: float = 0.05
+    momentum_allow_short: bool = True
 
     # --- Financing / funding carry on held positions ---
     # Perpetual funding / spot borrow drag, modeled as a conservative daily cost
@@ -158,9 +194,12 @@ class Settings(BaseSettings):
     max_equity_staleness_seconds: int = 1800
     gateio_ws_url: str = "wss://api.gateio.ws/ws/v4/"
     market_data_interval: str = "15m"
+    # Paper trading runs on a faster timeframe than live (frequent momentum/breakout
+    # strategy). Falls back to market_data_interval when unset.
+    paper_market_data_interval: str = "5m"
     # How often the paper-trading engine re-evaluates entries on real candles.
-    # 30s on 15m candles ensures new candle data is picked up within half a bar.
-    paper_eval_interval_seconds: int = 30
+    # 15s on 5m candles ensures a fresh bar is picked up within a fraction of a bar.
+    paper_eval_interval_seconds: int = 15
     # Paper order type: "market" (default) or "limit" (maker, lower fees)
     paper_order_type: str = "market"
     # Multi-timeframe confirmation: when enabled, entries require the higher

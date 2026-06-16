@@ -15,7 +15,6 @@ from app.paper_trading.models import BaseStrategy, MarketData, TradingSignal
 from app.paper_trading.order_manager import PaperOrderManager
 from app.paper_trading.portfolio import PaperPortfolio
 from app.paper_trading.risk_simulator import PaperRiskSimulator
-from app.repositories.trading import StrategySettingsRepository
 from app.services.exchange.gateio import GateIOClient
 from app.services.notifications.telegram import TelegramNotifier
 
@@ -120,10 +119,11 @@ class PaperTradingEngine:
                 )
 
     async def _evaluate_symbol_entry(self, symbol: str, settings) -> None:
+        paper_interval = getattr(settings, "paper_market_data_interval", None) or settings.market_data_interval
         try:
             candles = await self._client.candles(
                 symbol,
-                interval=settings.market_data_interval,
+                interval=paper_interval,
                 limit=settings.candle_history_limit,
                 drop_unclosed=True,
             )
@@ -222,50 +222,48 @@ class PaperTradingEngine:
         equity = self.portfolio.equity()
         price = Decimal(str(data.price))
         config = get_settings()
-        settings = StrategySettingsRepository(self.db).current()
-        max_capital_pct = settings.max_capital_per_trade_pct if settings else Decimal("0.01")
-        max_risk_pct = Decimal(str(config.max_risk_per_trade_pct))
 
-        # Risk-constrained position sizing: the risk-based quantity (sized so loss-to-stop
-        # equals max_risk_pct of equity) is bound above by a notional cap (max_capital_pct).
-        # This means risk-based sizing constrains rather than drives the final position size.
+        # Leverage-aware, fixed-fractional risk sizing. The per-trade risk is
+        # paper_position_risk_pct of equity, sized against the SAME ATR stop the
+        # broker will place (paper_atr_stop_multiplier), so realised risk matches
+        # intent. The notional is then capped by available leverage (margin).
+        risk_pct = Decimal(str(config.paper_position_risk_pct))
+        leverage = Decimal(str(config.paper_leverage))
+        stop_mult = Decimal(str(config.paper_atr_stop_multiplier))
+        max_notional = equity * leverage
+        notional_cap_qty = max_notional / price if price > 0 else Decimal("0")
+
         atr_str = signal.metadata.get("atr") if signal.metadata else None
         if atr_str and config.risk_based_sizing_enabled:
             try:
                 atr_value = Decimal(str(atr_str))
-                stop_distance = atr_value * Decimal("2.5")  # matches broker stop-loss
+                stop_distance = atr_value * stop_mult
                 if stop_distance > 0:
-                    max_loss_per_trade = equity * max_risk_pct
-                    risk_based_qty = max_loss_per_trade / stop_distance
-                    # Cap at max notional
-                    max_notional = equity * max_capital_pct
-                    notional_capped_qty = max_notional / price if price > 0 else Decimal("0")
-                    quantity = min(risk_based_qty, notional_capped_qty)
+                    risk_based_qty = (equity * risk_pct) / stop_distance
+                    quantity = min(risk_based_qty, notional_cap_qty)
                 else:
-                    quantity = (equity * max_capital_pct) / price if price > 0 else Decimal("0")
+                    quantity = (equity * Decimal(str(config.paper_fallback_capital_pct))) / price if price > 0 else Decimal("0")
             except Exception:
-                quantity = (equity * max_capital_pct) / price if price > 0 else Decimal("0")
+                quantity = (equity * Decimal(str(config.paper_fallback_capital_pct))) / price if price > 0 else Decimal("0")
         else:
-            notional = equity * max_capital_pct
-            quantity = notional / price if price > 0 else Decimal("0")
+            quantity = (equity * Decimal(str(config.paper_fallback_capital_pct))) / price if price > 0 else Decimal("0")
 
         if quantity <= 0:
             return
 
-        # Kelly-optimal fraction: scale position by edge quality
-        # kelly_f = win_rate - (1 - win_rate) / payoff_ratio
-        # Clamped to [0.25, 1.0] of base size to prevent ruin
-        try:
-            from app.paper_trading.metrics import PaperMetrics
-            metrics = PaperMetrics(self.db, self.account.id).summary()
-            wr = metrics.get("win_rate_rolling_100", 0)
-            # Estimate payoff from recent equity returns
-            if wr > 0 and wr < 1:
-                kelly_f = wr - (1 - wr) / max(wr, 0.01)
-                scale = max(Decimal("0.25"), min(Decimal("1.0"), Decimal(str(max(kelly_f, 0.10)))))
-                quantity = quantity * scale
-        except Exception:
-            pass
+        # Kelly-optimal fraction (opt-in): scale by edge quality once a track record
+        # exists. Off by default so cold-start sizing is deterministic.
+        if config.paper_kelly_enabled:
+            try:
+                from app.paper_trading.metrics import PaperMetrics
+                metrics = PaperMetrics(self.db, self.account.id).summary()
+                wr = metrics.get("win_rate_rolling_100", 0)
+                if wr > 0 and wr < 1:
+                    kelly_f = wr - (1 - wr) / max(wr, 0.01)
+                    scale = max(Decimal("0.25"), min(Decimal("1.0"), Decimal(str(max(kelly_f, 0.10)))))
+                    quantity = quantity * scale
+            except Exception:
+                pass
 
         order = self.order_manager.execute_signal(signal, quantity, data)
         if order:
@@ -327,9 +325,11 @@ class PaperTradingEngine:
                         position.trailing_stop = trailing_stop
                         position.stop_loss = trailing_stop
 
-            # Dynamic stop-loss: ratchet tighter as price moves favorably
-            # Uses 2.5% of current price as stop distance, only tightens (never loosens)
-            if not position.breakeven_triggered and position.stop_loss:
+            # Legacy fixed-pct dynamic stop (opt-in). DISABLED by default: it
+            # tightens the stop to a flat % of price, silently overriding the ATR
+            # stop the position was sized against and mis-stating realised risk.
+            # The ATR stop + breakeven + trailing below govern exits instead.
+            if settings.paper_dynamic_pct_stop_enabled and not position.breakeven_triggered and position.stop_loss:
                 try:
                     stop_distance = price * Decimal("0.025")
                     if is_short:

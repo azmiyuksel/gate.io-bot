@@ -14,9 +14,14 @@ logger = logging.getLogger(__name__)
 
 class PaperBroker:
     def __init__(self, db: Session, account: PaperAccount, simulator: ExecutionSimulator | None = None) -> None:
+        from app.core.config import get_settings
+
         self.db = db
         self.account = account
-        self.simulator = simulator or ExecutionSimulator()
+        if simulator is None:
+            s = get_settings()
+            simulator = ExecutionSimulator(maker_fee=s.paper_maker_fee, taker_fee=s.paper_taker_fee)
+        self.simulator = simulator
 
     def submit_signal(self, signal: TradingSignal, quantity: Decimal, data: MarketData) -> PaperOrder:
         signal_time = signal.timestamp
@@ -99,6 +104,30 @@ class PaperBroker:
             )
         )
         self._log("order_filled", f"{order.side} {order.symbol} qty={execution.filled_quantity}")
+
+    def _stop_tp_params(self) -> tuple[Decimal, Decimal]:
+        """(ATR stop multiplier, take-profit reward:risk) from config — shared by
+        long/short opens and by the engine's position sizing so the stop the trade
+        is sized against is the stop actually placed."""
+        from app.core.config import get_settings
+
+        s = get_settings()
+        return Decimal(str(s.paper_atr_stop_multiplier)), Decimal(str(s.paper_tp_rr))
+
+    def _fits_free_margin(self, notional: Decimal) -> bool:
+        """A new long's notional must fit within free margin (equity * leverage)
+        minus the notional already committed to open positions."""
+        from app.core.config import get_settings
+
+        from app.paper_trading.portfolio import PaperPortfolio
+
+        portfolio = PaperPortfolio(self.db, self.account)
+        equity = portfolio.equity()
+        if equity <= 0:
+            return False
+        leverage = Decimal(str(get_settings().paper_leverage))
+        used = sum(p.quantity * p.last_price for p in portfolio.open_positions())
+        return (used + notional) <= equity * leverage
 
     def _funding_cost(self, position: PaperPosition, close_qty: Decimal, exit_time: datetime) -> Decimal:
         """Conservative financing carry on the closed notional over the holding
@@ -237,10 +266,13 @@ class PaperBroker:
             )
             return
 
-        # Open or add to a LONG position
-        if self.account.cash_balance < total_cost:
+        # Open or add to a LONG position. Futures margin: a long may use leverage,
+        # so cash is allowed to go negative (borrowed funds) as long as the trade
+        # fits within free margin (equity * leverage). Equity stays correct because
+        # the position's market value is added back in PaperPortfolio.equity().
+        if not self._fits_free_margin(quantity * price):
             order.status = PaperOrderStatus.rejected
-            self._log("order_rejected", "insufficient paper cash")
+            self._log("order_rejected", "exceeds free margin (leverage cap)")
             return
         self.account.cash_balance -= total_cost
         existing = (
@@ -268,9 +300,10 @@ class PaperBroker:
             if atr_str is not None:
                 try:
                     atr_value = Decimal(str(atr_str))
-                    stop_loss = price - atr_value * Decimal("2.5")
+                    stop_mult, tp_rr = self._stop_tp_params()
+                    stop_loss = price - atr_value * stop_mult
                     risk_per_unit = price - stop_loss
-                    take_profit = price + risk_per_unit * Decimal("2.0")
+                    take_profit = price + risk_per_unit * tp_rr
                 except Exception:
                     pass
             if stop_loss is None:
@@ -317,7 +350,12 @@ class PaperBroker:
             )
             return
 
-        # Open a SHORT position (sell to open)
+        # Open a SHORT position (sell to open). Margin guard mirrors the long side:
+        # the short's notional must fit within free margin (equity * leverage).
+        if not self._fits_free_margin(quantity * price):
+            order.status = PaperOrderStatus.rejected
+            self._log("order_rejected", "exceeds free margin (leverage cap)")
+            return
         # For short: cash increases by sale proceeds minus fee
         self.account.cash_balance += quantity * price - fee
         stop_loss = None
@@ -327,10 +365,11 @@ class PaperBroker:
         if atr_str is not None:
             try:
                 atr_value = Decimal(str(atr_str))
+                stop_mult, tp_rr = self._stop_tp_params()
                 # For short: stop is above entry, target is below entry
-                stop_loss = price + atr_value * Decimal("2.5")
+                stop_loss = price + atr_value * stop_mult
                 risk_per_unit = stop_loss - price
-                take_profit = price - risk_per_unit * Decimal("2.0")
+                take_profit = price - risk_per_unit * tp_rr
             except Exception:
                 pass
         if stop_loss is None:

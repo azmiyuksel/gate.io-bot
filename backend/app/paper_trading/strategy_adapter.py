@@ -12,24 +12,39 @@ from decimal import Decimal
 
 from app.core.config import get_settings
 from app.paper_trading.models import BaseStrategy, MarketData, PaperSide, TradingSignal
+from app.services.strategy.momentum_breakout import MomentumBreakoutStrategy
 from app.services.strategy.signals import CapitalPreservationStrategy
 
 logger = logging.getLogger(__name__)
 
 
+def _build_strategy(settings):
+    """Instantiate the configured paper strategy.
+
+    Default is the frequent momentum/breakout strategy (long+short). The
+    capital-preservation strategy is kept selectable for A/B comparison and runs
+    with the deliberately looser paper thresholds it was tuned for.
+    """
+    if settings.paper_strategy == "capital_preservation_v1":
+        strat = CapitalPreservationStrategy()
+        strat.trend_filter_enabled = settings.paper_trend_filter_enabled
+        strat.rsi_threshold = Decimal(str(settings.paper_rsi_threshold))
+        strat.ema20_distance_pct = Decimal(str(settings.paper_ema20_distance_pct))
+        strat.trend_tolerance_pct = Decimal(str(settings.paper_trend_tolerance_pct))
+        return strat
+    return MomentumBreakoutStrategy()
+
+
 class CapitalPreservationAdapter(BaseStrategy):
-    """Wraps the live CapitalPreservationStrategy for use inside PaperTradingEngine."""
+    """Adapts the configured paper strategy to the PaperTradingEngine interface.
+
+    Named for history; the active strategy is selected via ``paper_strategy``
+    (default ``momentum_breakout_v1``).
+    """
 
     def __init__(self, candle_window: int = 60, min_candles: int = 210) -> None:
-        self._strategy = CapitalPreservationStrategy()
-        # Paper runs deliberately looser entry thresholds than live (which stays
-        # strict for capital preservation), so the simulation produces enough
-        # activity to observe. Live thresholds are untouched.
         settings = get_settings()
-        self._strategy.trend_filter_enabled = settings.paper_trend_filter_enabled
-        self._strategy.rsi_threshold = Decimal(str(settings.paper_rsi_threshold))
-        self._strategy.ema20_distance_pct = Decimal(str(settings.paper_ema20_distance_pct))
-        self._strategy.trend_tolerance_pct = Decimal(str(settings.paper_trend_tolerance_pct))
+        self._strategy = _build_strategy(settings)
         self._last_signal: TradingSignal | None = None
         self._current_data: MarketData | None = None
         self._last_reason: str = ""

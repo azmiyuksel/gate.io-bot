@@ -201,16 +201,29 @@ def test_trend_filter_blocks_entries_below_ema200():
     assert signal.reason == "rsi_not_overbought"
 
 
+def _cp_settings():
+    """Settings selecting the capital-preservation paper strategy (the default is
+    now the frequent momentum strategy)."""
+    from app.core.config import Settings
+
+    return Settings(
+        environment="local", secret_key="t", fernet_key="t",
+        paper_strategy="capital_preservation_v1",
+    )
+
+
 def test_paper_adapter_uses_looser_paper_thresholds():
-    # Paper runs DELIBERATELY looser than live so the simulation generates enough
-    # activity to observe (live stays strict for capital preservation).
+    # When capital_preservation_v1 is selected, paper runs DELIBERATELY looser than
+    # live so the simulation generates enough activity to observe.
     from decimal import Decimal
+    from unittest.mock import patch
 
     from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
     from app.services.strategy.signals import CapitalPreservationStrategy
 
     live = CapitalPreservationStrategy()
-    paper = CapitalPreservationAdapter()._strategy
+    with patch("app.paper_trading.strategy_adapter.get_settings", return_value=_cp_settings()):
+        paper = CapitalPreservationAdapter()._strategy
     assert paper.trend_filter_enabled is True
     assert paper.rsi_threshold == Decimal("45")
     assert paper.ema20_distance_pct == Decimal("0.03")
@@ -227,6 +240,7 @@ def test_paper_trend_tolerance_allows_long_just_below_ema200():
     live stays out (strict trend gate), but paper's 2% tolerance enters — this is
     the lever that keeps the simulation active in neutral/mildly-down chop."""
     from decimal import Decimal
+    from unittest.mock import patch
 
     from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
     from app.services.strategy.signals import CapitalPreservationStrategy
@@ -252,7 +266,9 @@ def test_paper_trend_tolerance_allows_long_just_below_ema200():
         })
 
     live = CapitalPreservationStrategy().evaluate(candles)
-    paper = CapitalPreservationAdapter()._strategy.evaluate(candles)
+    with patch("app.paper_trading.strategy_adapter.get_settings", return_value=_cp_settings()):
+        paper_strat = CapitalPreservationAdapter()._strategy
+    paper = paper_strat.evaluate(candles)
     assert live.should_enter is False  # strict gate blocks a long below EMA200
     assert paper.should_enter is True and paper.direction == "long"
 

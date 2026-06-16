@@ -46,6 +46,22 @@ async def main() -> None:
                     db.commit()
             except (TypeError, AttributeError):
                 pass
+
+            # Futures migration: an account created with the legacy spot exposure cap
+            # (<1x equity) would block every leveraged entry. Raise it to the
+            # configured leverage so the frequent strategy can actually take size.
+            try:
+                from decimal import Decimal as _D
+                if account.max_exposure_pct is not None and _D(str(account.max_exposure_pct)) < _D("1"):
+                    logger.info(
+                        "Paper account exposure cap %s < 1x; raising to leverage %s for futures",
+                        account.max_exposure_pct, settings.paper_leverage,
+                    )
+                    account.max_exposure_pct = _D(str(settings.paper_leverage))
+                    db.commit()
+            except Exception:
+                # Best-effort migration: never let a bad/mocked value abort startup.
+                pass
             portfolio = PaperPortfolio(db, account)
             portfolio.record_equity()
             db.commit()
