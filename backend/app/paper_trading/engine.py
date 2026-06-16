@@ -107,73 +107,87 @@ class PaperTradingEngine:
     async def _evaluate_entries(self, symbols: list[str], settings) -> None:
         for symbol in symbols:
             try:
-                candles = await self._client.candles(
+                await self._evaluate_symbol_entry(symbol, settings)
+            except Exception as exc:
+                # A single symbol's unexpected error must never abort the whole
+                # evaluation pass (and crash-restart the worker), leaving every
+                # other symbol untraded. Log it and move on.
+                logger.warning("paper entry: evaluation failed for %s: %s", symbol, exc)
+                self._log(
+                    "entry_skipped",
+                    f"{symbol}: evaluation_error ({exc})",
+                    {"symbol": symbol, "reason": "evaluation_error"},
+                )
+
+    async def _evaluate_symbol_entry(self, symbol: str, settings) -> None:
+        try:
+            candles = await self._client.candles(
+                symbol,
+                interval=settings.market_data_interval,
+                limit=settings.candle_history_limit,
+                drop_unclosed=True,
+            )
+        except Exception as exc:
+            # Surface fetch failures to the dashboard instead of failing silently
+            # (a worker with no outbound network would otherwise look idle).
+            logger.warning("paper entry: candle fetch failed for %s: %s", symbol, exc)
+            self._log(
+                "entry_skipped",
+                f"{symbol}: candle_fetch_failed ({exc})",
+                {"symbol": symbol, "reason": "candle_fetch_failed"},
+            )
+            return
+        if not candles:
+            self._log(
+                "entry_skipped",
+                f"{symbol}: no_candles",
+                {"symbol": symbol, "reason": "no_candles"},
+            )
+            return
+        signal = self.strategy.evaluate_real_candles(symbol, candles)
+        if signal is None:
+            reason = getattr(self.strategy, "last_reason", "") or "no_signal"
+            self._log("entry_skipped", f"{symbol}: {reason}", {"symbol": symbol, "reason": reason})
+            return
+
+        # Multi-timeframe confirmation: check HTF trend alignment
+        if getattr(settings, "strategy_mtf_enabled", False):
+            try:
+                htf_candles = await self._client.candles(
                     symbol,
-                    interval=settings.market_data_interval,
-                    limit=settings.candle_history_limit,
+                    interval=settings.strategy_mtf_interval,
+                    limit=51,  # +1 so dropping the forming bar still leaves 50
                     drop_unclosed=True,
                 )
-            except Exception as exc:
-                # Surface fetch failures to the dashboard instead of failing silently
-                # (a worker with no outbound network would otherwise look idle).
-                logger.warning("paper entry: candle fetch failed for %s: %s", symbol, exc)
-                self._log(
-                    "entry_skipped",
-                    f"{symbol}: candle_fetch_failed ({exc})",
-                    {"symbol": symbol, "reason": "candle_fetch_failed"},
-                )
-                continue
-            if not candles:
-                self._log(
-                    "entry_skipped",
-                    f"{symbol}: no_candles",
-                    {"symbol": symbol, "reason": "no_candles"},
-                )
-                continue
-            signal = self.strategy.evaluate_real_candles(symbol, candles)
-            if signal is None:
-                reason = getattr(self.strategy, "last_reason", "") or "no_signal"
-                self._log("entry_skipped", f"{symbol}: {reason}", {"symbol": symbol, "reason": reason})
-                continue
+                if htf_candles and len(htf_candles) >= 50:
+                    from app.services.strategy.indicators import ema as calc_ema
+                    htf_closes = [Decimal(str(c["close"])) for c in htf_candles]
+                    htf_ema200 = calc_ema(htf_closes, 50)
+                    htf_last = htf_closes[-1]
+                    direction = signal.metadata.get("direction") if signal.metadata else "long"
+                    if direction == "long" and htf_last < htf_ema200:
+                        self._log("entry_skipped", f"{symbol}: htf_trend_mismatch (long but 4h below EMA50)",
+                                  {"symbol": symbol, "reason": "htf_trend_mismatch"})
+                        return
+                    if direction == "short" and htf_last > htf_ema200:
+                        self._log("entry_skipped", f"{symbol}: htf_trend_mismatch (short but 4h above EMA50)",
+                                  {"symbol": symbol, "reason": "htf_trend_mismatch"})
+                        return
+            except Exception:
+                pass  # MTF check is advisory; proceed if it fails
 
-            # Multi-timeframe confirmation: check HTF trend alignment
-            if getattr(settings, "strategy_mtf_enabled", False):
-                try:
-                    htf_candles = await self._client.candles(
-                        symbol,
-                        interval=settings.strategy_mtf_interval,
-                        limit=51,  # +1 so dropping the forming bar still leaves 50
-                        drop_unclosed=True,
-                    )
-                    if htf_candles and len(htf_candles) >= 50:
-                        from app.services.strategy.indicators import ema as calc_ema
-                        htf_closes = [Decimal(str(c["close"])) for c in htf_candles]
-                        htf_ema200 = calc_ema(htf_closes, 50)
-                        htf_last = htf_closes[-1]
-                        direction = signal.metadata.get("direction") if signal.metadata else "long"
-                        if direction == "long" and htf_last < htf_ema200:
-                            self._log("entry_skipped", f"{symbol}: htf_trend_mismatch (long but 4h below EMA50)",
-                                      {"symbol": symbol, "reason": "htf_trend_mismatch"})
-                            continue
-                        if direction == "short" and htf_last > htf_ema200:
-                            self._log("entry_skipped", f"{symbol}: htf_trend_mismatch (short but 4h above EMA50)",
-                                      {"symbol": symbol, "reason": "htf_trend_mismatch"})
-                            continue
-                except Exception:
-                    pass  # MTF check is advisory; proceed if it fails
-
-            latest = candles[-1]
-            # Build a MarketData snapshot from the latest REAL candle (proper OHLC),
-            # so execution simulation and risk checks see correct bar values.
-            data = MarketData(
-                symbol=symbol,
-                timestamp=datetime.now(UTC),
-                price=float(latest["close"]),
-                volume=float(latest.get("volume") or 0),
-                high=float(latest["high"]),
-                low=float(latest["low"]),
-            )
-            await self.execute_signal(signal, data)
+        latest = candles[-1]
+        # Build a MarketData snapshot from the latest REAL candle (proper OHLC),
+        # so execution simulation and risk checks see correct bar values.
+        data = MarketData(
+            symbol=symbol,
+            timestamp=datetime.now(UTC),
+            price=float(latest["close"]),
+            volume=float(latest.get("volume") or 0),
+            high=float(latest["high"]),
+            low=float(latest["low"]),
+        )
+        await self.execute_signal(signal, data)
 
     def stop(self) -> None:
         self._running = False
