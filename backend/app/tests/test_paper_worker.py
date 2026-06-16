@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.config import Settings
+from app.models.enums import PaperBotStatus
 
 
 @pytest.fixture()
@@ -24,6 +25,7 @@ async def test_paper_worker_creates_default_account(_settings):
     with patch("app.workers.paper_worker.SessionLocal") as mock_session_cls, \
          patch("app.workers.paper_worker.PaperTradingEngine") as mock_engine_cls, \
          patch("app.workers.paper_worker.CapitalPreservationAdapter"), \
+         patch("app.workers.paper_worker.PaperAccount") as mock_account_cls, \
          patch("app.workers.paper_worker.PaperPortfolio") as mock_portfolio_cls:
 
         mock_db = MagicMock()
@@ -31,6 +33,13 @@ async def test_paper_worker_creates_default_account(_settings):
 
         # No existing account
         mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        # The newly-created account is RUNNING so the worker proceeds to start
+        # the engine (rather than waiting on the user's start signal).
+        new_account = MagicMock()
+        new_account.status = PaperBotStatus.running
+        new_account.cash_balance = 10000
+        mock_account_cls.return_value = new_account
 
         mock_engine = AsyncMock()
         mock_engine_cls.return_value = mock_engine
@@ -60,6 +69,7 @@ async def test_paper_worker_reuses_existing_account(_settings):
 
         existing_account = MagicMock()
         existing_account.cash_balance = 10000
+        existing_account.status = PaperBotStatus.running
         mock_db.query.return_value.filter.return_value.first.return_value = existing_account
 
         mock_engine = AsyncMock()
@@ -90,7 +100,10 @@ async def test_paper_worker_retries_then_exits_closing_db(_settings, monkeypatch
 
         mock_db = MagicMock()
         mock_session_cls.return_value = mock_db
-        mock_db.query.return_value.filter.return_value.first.return_value = MagicMock()
+        running_account = MagicMock()
+        running_account.cash_balance = 10000
+        running_account.status = PaperBotStatus.running
+        mock_db.query.return_value.filter.return_value.first.return_value = running_account
 
         mock_engine = AsyncMock()
         # Fail once (worker should retry), then succeed so the loop breaks.
