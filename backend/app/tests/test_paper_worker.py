@@ -145,6 +145,23 @@ def test_evaluate_real_candles_maps_strategy_signal(monkeypatch):
     assert adapter.evaluate_real_candles("BTC_USDT", [{}]) is None
 
 
+def test_adapter_reason_code_is_stable_without_rsi(monkeypatch):
+    """The diagnostics payload must use a STABLE reason code (no embedded RSI),
+    otherwise every evaluation is a unique reason and the tally grows unbounded."""
+    from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
+    from app.services.strategy.signals import Signal
+
+    adapter = CapitalPreservationAdapter()
+    monkeypatch.setattr(
+        adapter._strategy, "evaluate",
+        lambda candles: Signal(False, "", "rsi_not_oversold", diagnostics={"rsi": 43.14159}),
+    )
+    adapter.evaluate_real_candles("BTC_USDT", [{}])
+    # Groupable code carries no RSI; human-readable message still shows it.
+    assert adapter.last_reason_code == "rsi_not_oversold"
+    assert "RSI" in adapter.last_reason
+
+
 def test_stream_tick_has_no_intrabar_range():
     import json
 

@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRY_DELAY = 60  # seconds
 LOG_RETENTION_DAYS = 7
+# High-volume per-evaluation diagnostics (entry_skipped / risk_check) are logged
+# for every symbol every cycle. The dashboard only reads a 24h window, so prune
+# them aggressively (48h = window + buffer) to keep the table — and the signal
+# diagnostics query — small. Lower-volume events keep the 7-day retention above.
+DIAG_RETENTION_HOURS = 48
+DIAG_EVENTS = ("entry_skipped", "risk_check")
 
 
 async def main() -> None:
@@ -46,10 +52,23 @@ async def main() -> None:
 
             # Clean up old log entries
             try:
-                cutoff = datetime.now(UTC) - timedelta(days=LOG_RETENTION_DAYS)
+                now = datetime.now(UTC)
+                cutoff = now - timedelta(days=LOG_RETENTION_DAYS)
                 deleted = (
                     db.query(PaperLog)
                     .filter(PaperLog.account_id == account.id, PaperLog.created_at < cutoff)
+                    .delete(synchronize_session=False)
+                )
+                # Aggressively prune the high-volume diagnostic events on a much
+                # shorter horizon so the signal-diagnostics table stays bounded.
+                diag_cutoff = now - timedelta(hours=DIAG_RETENTION_HOURS)
+                deleted += (
+                    db.query(PaperLog)
+                    .filter(
+                        PaperLog.account_id == account.id,
+                        PaperLog.event.in_(DIAG_EVENTS),
+                        PaperLog.created_at < diag_cutoff,
+                    )
                     .delete(synchronize_session=False)
                 )
                 if deleted:

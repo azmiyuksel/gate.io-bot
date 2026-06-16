@@ -146,8 +146,11 @@ class PaperTradingEngine:
             return
         signal = self.strategy.evaluate_real_candles(symbol, candles)
         if signal is None:
-            reason = getattr(self.strategy, "last_reason", "") or "no_signal"
-            self._log("entry_skipped", f"{symbol}: {reason}", {"symbol": symbol, "reason": reason})
+            # Message keeps the readable reason (with RSI); payload carries the
+            # STABLE code so the diagnostics tally buckets cleanly and stays bounded.
+            reason_msg = getattr(self.strategy, "last_reason", "") or "no_signal"
+            reason_code = getattr(self.strategy, "last_reason_code", "") or "no_signal"
+            self._log("entry_skipped", f"{symbol}: {reason_msg}", {"symbol": symbol, "reason": reason_code})
             return
 
         # Multi-timeframe confirmation: check HTF trend alignment

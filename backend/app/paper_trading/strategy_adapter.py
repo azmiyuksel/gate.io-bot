@@ -33,6 +33,7 @@ class CapitalPreservationAdapter(BaseStrategy):
         self._last_signal: TradingSignal | None = None
         self._current_data: MarketData | None = None
         self._last_reason: str = ""
+        self._last_reason_code: str = ""
         self._candle_counts: dict[str, int] = {}
         self._last_atr: float | None = None
 
@@ -50,6 +51,11 @@ class CapitalPreservationAdapter(BaseStrategy):
         tick-aggregated synthetic bars, so EMA200/RSI/ATR are meaningful.
         """
         signal = self._strategy.evaluate(candles)
+        # `last_reason` is a human-readable string (with the live RSI) for log
+        # messages; `last_reason_code` is the STABLE reason code used for grouping.
+        # Keeping the RSI out of the code is essential — otherwise every evaluation
+        # produces a unique reason and the diagnostics tally grows without bound.
+        self._last_reason_code = signal.reason
         self._last_reason = signal.reason
         if signal.diagnostics:
             self._last_reason = f"{signal.reason} (RSI={signal.diagnostics.get('rsi', '?')})"
@@ -77,6 +83,11 @@ class CapitalPreservationAdapter(BaseStrategy):
     @property
     def last_reason(self) -> str:
         return self._last_reason
+
+    @property
+    def last_reason_code(self) -> str:
+        """Stable reason code (no embedded RSI) for diagnostics aggregation."""
+        return self._last_reason_code
 
     @property
     def candle_counts(self) -> dict[str, int]:
