@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     # EMA200 trend filter: when enabled, only enter long while price is above the
     # 200-period EMA (capital preservation — avoid buying in confirmed downtrends).
     strategy_trend_filter_enabled: bool = True
+    # Trend tolerance for LONG entries: allow a long when price is within this
+    # fraction BELOW EMA200 (0.0 = strict "must be above EMA200", live default).
+    # Paper overrides this (see paper_trend_tolerance_pct) so mild pullbacks below a
+    # laggy 400-bar EMA200 still produce observable activity. Live stays strict.
+    strategy_trend_tolerance_pct: float = 0.0
     # Number of candles fetched per scan. EMA200 needs >=200 and only converges
     # well with extra history, so fetch a generous window (bounded by max_query_limit).
     candle_history_limit: int = 400
@@ -114,6 +119,11 @@ class Settings(BaseSettings):
     paper_rsi_threshold: float = 45.0
     paper_ema20_distance_pct: float = 0.03
     paper_trend_filter_enabled: bool = True
+    # Paper LONG trend tolerance: enter longs when price is within 2% below the
+    # 400-bar EMA200. In neutral/mildly-down chop the laggy EMA200 sits just above
+    # price and reads as "downtrend", blocking all longs; a small band keeps the
+    # simulation active on healthy pullbacks. Override via PAPER_TREND_TOLERANCE_PCT.
+    paper_trend_tolerance_pct: float = 0.02
     # Default trailing-stop distance (used when StrategySettings is missing).
     strategy_trailing_stop_pct: float = 0.03
     # Number of candles that represent a "daily" range (depends on candle interval).

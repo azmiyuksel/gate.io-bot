@@ -29,6 +29,7 @@ class CapitalPreservationAdapter(BaseStrategy):
         self._strategy.trend_filter_enabled = settings.paper_trend_filter_enabled
         self._strategy.rsi_threshold = Decimal(str(settings.paper_rsi_threshold))
         self._strategy.ema20_distance_pct = Decimal(str(settings.paper_ema20_distance_pct))
+        self._strategy.trend_tolerance_pct = Decimal(str(settings.paper_trend_tolerance_pct))
         self._last_signal: TradingSignal | None = None
         self._current_data: MarketData | None = None
         self._last_reason: str = ""

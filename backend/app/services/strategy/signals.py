@@ -35,6 +35,9 @@ class CapitalPreservationStrategy:
         self.daily_range_candles = settings.strategy_daily_range_candles
         self.min_volume_ratio = Decimal(str(settings.strategy_min_volume_ratio))
         self.trend_filter_enabled = settings.strategy_trend_filter_enabled
+        # Fraction below EMA200 still treated as "uptrend" for LONG entries
+        # (0.0 = strict, live default). Paper sets a small band for activity.
+        self.trend_tolerance_pct = Decimal(str(settings.strategy_trend_tolerance_pct))
 
     def evaluate(self, candles: list[dict]) -> Signal:
         if len(candles) < 200:
@@ -86,6 +89,9 @@ class CapitalPreservationStrategy:
 
         trend_up = last_price > ema_200
         rsi_oversold = rsi_14 < self.rsi_threshold
+        # LONG trend gate: tolerate price slightly below EMA200 (tolerance_pct).
+        # With tolerance 0.0 this is identical to `trend_up` (live behaviour).
+        long_trend_ok = last_price > ema_200 * (Decimal("1") - self.trend_tolerance_pct)
 
         diag = {
             "rsi": float(rsi_14),
@@ -97,7 +103,7 @@ class CapitalPreservationStrategy:
             "vol_ratio": float(vol_ratio),
         }
 
-        if trend_up and rsi_oversold and distance_ok and range_ok:
+        if long_trend_ok and rsi_oversold and distance_ok and range_ok:
             return Signal(True, "long", "long_entry", last_price, atr_14, diagnostics=diag)
 
         if self.trend_filter_enabled:

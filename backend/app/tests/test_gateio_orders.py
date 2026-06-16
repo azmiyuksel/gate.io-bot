@@ -214,9 +214,47 @@ def test_paper_adapter_uses_looser_paper_thresholds():
     assert paper.trend_filter_enabled is True
     assert paper.rsi_threshold == Decimal("45")
     assert paper.ema20_distance_pct == Decimal("0.03")
+    assert paper.trend_tolerance_pct == Decimal("0.02")
     # Paper must be looser than live, not stricter.
     assert paper.rsi_threshold > live.rsi_threshold
     assert paper.ema20_distance_pct > live.ema20_distance_pct
+    assert paper.trend_tolerance_pct > live.trend_tolerance_pct
+    assert live.trend_tolerance_pct == Decimal("0")  # live stays strict
+
+
+def test_paper_trend_tolerance_allows_long_just_below_ema200():
+    """A long setup ~1.3% below the (laggy) EMA200 with an oversold RSI:
+    live stays out (strict trend gate), but paper's 2% tolerance enters — this is
+    the lever that keeps the simulation active in neutral/mildly-down chop."""
+    from decimal import Decimal
+
+    from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
+    from app.services.strategy.signals import CapitalPreservationStrategy
+
+    # 380 flat bars at 100, then a gentle 20-bar decline so the last close sits
+    # ~1.3% below EMA200 (inside paper's 2% band, outside live's strict 0%).
+    candles = []
+    base = Decimal("100")
+    for i in range(380):
+        candles.append({
+            "timestamp": 1700000000 + i * 900,
+            "open": base, "high": base + Decimal("0.2"), "low": base - Decimal("0.2"),
+            "close": base, "volume": Decimal("1000"), "quote_volume": base * 1000,
+        })
+    price = base
+    for i in range(20):
+        price = price - Decimal("0.07")
+        candles.append({
+            "timestamp": 1700000000 + (380 + i) * 900,
+            "open": price + Decimal("0.07"), "high": price + Decimal("0.2"),
+            "low": price - Decimal("0.2"), "close": price,
+            "volume": Decimal("1000"), "quote_volume": price * 1000,
+        })
+
+    live = CapitalPreservationStrategy().evaluate(candles)
+    paper = CapitalPreservationAdapter()._strategy.evaluate(candles)
+    assert live.should_enter is False  # strict gate blocks a long below EMA200
+    assert paper.should_enter is True and paper.direction == "long"
 
 
 async def test_candles_range_pages_past_1000_cap(monkeypatch):
