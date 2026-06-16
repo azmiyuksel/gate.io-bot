@@ -22,7 +22,7 @@ from app.services.exchange.gateio import GateIOClient, OrderBelowMinimum
 from app.services.notifications.telegram import TelegramNotifier
 from app.services.risk.circuit_breaker import CircuitBreaker
 from app.services.risk.manager import RiskManager, drawdown_risk_multiplier
-from app.services.strategy.signals import CapitalPreservationStrategy
+from app.services.strategy.factory import build_strategy
 from app.strategy_health.anomaly_detector import StrategyAnomalyDetector
 from app.strategy_health.engine import StrategyHealthEngine
 
@@ -79,7 +79,8 @@ class TradingEngine:
     def __init__(self, db: Session, client: GateIOClient) -> None:
         self.db = db
         self.client = client
-        self.strategy = CapitalPreservationStrategy()
+        # Mirror paper: the live strategy is selected from config (default momentum).
+        self.strategy = build_strategy(get_settings().live_strategy)
         self.risk = RiskManager(db)
         self.breaker = CircuitBreaker(db)
         self.positions = PositionRepository(db)
@@ -313,17 +314,40 @@ class TradingEngine:
         and notify.  Handles OrderBelowMinimum gracefully."""
         signal_time = datetime.now(UTC)
         submission_time = datetime.now(UTC)
-        # Market BUY on Gate.io spot takes a QUOTE (USDT) amount to spend.
-        quote_amount = final_quantity * signal.entry_price
+        direction = getattr(signal, "direction", "long") or "long"
+        market = get_settings().trading_market.lower()
+        is_short = direction == "short"
+        side_enum = OrderSide.sell if is_short else OrderSide.buy
+
+        # Spot cannot hold shorts: skip the signal rather than silently BUYING it
+        # (the previous behaviour). Enable futures to trade shorts.
+        if is_short and market != "futures":
+            self._log(
+                "short_skipped",
+                f"{symbol}: short signal skipped (spot market; set TRADING_MARKET=futures to trade shorts)",
+            )
+            self.db.commit()
+            return
+
         try:
-            response = await self.client.place_market_buy(symbol, quote_amount)
+            if market == "futures":
+                # Best-effort leverage set (often already configured); never block
+                # the entry on it.
+                try:
+                    await self.client.set_futures_leverage(symbol, get_settings().futures_leverage)
+                except Exception:
+                    pass
+                response = await self.client.place_futures_market_order(symbol, final_quantity, direction)
+            else:
+                # Market BUY on Gate.io spot takes a QUOTE (USDT) amount to spend.
+                response = await self.client.place_market_buy(symbol, final_quantity * signal.entry_price)
         except OrderBelowMinimum as exc:
-            self._log("order_min", f"{symbol}: buy skipped, {exc}")
+            self._log("order_min", f"{symbol}: {direction} entry skipped, {exc}")
             return
         ack_time = datetime.now(UTC)
 
         # Use the ACTUAL fill price for the entry, not the signal price.
-        fill_price = Decimal(str(response.get("avg_deal_price") or signal.entry_price))
+        fill_price = Decimal(str(response.get("avg_deal_price") or response.get("fill_price") or signal.entry_price))
         if fill_price <= 0:
             fill_price = signal.entry_price
 
@@ -349,13 +373,21 @@ class TradingEngine:
         # pre-order estimate) and subtract any fee charged in the base currency —
         # Gate.io deducts the spot BUY fee from the coin received, so the tracked
         # size must match what we can later sell.
-        gross_base_qty = _filled_base_qty(response, fill_price, final_quantity)
-        actual_base_qty = gross_base_qty - _fee_in_base(response, symbol)
-        if actual_base_qty <= 0:
-            actual_base_qty = gross_base_qty
+        if market == "futures":
+            # Futures size is tracked in the base units we requested (contracts are
+            # rounded down to ~final_quantity); fees are quote-denominated, so there
+            # is no base-currency deduction as on a spot buy.
+            gross_base_qty = final_quantity
+            actual_base_qty = final_quantity
+        else:
+            gross_base_qty = _filled_base_qty(response, fill_price, final_quantity)
+            actual_base_qty = gross_base_qty - _fee_in_base(response, symbol)
+            if actual_base_qty <= 0:
+                actual_base_qty = gross_base_qty
 
         position = Position(
             symbol=symbol,
+            side=side_enum,
             entry_price=fill_price,
             quantity=actual_base_qty,
             stop_loss=stop_loss,
@@ -368,7 +400,7 @@ class TradingEngine:
             exchange_order_id=str(response.get("id")),
             position_id=position.id,
             symbol=symbol,
-            side=OrderSide.buy,
+            side=side_enum,
             status=OrderStatus.open,
             price=fill_price,
             quantity=actual_base_qty,
@@ -385,7 +417,7 @@ class TradingEngine:
         self._record_execution_quality(
             strategy_name=strategy_name,
             symbol=symbol,
-            side="buy",
+            side=side_enum.value,
             expected_price=signal.entry_price,
             expected_quantity=actual_base_qty,
             signal_time=signal_time,
@@ -397,7 +429,7 @@ class TradingEngine:
             ack_time=ack_time,
         )
 
-        await self.notifier.send(f"Opened {symbol}: qty={actual_base_qty} entry={fill_price}")
+        await self.notifier.send(f"Opened {direction.upper()} {symbol}: qty={actual_base_qty} entry={fill_price}")
 
     # ------------------------------------------------------------------
     # Position management
@@ -421,8 +453,15 @@ class TradingEngine:
                 if price is None or price <= 0:
                     price = Decimal(str(latest["close"]))
 
-                stop_hit = price <= position.stop_loss
-                tp_hit = price >= position.take_profit
+                # Direction-aware exits: a SHORT's protective stop sits ABOVE entry
+                # (rising price is the loss) and its target BELOW entry, mirrored.
+                is_short = position.side == OrderSide.sell
+                if is_short:
+                    stop_hit = price >= position.stop_loss
+                    tp_hit = price <= position.take_profit
+                else:
+                    stop_hit = price <= position.stop_loss
+                    tp_hit = price >= position.take_profit
                 # Intrabar gap protection: between 15-minute polls the price can wick
                 # through a level and recover. Catch that via the candle's low/high —
                 # but only for candles that fully postdate entry, so a pre-entry wick
@@ -432,10 +471,18 @@ class TradingEngine:
                     opened = opened.replace(tzinfo=UTC)
                 candle_start = datetime.fromtimestamp(int(latest["timestamp"]), tz=UTC)
                 if opened is None or candle_start >= opened:
-                    if Decimal(str(latest["low"])) <= position.stop_loss:
-                        stop_hit = True
-                    if Decimal(str(latest["high"])) >= position.take_profit:
-                        tp_hit = True
+                    bar_low = Decimal(str(latest["low"]))
+                    bar_high = Decimal(str(latest["high"]))
+                    if is_short:
+                        if bar_high >= position.stop_loss:
+                            stop_hit = True
+                        if bar_low <= position.take_profit:
+                            tp_hit = True
+                    else:
+                        if bar_low <= position.stop_loss:
+                            stop_hit = True
+                        if bar_high >= position.take_profit:
+                            tp_hit = True
 
                 # Evaluate the stop before the take-profit — protect capital first.
                 if stop_hit:
@@ -487,14 +534,31 @@ class TradingEngine:
     ) -> Order:
         signal_time = datetime.now(UTC)
         submission_time = datetime.now(UTC)
-        response = await self.client.place_market_sell(position.symbol, position.quantity)
+        is_short = position.side == OrderSide.sell
+        market = get_settings().trading_market.lower()
+        close_side = OrderSide.buy if is_short else OrderSide.sell
+        # A short can only exist on futures, so it always closes via a reduce-only
+        # buy; a long closes on whichever market it was opened on.
+        if is_short or market == "futures":
+            close_direction = "long" if is_short else "short"
+            response = await self.client.place_futures_market_order(
+                position.symbol, position.quantity, close_direction, reduce_only=True
+            )
+            exit_price = Decimal(str(response.get("avg_deal_price") or response.get("fill_price") or position.entry_price))
+            filled_qty = position.quantity
+        else:
+            response = await self.client.place_market_sell(position.symbol, position.quantity)
+            exit_price = Decimal(str(response.get("avg_deal_price") or position.entry_price))
+            # `filled_total` is QUOTE-denominated; derive the base quantity sold.
+            filled_qty = _filled_base_qty(response, exit_price, position.quantity)
         ack_time = datetime.now(UTC)
 
-        exit_price = Decimal(str(response.get("avg_deal_price") or position.entry_price))
-        # `filled_total` is QUOTE-denominated; derive the base quantity sold.
-        filled_qty = _filled_base_qty(response, exit_price, position.quantity)
         fee = _fee_in_quote(response, exit_price, position.symbol)
-        pnl = (exit_price - position.entry_price) * filled_qty - fee
+        # Short PnL is mirrored: profit when exit < entry.
+        if is_short:
+            pnl = (position.entry_price - exit_price) * filled_qty - fee
+        else:
+            pnl = (exit_price - position.entry_price) * filled_qty - fee
 
         if filled_qty < position.quantity:
             position.quantity = position.quantity - filled_qty
@@ -509,7 +573,7 @@ class TradingEngine:
             exchange_order_id=str(response.get("id")),
             position_id=position.id,
             symbol=position.symbol,
-            side=OrderSide.sell,
+            side=close_side,
             status=OrderStatus.open,
             price=exit_price,
             quantity=filled_qty,
@@ -521,7 +585,7 @@ class TradingEngine:
             order_id=order.id,
             strategy_name=self.strategy.name,
             symbol=position.symbol,
-            side=OrderSide.sell,
+            side=close_side,
             price=exit_price,
             quantity=filled_qty,
             fee=fee,
@@ -536,7 +600,7 @@ class TradingEngine:
         self._record_execution_quality(
             strategy_name=self.strategy.name,
             symbol=position.symbol,
-            side="sell",
+            side=close_side.value,
             expected_price=exit_price,
             expected_quantity=position.quantity,
             signal_time=signal_time,
@@ -564,20 +628,38 @@ class TradingEngine:
         return Decimal(str(pct))
 
     def _update_trailing_stop(self, position: Position, price: Decimal) -> None:
-        if position.trailing_stop and price <= position.trailing_stop:
-            return
-        new_stop = price * (Decimal("1") - self._trailing_stop_pct())
-        if new_stop > position.stop_loss:
-            position.stop_loss = new_stop
-            position.trailing_stop = new_stop
-            self.db.commit()
+        is_short = position.side == OrderSide.sell
+        trailing_pct = self._trailing_stop_pct()
+        if is_short:
+            # Ratchet the stop DOWN as price falls; skip until a new low is made.
+            if position.trailing_stop and price >= position.trailing_stop:
+                pass
+            else:
+                new_stop = price * (Decimal("1") + trailing_pct)
+                if new_stop < position.stop_loss:
+                    position.stop_loss = new_stop
+                    position.trailing_stop = new_stop
+                    self.db.commit()
+        else:
+            if position.trailing_stop and price <= position.trailing_stop:
+                return
+            new_stop = price * (Decimal("1") - trailing_pct)
+            if new_stop > position.stop_loss:
+                position.stop_loss = new_stop
+                position.trailing_stop = new_stop
+                self.db.commit()
         # Breakeven stop: once unrealized profit exceeds the trigger threshold,
         # move stop-loss to entry price so the trade cannot become a loss.
         if not position.breakeven_stop:
             trigger_pct = Decimal(str(get_settings().breakeven_stop_trigger_pct))
             if trigger_pct > 0:
-                profit_pct = (price - position.entry_price) / position.entry_price
-                if profit_pct >= trigger_pct and position.stop_loss < position.entry_price:
+                if is_short:
+                    profit_pct = (position.entry_price - price) / position.entry_price
+                    at_risk = position.stop_loss > position.entry_price
+                else:
+                    profit_pct = (price - position.entry_price) / position.entry_price
+                    at_risk = position.stop_loss < position.entry_price
+                if profit_pct >= trigger_pct and at_risk:
                     position.stop_loss = position.entry_price
                     position.breakeven_stop = True
                     self._log(

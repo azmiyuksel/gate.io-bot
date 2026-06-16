@@ -39,6 +39,17 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
 
     bot_enabled: bool = False
+    # Live engine strategy (mirrors paper). Default is the frequent momentum/breakout
+    # strategy so paper and live evaluate identical signals. Set to
+    # "capital_preservation_v1" to run the low-frequency mean-reversion strategy live.
+    live_strategy: str = "momentum_breakout_v1"
+    # Live market. "spot" (proven path; long-only — short signals are skipped) or
+    # "futures" (USDT-perpetual; enables shorts + leverage to fully mirror paper).
+    # Default SPOT for safety: validate futures keys on Gate.io testnet before
+    # switching, since live futures order routing cannot be exercised in CI.
+    trading_market: str = "spot"
+    futures_settle: str = "usdt"
+    futures_leverage: int = 5
     default_quote_currency: str = "USDT"
     # Stablecoins counted as cash at par (not marked to market) in equity.
     stablecoins: str = "USDT,USDC,DAI,TUSD,FDUSD"

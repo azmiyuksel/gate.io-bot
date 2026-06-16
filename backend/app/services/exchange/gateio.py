@@ -252,6 +252,83 @@ class GateIOClient:
             )
         return await self._submit_market(symbol, "sell", amount)
 
+    # ------------------------------------------------------------------
+    # USDT-perpetual futures (opt-in via trading_market="futures").
+    #
+    # NOTE: these endpoints place REAL leveraged orders and are NOT exercised in
+    # CI (no exchange in the test env). Validate on Gate.io's futures testnet
+    # before enabling live. Sizes are in CONTRACTS; one contract equals the
+    # contract's quanto_multiplier units of the base asset.
+    # ------------------------------------------------------------------
+
+    @property
+    def _settle(self) -> str:
+        return get_settings().futures_settle.lower()
+
+    async def futures_contract_info(self, contract: str) -> dict:
+        """Cached futures contract metadata (quanto_multiplier, order_size_min)."""
+        key = f"fut:{contract}"
+        cached = self._pair_cache.get(key)
+        if cached is not None:
+            info, ts = cached
+            if time.monotonic() - ts < self._pair_cache_ttl:
+                return info
+        info = await self.request("GET", f"/futures/{self._settle}/contracts/{contract}") or {}
+        self._pair_cache[key] = (info, time.monotonic())
+        return info
+
+    async def futures_last_price(self, contract: str) -> Decimal | None:
+        data = await self.request(
+            "GET", f"/futures/{self._settle}/tickers", params={"contract": contract}
+        )
+        if not data:
+            return None
+        last = data[0].get("last")
+        return Decimal(str(last)) if last not in (None, "", "0") else None
+
+    async def set_futures_leverage(self, contract: str, leverage: int) -> dict:
+        """Set isolated-margin leverage for a contract (no-op-safe to call again)."""
+        return await self.request(
+            "POST",
+            f"/futures/{self._settle}/positions/{contract}/leverage",
+            params={"leverage": str(int(leverage))},
+        )
+
+    def _contracts_for_base(self, base_quantity: Decimal, info: dict) -> int:
+        """Convert a base-asset quantity to an INTEGER number of contracts,
+        rounding DOWN so we never exceed the intended size."""
+        mult = Decimal(str(info.get("quanto_multiplier", "0") or "0"))
+        if mult <= 0:
+            return 0
+        return int((base_quantity / mult).to_integral_value(rounding=ROUND_DOWN))
+
+    async def place_futures_market_order(
+        self, contract: str, base_quantity: Decimal, direction: str, reduce_only: bool = False
+    ) -> dict:
+        """Market order on USDT-perpetual futures.
+
+        ``direction`` is "long"/"short" for opens; for a reduce-only close pass the
+        direction of the CLOSING trade (opposite the position). Size is signed:
+        positive opens/adds long, negative opens/adds short. A market order is a
+        price="0" IOC order on Gate.io futures.
+        """
+        info = await self.futures_contract_info(contract)
+        size = self._contracts_for_base(abs(base_quantity), info)
+        order_size_min = int(info.get("order_size_min", 1) or 1)
+        if size < order_size_min:
+            raise OrderBelowMinimum(
+                f"{contract} futures size {size} contracts below minimum {order_size_min}"
+            )
+        signed = -size if direction == "short" else size
+        body = {
+            "contract": contract,
+            "size": signed,
+            "price": "0",
+            "tif": "ioc",
+            "reduce_only": reduce_only,
+        }
+        return await self.request("POST", f"/futures/{self._settle}/orders", json_body=body)
+
     async def get_order(self, symbol: str, order_id: str) -> dict:
         return await self.request("GET", f"/spot/orders/{order_id}", params={"currency_pair": symbol})
 
