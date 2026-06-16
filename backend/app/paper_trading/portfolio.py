@@ -19,14 +19,27 @@ class PaperPortfolio:
         self._last_equity_record_ts: datetime | None = None
 
     def equity(self) -> Decimal:
-        open_positions = self.open_positions()
-        total_unrealized = Decimal("0")
-        for position in open_positions:
+        """Mark-to-market account equity.
+
+        The broker mutates ``cash_balance`` by the full notional on entry: a long
+        buy deducts ``qty*price`` (the position is now an asset), a short sell adds
+        ``qty*price`` (the position is now a liability). Equity must therefore add
+        the current MARKET VALUE of each open position back, not merely its
+        unrealized PnL — otherwise every fresh long understates equity by its cost
+        basis (≈ the whole notional), which instantly trips the daily-loss/drawdown
+        guard and pauses the bot after a single trade. Algebraically this equals
+        ``cash + fees + Σ unrealized``; expressed via market value it is:
+
+            equity = cash + Σ_long(qty*last) − Σ_short(qty*last)
+        """
+        total = self.account.cash_balance
+        for position in self.open_positions():
+            market_value = position.quantity * position.last_price
             if position.side == "sell":
-                total_unrealized += (position.average_entry_price - position.last_price) * position.quantity
+                total -= market_value
             else:
-                total_unrealized += (position.last_price - position.average_entry_price) * position.quantity
-        return self.account.cash_balance + total_unrealized
+                total += market_value
+        return total
 
     def open_positions(self) -> list[PaperPosition]:
         return (

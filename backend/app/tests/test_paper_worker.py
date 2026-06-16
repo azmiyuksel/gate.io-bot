@@ -162,6 +162,50 @@ def test_adapter_reason_code_is_stable_without_rsi(monkeypatch):
     assert "RSI" in adapter.last_reason
 
 
+def test_equity_counts_position_market_value(db_session):
+    """Open positions must contribute their market value to equity. A long buy
+    deducts the full notional from cash, so if equity only added unrealized PnL it
+    would understate by the cost basis (~the whole notional) and instantly trip the
+    daily-loss guard — the 'one buy then pause' bug. Shorts must subtract the
+    liability rather than inflate equity."""
+    from decimal import Decimal
+
+    from app.models.entities import PaperAccount, PaperPosition
+    from app.paper_trading.portfolio import PaperPortfolio
+
+    acc = PaperAccount(name="default", cash_balance=Decimal("9500"), initial_balance=Decimal("10000"))
+    db_session.add(acc)
+    db_session.commit()
+    db_session.refresh(acc)
+    # Bought 5 @ 100 (=500 notional): cash went 10000 -> 9500.
+    db_session.add(PaperPosition(
+        account_id=acc.id, symbol="AAA_USDT", side="buy",
+        quantity=Decimal("5"), average_entry_price=Decimal("100"), last_price=Decimal("100"),
+    ))
+    db_session.commit()
+    port = PaperPortfolio(db_session, acc)
+    # cash 9500 + market value 500 = 10000 (no phantom 5% loss).
+    assert port.equity() == Decimal("10000")
+    # Price up 2% -> +10 unrealized.
+    pos = port.open_positions()[0]
+    pos.last_price = Decimal("102")
+    db_session.commit()
+    assert port.equity() == Decimal("10010")
+
+    # Short: sell 5 @ 100 inflates cash to 10500; equity must subtract the 500
+    # liability back to ~10000 (not report a 5% gain).
+    short_acc = PaperAccount(name="s", cash_balance=Decimal("10500"), initial_balance=Decimal("10000"))
+    db_session.add(short_acc)
+    db_session.commit()
+    db_session.refresh(short_acc)
+    db_session.add(PaperPosition(
+        account_id=short_acc.id, symbol="BBB_USDT", side="sell",
+        quantity=Decimal("5"), average_entry_price=Decimal("100"), last_price=Decimal("100"),
+    ))
+    db_session.commit()
+    assert PaperPortfolio(db_session, short_acc).equity() == Decimal("10000")
+
+
 def test_stream_tick_has_no_intrabar_range():
     import json
 
