@@ -103,17 +103,18 @@ export default function PaperTradingPage() {
     setToken(getAccessToken());
   }, []);
 
+  // Status (equity, metrics, exposure) arrives via the SSE stream, so it is NOT
+  // re-fetched here — polling it too would double the heavy metrics computation on
+  // the shared DB. The fast loop only covers data the stream does not push.
   const fetchFast = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     try {
-      const [s, p, t, r] = await Promise.all([
-        getPaperStatus().catch(() => null),
+      const [p, t, r] = await Promise.all([
         getPaperPositions().catch(() => []),
         getPaperTrades().catch(() => []),
         getPaperRiskStatus().catch(() => null),
       ]);
-      if (s) setStatus(s);
       setPositions(p);
       setTrades(t);
       if (r) setRisk(r);
@@ -143,6 +144,14 @@ export default function PaperTradingPage() {
 
   useEffect(() => {
     if (!token) return;
+    // One-shot status fetch for an instant first paint; live updates then come
+    // from the SSE stream below (no recurring status poll).
+    getPaperStatus().then((s) => {
+      if (s) {
+        setStatus(s);
+        setLastUpdated(new Date());
+      }
+    });
     fetchFast();
     fetchSlow();
     sseRef.current = createPaperStream((data) => {
@@ -173,6 +182,9 @@ export default function PaperTradingPage() {
     setActionLoadingBtn("");
     toast(ok ? successMsg : "İşlem başarısız", ok ? "success" : "error");
     fetchFast();
+    // Control actions (start/stop/pause/resume) change status — refresh it once
+    // immediately rather than waiting for the next SSE tick.
+    getPaperStatus().then((s) => s && setStatus(s));
   }
 
   useEffect(() => {

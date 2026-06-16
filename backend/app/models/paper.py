@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     JSON,
     Numeric,
     String,
@@ -67,6 +68,11 @@ class PaperOrder(Base):
 
 class PaperTrade(Base):
     __tablename__ = "paper_trades"
+    # The dashboard/metrics path filters by account and reads newest-first; the
+    # composite index avoids a full scan as the trade history grows.
+    __table_args__ = (
+        Index("ix_paper_trades_account_traded", "account_id", "traded_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("paper_accounts.id", ondelete="CASCADE"))
@@ -83,6 +89,11 @@ class PaperTrade(Base):
 
 class PaperPosition(Base):
     __tablename__ = "paper_positions"
+    # The trade engine and risk checks query open positions per account on every
+    # tick/cycle; index the exact (account_id, is_open) filter they use.
+    __table_args__ = (
+        Index("ix_paper_positions_account_open", "account_id", "is_open"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("paper_accounts.id", ondelete="CASCADE"))
@@ -107,6 +118,12 @@ class PaperPosition(Base):
 
 class PaperEquityCurve(Base):
     __tablename__ = "paper_equity_curve"
+    # Equity points are recorded every 5 min (grows fast) and queried per account
+    # ordered/ranged by timestamp (metrics, risk, equity chart). A composite index
+    # serves those far better than the standalone timestamp index alone.
+    __table_args__ = (
+        Index("ix_paper_equity_account_ts", "account_id", "timestamp"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("paper_accounts.id", ondelete="CASCADE"))
@@ -121,6 +138,11 @@ class PaperEquityCurve(Base):
 
 class PaperLog(Base):
     __tablename__ = "paper_logs"
+    # signal-diagnostics filters (account_id, event, created_at) and the worker's
+    # auto-resume scans logs by event; index that exact access pattern.
+    __table_args__ = (
+        Index("ix_paper_logs_account_event_created", "account_id", "event", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int | None] = mapped_column(ForeignKey("paper_accounts.id", ondelete="CASCADE"))

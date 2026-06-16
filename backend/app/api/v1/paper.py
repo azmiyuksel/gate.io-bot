@@ -182,17 +182,24 @@ def economics(db: DbSession) -> dict:
     cost bridge (gross PnL -> fees -> net PnL) so the strategy's real edge after
     costs is visible at a glance."""
     account = _get_or_create_account(db)
-    trades = (
-        db.query(PaperTrade)
-        .filter(PaperTrade.account_id == account.id)
+    # Edge needs the individual closed-trade PnLs (buys carry 0), so pull just that
+    # column for non-zero rows — not whole ORM objects.
+    closed_pnls = [
+        float(p)
+        for (p,) in db.query(PaperTrade.realized_pnl)
+        .filter(PaperTrade.account_id == account.id, PaperTrade.realized_pnl != 0)
         .order_by(PaperTrade.traded_at.asc())
         .all()
-    )
-    # Per-trade realized PnL comes from closes (buys carry 0); use those for edge.
-    closed_pnls = [float(t.realized_pnl) for t in trades if t.realized_pnl != 0]
+    ]
     edge = trade_economics(closed_pnls)
 
-    total_fees = float(sum((t.fee for t in trades), Decimal("0")))
+    # Total fees via a SQL SUM rather than summing every trade row in Python.
+    total_fees = float(
+        db.query(func.coalesce(func.sum(PaperTrade.fee), 0))
+        .filter(PaperTrade.account_id == account.id)
+        .scalar()
+        or 0
+    )
     net_pnl = float(account.realized_pnl)
     gross_pnl = net_pnl + total_fees  # net is already fee-deducted
     fee_pct_of_gross = (total_fees / abs(gross_pnl)) if gross_pnl else 0.0
@@ -318,15 +325,15 @@ async def close_position(position_id: int, db: DbSession) -> dict:
 @router.get("/exit-stats")
 def exit_stats(db: DbSession) -> dict:
     account = _get_or_create_account(db)
-    trades = (
-        db.query(PaperTrade)
+    # Aggregate in the database (GROUP BY exit_reason) instead of loading every
+    # closed trade and counting in Python.
+    rows = (
+        db.query(PaperTrade.exit_reason, func.count())
         .filter(PaperTrade.account_id == account.id, PaperTrade.exit_reason.isnot(None))
+        .group_by(PaperTrade.exit_reason)
         .all()
     )
-    counts: dict[str, int] = {}
-    for t in trades:
-        reason = t.exit_reason or "unknown"
-        counts[reason] = counts.get(reason, 0) + 1
+    counts: dict[str, int] = {(reason or "unknown"): int(n) for reason, n in rows}
     total_closed = sum(counts.values())
     return {"counts": counts, "total_closed": total_closed}
 
@@ -354,8 +361,11 @@ def signal_diagnostics(db: DbSession, hours: int = 24) -> dict:
     account = _get_or_create_account(db)
     window = max(1, min(int(hours), 168))
     since = datetime.now(UTC) - timedelta(hours=window)
+    # Reason/symbol live inside the JSON payload, so the per-reason tally is done
+    # in Python — but pull only (created_at, payload), not whole ORM rows, and let
+    # the (account_id, event, created_at) index drive the filter/order.
     rows = (
-        db.query(PaperLog)
+        db.query(PaperLog.created_at, PaperLog.payload)
         .filter(
             PaperLog.account_id == account.id,
             PaperLog.event.in_(("entry_skipped", "risk_check")),
@@ -367,9 +377,9 @@ def signal_diagnostics(db: DbSession, hours: int = 24) -> dict:
     reason_counts: dict[str, int] = {}
     latest_by_symbol: dict[str, dict] = {}
     total = 0
-    last_evaluation_at = rows[0].created_at.isoformat() if rows else None
-    for row in rows:
-        payload = row.payload or {}
+    last_evaluation_at = rows[0][0].isoformat() if rows else None
+    for created_at, payload in rows:
+        payload = payload or {}
         reason = payload.get("reason") or "unknown"
         symbol = payload.get("symbol")
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
@@ -377,7 +387,7 @@ def signal_diagnostics(db: DbSession, hours: int = 24) -> dict:
         if symbol and symbol not in latest_by_symbol:
             latest_by_symbol[symbol] = {
                 "reason": reason,
-                "at": row.created_at.isoformat() if row.created_at else None,
+                "at": created_at.isoformat() if created_at else None,
             }
     ordered = dict(sorted(reason_counts.items(), key=lambda kv: kv[1], reverse=True))
     return {
@@ -418,7 +428,10 @@ async def stream_paper(request: Request, db: DbSession) -> StreamingResponse:
                 yield f"data: {json.dumps({'status': 'error'})}\n\n"
             finally:
                 local_db.close()
-            await asyncio.sleep(2)
+            # 5s cadence: the eval loop runs every 30s and equity is sampled every
+            # 5 min, so a faster push only adds DB load that competes with the trade
+            # worker for connections/locks without surfacing new information.
+            await asyncio.sleep(5)
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
