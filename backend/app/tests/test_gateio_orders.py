@@ -202,18 +202,21 @@ def test_trend_filter_blocks_entries_below_ema200():
 
 
 def test_paper_adapter_uses_looser_paper_thresholds():
-    # Paper mirrors live thresholds by default (both use trend filter, same RSI/EMA20).
-    # Override env PAPER_TREND_FILTER_ENABLED=False etc. to intentionally relax.
+    # Paper runs DELIBERATELY looser than live so the simulation generates enough
+    # activity to observe (live stays strict for capital preservation).
     from decimal import Decimal
 
     from app.paper_trading.strategy_adapter import CapitalPreservationAdapter
     from app.services.strategy.signals import CapitalPreservationStrategy
 
-    assert CapitalPreservationStrategy().trend_filter_enabled is True
+    live = CapitalPreservationStrategy()
     paper = CapitalPreservationAdapter()._strategy
     assert paper.trend_filter_enabled is True
-    assert paper.rsi_threshold == Decimal("35")
-    assert paper.ema20_distance_pct == Decimal("0.015")
+    assert paper.rsi_threshold == Decimal("45")
+    assert paper.ema20_distance_pct == Decimal("0.03")
+    # Paper must be looser than live, not stricter.
+    assert paper.rsi_threshold > live.rsi_threshold
+    assert paper.ema20_distance_pct > live.ema20_distance_pct
 
 
 async def test_candles_range_pages_past_1000_cap(monkeypatch):

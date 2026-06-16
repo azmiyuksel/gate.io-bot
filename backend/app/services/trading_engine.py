@@ -168,6 +168,7 @@ class TradingEngine:
             symbol,
             interval=_settings.market_data_interval,
             limit=_settings.candle_history_limit,
+            drop_unclosed=True,
         )
 
         # Market Data Quality gate: run the feed through the quality pipeline and

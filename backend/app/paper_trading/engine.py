@@ -111,6 +111,7 @@ class PaperTradingEngine:
                     symbol,
                     interval=settings.market_data_interval,
                     limit=settings.candle_history_limit,
+                    drop_unclosed=True,
                 )
             except Exception as exc:
                 # Surface fetch failures to the dashboard instead of failing silently
@@ -141,7 +142,8 @@ class PaperTradingEngine:
                     htf_candles = await self._client.candles(
                         symbol,
                         interval=settings.strategy_mtf_interval,
-                        limit=50,
+                        limit=51,  # +1 so dropping the forming bar still leaves 50
+                        drop_unclosed=True,
                     )
                     if htf_candles and len(htf_candles) >= 50:
                         from app.services.strategy.indicators import ema as calc_ema

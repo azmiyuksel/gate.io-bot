@@ -104,12 +104,15 @@ class Settings(BaseSettings):
     funding_cost_enabled: bool = True
     funding_daily_rate_pct: float = 0.0003
 
-    # --- Paper-trading entry threshold overrides (mirrors live by default) ---
-    # Paper mirrors live thresholds so simulation accurately predicts real
-    # trading outcomes. Override via env PAPER_RSI_THRESHOLD, PAPER_EMA20_DISTANCE_PCT,
-    # PAPER_TREND_FILTER_ENABLED to intentionally relax for exploration.
-    paper_rsi_threshold: float = 35.0
-    paper_ema20_distance_pct: float = 0.015
+    # --- Paper-trading entry threshold overrides ---
+    # Paper runs DELIBERATELY looser than live so the simulation generates enough
+    # activity to observe (live's strict capital-preservation thresholds rarely
+    # fire: an uptrend with RSI<35 within 1.5% of EMA20 is a rare confluence).
+    # RSI<45 catches ordinary pullbacks; a 3% EMA20 band widens the entry zone.
+    # Set these equal to the live strategy_* values to make paper mirror live.
+    # Override via env PAPER_RSI_THRESHOLD, PAPER_EMA20_DISTANCE_PCT, PAPER_TREND_FILTER_ENABLED.
+    paper_rsi_threshold: float = 45.0
+    paper_ema20_distance_pct: float = 0.03
     paper_trend_filter_enabled: bool = True
     # Default trailing-stop distance (used when StrategySettings is missing).
     strategy_trailing_stop_pct: float = 0.03

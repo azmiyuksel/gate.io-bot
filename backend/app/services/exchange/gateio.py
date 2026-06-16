@@ -111,13 +111,22 @@ class GateIOClient:
                     raise
                 await asyncio.sleep(2**attempt)
 
-    async def candles(self, symbol: str, interval: str = "1h", limit: int = 240) -> list[dict]:
+    async def candles(
+        self, symbol: str, interval: str = "1h", limit: int = 240, drop_unclosed: bool = False
+    ) -> list[dict]:
         data = await self.request(
             "GET",
             "/spot/candlesticks",
             params={"currency_pair": symbol, "interval": interval, "limit": limit},
         )
-        return self._parse_candles(data)
+        candles = self._parse_candles(data)
+        # Entry/indicator evaluation must run on CLOSED bars only — the last bar
+        # Gate.io returns is the still-forming one, which repaints (RSI/volume/EMA
+        # flicker intrabar) and makes the volume filter reject on a partial bar.
+        # Position management keeps it (drop_unclosed=False) for price freshness.
+        if drop_unclosed:
+            candles = [c for c in candles if c.get("closed", True)]
+        return candles
 
     async def candles_range(
         self,
@@ -165,6 +174,11 @@ class GateIOClient:
                 base_volume = Decimal(str(item[6]))
             else:
                 base_volume = quote_volume / close if close > 0 else Decimal("0")
+            # Index 7 is Gate.io's window_close flag (true once the bar is final).
+            # Absent on older responses -> assume closed for backward compatibility.
+            closed = True
+            if len(item) > 7 and item[7] not in (None, ""):
+                closed = str(item[7]).lower() == "true"
             result.append(
                 {
                     "timestamp": item[0],
@@ -174,6 +188,7 @@ class GateIOClient:
                     "high": Decimal(str(item[3])),
                     "low": Decimal(str(item[4])),
                     "open": Decimal(str(item[5])),
+                    "closed": closed,
                 }
             )
         return result
