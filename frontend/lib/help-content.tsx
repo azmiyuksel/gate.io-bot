@@ -62,6 +62,7 @@ export const HELP_MODULES: HelpModule[] = [
       { name: "Günlük zarar %", kind: "Alan", desc: "Bir günde bu kadar kaybedersen bot yeni işlem açmayı durdurur (otomatik fren). Düşük tutmak seni kötü günlerde korur." },
       { name: "Haftalık zarar %", kind: "Alan", desc: "Aynı frenin haftalık olanı. Bir haftada bu sınırı geçen zarar olursa bot durur." },
       { name: "ATR çarpanı", kind: "Alan", desc: "Zarar-durdur (stop-loss) noktasının ne kadar 'geniş' olacağını ayarlar. Büyük değer = stop fiyattan daha uzakta (erken kapanmaz ama zarar büyük olabilir); küçük değer = stop yakında (çabuk korur ama gürültüde erken kapanabilir). ATR için sözlüğe bak." },
+      { name: "Canlı Kurlar paneli", kind: "Gösterge", desc: "Başlıca kripto çiftlerinin anlık fiyatını ve son 24 saatteki yüzde değişimini Gate.io'dan canlı gösterir. Yeşil ▲ = yükseliş, kırmızı ▼ = düşüş. Sağ üstteki yeşil nokta bağlantının canlı olduğunu belirtir." },
       { name: "Kaydet", kind: "Buton", desc: "Yukarıdaki risk ayarlarını kaydeder. Kaydetmeden çıkarsan değişiklikler uygulanmaz." },
       { name: "Giriş / Kayıt Ol / Çıkış", kind: "Buton", desc: "Hesaba giriş yapmak, yeni hesap açmak veya oturumu kapatmak için." },
     ],
@@ -79,6 +80,7 @@ export const HELP_MODULES: HelpModule[] = [
     forBeginner:
       "Uçuş simülatörü gibi: gerçek gökyüzü, sahte uçak. Strateji burada kâr ediyorsa gerçeğe geçmeye değer. Para gerçek değildir, gönül rahatlığıyla dene.",
     items: [
+      { name: "Canlı Kurlar paneli", kind: "Gösterge", desc: "Başlıca çiftlerin anlık fiyatı ve 24 saatlik değişimi (Gate.io'dan canlı). Botun işlem yaptığı piyasayı bir bakışta izlemeni sağlar." },
       { name: "Başlat [S]", kind: "Buton", desc: "Botu çalıştırır; sinyal geldikçe sahte işlem açıp kapatmaya başlar. (Klavyede S tuşu da çalışır.)" },
       { name: "Duraklat [P]", kind: "Buton", desc: "Yeni işlem açmayı geçici durdurur ama açık pozisyonları yönetmeye devam eder. Devam etmek için 'Devam Et'." },
       { name: "Devam Et [R]", kind: "Buton", desc: "Duraklatılmış botu tekrar çalıştırır." },

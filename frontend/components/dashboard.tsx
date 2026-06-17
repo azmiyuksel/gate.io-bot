@@ -15,6 +15,7 @@ import {
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import LivePrices from "@/components/live-prices";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Input } from "@/components/ui/input";
 import { Metric } from "@/components/ui/metric";
@@ -257,6 +258,10 @@ export function Dashboard() {
           value={summary.bot_enabled ? "Çalışıyor" : "Durdu"}
           icon={summary.bot_enabled ? <PlayCircle size={18} /> : <PauseCircle size={18} />}
         />
+      </section>
+
+      <section className="mx-auto max-w-7xl px-6 pb-2">
+        <LivePrices />
       </section>
 
       <section className="mx-auto grid max-w-7xl gap-5 px-6 pb-6 lg:grid-cols-[2fr_1fr]">

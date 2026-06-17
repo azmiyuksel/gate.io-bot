@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import LivePrices from "@/components/live-prices";
 import { Card } from "@/components/ui/card";
 import { Metric } from "@/components/ui/metric";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
@@ -321,6 +322,10 @@ export default function PaperTradingPage() {
           value={`${(Math.abs(status?.metrics?.drawdown ?? 0) * 100).toFixed(2)}%`}
           icon={<ShieldAlert size={18} />}
         />
+      </section>
+
+      <section className="mx-auto max-w-7xl px-6 pb-6">
+        <LivePrices />
       </section>
 
       {botStatus === "RUNNING" && (
