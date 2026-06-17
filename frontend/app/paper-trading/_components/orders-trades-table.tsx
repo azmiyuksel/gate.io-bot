@@ -102,6 +102,18 @@ export default function OrdersTradesTable({ trades }: Props) {
           <tbody>
             {paged.map((trade) => {
               const pnl = Number(trade.realized_pnl);
+              // A trade with no exit_reason is an OPENING: side=buy opens a LONG,
+              // side=sell opens a SHORT (sell-to-open on futures — this is why a
+              // "SAT" can appear with no preceding "AL"). Anything with an
+              // exit_reason is a CLOSE.
+              const isClose = Boolean(trade.exit_reason);
+              const isShort = trade.side === "sell";
+              const dirLabel = isClose ? "KAPAT" : isShort ? "SHORT" : "LONG";
+              const dirClass = isClose
+                ? "bg-muted text-foreground"
+                : isShort
+                  ? "bg-danger text-white"
+                  : "bg-primary text-white";
               return (
                 <tr key={trade.id} className="border-b border-border">
                   <td className="py-3 text-muted">
@@ -109,8 +121,11 @@ export default function OrdersTradesTable({ trades }: Props) {
                   </td>
                   <td className="font-medium">{trade.symbol}</td>
                   <td>
-                    <span className={`inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase text-white ${trade.side === "buy" ? "bg-primary" : "bg-danger"}`}>
-                      {trade.side === "buy" ? "AL" : "SAT"}
+                    <span
+                      className={`inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase ${dirClass}`}
+                      title={`${trade.side === "buy" ? "AL" : "SAT"} · ${isClose ? "kapanış" : "açılış"}`}
+                    >
+                      {dirLabel}
                     </span>
                   </td>
                   <td>${fmtPrice(trade.price)}</td>
