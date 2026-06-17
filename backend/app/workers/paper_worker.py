@@ -47,17 +47,28 @@ async def main() -> None:
             except (TypeError, AttributeError):
                 pass
 
-            # Futures migration: an account created with the legacy spot exposure cap
-            # (<1x equity) would block every leveraged entry. Raise it to the
-            # configured leverage so the frequent strategy can actually take size.
+            # Futures migration: an account created with the legacy spot risk limits
+            # would block leveraged trading (exposure cap <1x) or auto-pause on
+            # ordinary leveraged volatility (5%/25% spot limits). Raise legacy values
+            # to the configured futures limits. Only bumps UP from the known spot
+            # defaults, so it never tightens a deliberately-set value.
             try:
                 from decimal import Decimal as _D
+                changed = False
                 if account.max_exposure_pct is not None and _D(str(account.max_exposure_pct)) < _D("1"):
-                    logger.info(
-                        "Paper account exposure cap %s < 1x; raising to leverage %s for futures",
-                        account.max_exposure_pct, settings.paper_leverage,
-                    )
                     account.max_exposure_pct = _D(str(settings.paper_leverage))
+                    changed = True
+                if account.max_daily_loss_pct is not None and _D(str(account.max_daily_loss_pct)) <= _D("0.05"):
+                    account.max_daily_loss_pct = _D(str(settings.paper_max_daily_loss_pct))
+                    changed = True
+                if account.max_drawdown_pct is not None and _D(str(account.max_drawdown_pct)) <= _D("0.25"):
+                    account.max_drawdown_pct = _D(str(settings.paper_max_drawdown_pct))
+                    changed = True
+                if changed:
+                    logger.info(
+                        "Paper account risk limits migrated to futures: exposure=%s daily_loss=%s drawdown=%s",
+                        account.max_exposure_pct, account.max_daily_loss_pct, account.max_drawdown_pct,
+                    )
                     db.commit()
             except Exception:
                 # Best-effort migration: never let a bad/mocked value abort startup.

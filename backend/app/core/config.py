@@ -124,6 +124,12 @@ class Settings(BaseSettings):
     # Gate.io futures taker/maker fees. Taker 5 bps, maker 2 bps.
     paper_taker_fee: float = 0.0005
     paper_maker_fee: float = 0.0002
+    # Auto-pause thresholds (applied to new paper accounts and migrated onto an
+    # existing account still on the legacy spot limits). Widened for 5x leverage:
+    # mark-to-market equity swings ~leverage x the market, so the spot-era 5%/25%
+    # limits tripped on ordinary intraday volatility.
+    paper_max_daily_loss_pct: float = 0.08
+    paper_max_drawdown_pct: float = 0.30
     # Kelly position scaling needs a track record; off by default so cold-start sizing
     # is deterministic (pure fixed-fractional risk).
     paper_kelly_enabled: bool = False

@@ -30,8 +30,9 @@ class PaperAccount(Base):
     cash_balance: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("10000"))
     initial_balance: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("10000"))
     realized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
-    max_daily_loss_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.05"))
-    max_drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.25"))
+    # Auto-pause thresholds (widened for leverage; see paper_max_*_pct in config).
+    max_daily_loss_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.08"))
+    max_drawdown_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.30"))
     # Futures: total open notional may reach leverage * equity, so the exposure cap
     # is expressed in leverage terms (5x) rather than a spot <=1 fraction.
     max_exposure_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=Decimal("5.00"))
