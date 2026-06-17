@@ -137,6 +137,19 @@ def worker_health() -> dict:
     }
 
 
+@app.get("/health/preflight")
+def preflight() -> dict:
+    """Config-only live-readiness checks (no network), for the operator/dashboard."""
+    from app.workers.preflight import config_preflight, has_blocking_errors
+
+    issues = config_preflight(settings)
+    return {
+        "bot_enabled": settings.bot_enabled,
+        "ok": not has_blocking_errors(issues),
+        "issues": [{"level": i.level, "code": i.code, "message": i.message} for i in issues],
+    }
+
+
 @app.get("/health/ready")
 def readiness() -> dict:
     """Readiness probe: verifies the database is reachable."""

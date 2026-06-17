@@ -19,6 +19,12 @@ from app.services.notifications.telegram import TelegramNotifier
 from app.services.risk.circuit_breaker import CircuitBreaker
 from app.services.trading_engine import TradingEngine
 from app.workers.heartbeat import record_heartbeat
+from app.workers.preflight import (
+    config_preflight,
+    exchange_preflight,
+    format_issues,
+    has_blocking_errors,
+)
 
 
 async def monitor_portfolio_risk() -> None:
@@ -138,11 +144,26 @@ async def run_cycle() -> None:
         if not settings.bot_enabled or not strategy_settings.is_enabled:
             return
 
-        # Only size NEW entries against trustworthy equity. If the exchange was
-        # unreachable (fallback snapshot) while API keys are configured, or the
-        # equity is stale, skip new entries rather than risk-sizing on guesses.
-        has_keys = bool(settings.gateio_api_key and settings.gateio_api_secret)
-        if (snapshot.source == "fallback" and has_keys) or account.is_equity_stale():
+        # Block new entries on a misconfigured live bot (e.g. missing API keys),
+        # while still managing open positions above. Cheap, pure config check;
+        # the operator gets a one-off Telegram alert at startup.
+        preflight_errors = [i for i in config_preflight(settings) if i.level == "error"]
+        if preflight_errors:
+            db.add(
+                SystemLog(
+                    level=LogLevel.error,
+                    source="preflight",
+                    message="New entries blocked by preflight: "
+                    + "; ".join(i.message for i in preflight_errors),
+                )
+            )
+            db.commit()
+            return
+
+        # Only size NEW entries against trustworthy equity. Never size against a
+        # fallback snapshot (guessed/placeholder equity) regardless of whether
+        # keys are configured, nor against a stale snapshot.
+        if snapshot.source == "fallback" or account.is_equity_stale():
             db.add(
                 SystemLog(
                     level=LogLevel.warning,
@@ -344,6 +365,44 @@ def _on_job_error(event) -> None:
     )
 
 
+async def _run_startup_preflight() -> None:
+    """Run live preflight checks once at boot, log them, and alert. Blocking
+    errors are reported prominently; new entries are also gated per-cycle in
+    run_cycle, so this is the operator-facing summary."""
+    settings = get_settings()
+    issues = list(config_preflight(settings))
+    client = GateIOClient()
+    try:
+        issues += await exchange_preflight(settings, client)
+    except Exception as exc:  # noqa: BLE001 - preflight must never crash the worker
+        import logging
+
+        logging.getLogger(__name__).warning("exchange preflight failed: %s", exc)
+    finally:
+        await client.close()
+
+    db = SessionLocal()
+    try:
+        for issue in issues:
+            level = LogLevel.error if issue.level == "error" else LogLevel.warning
+            db.add(SystemLog(level=level, source="preflight", message=issue.message))
+        db.commit()
+    finally:
+        db.close()
+
+    if not settings.bot_enabled:
+        return
+    if has_blocking_errors(issues):
+        await TelegramNotifier().send(
+            "🔴 Canlı PREFLIGHT BAŞARISIZ — yeni girişler engellendi:\n"
+            + format_issues(issues)
+        )
+    elif issues:
+        await TelegramNotifier().send("⚠️ Canlı preflight uyarıları:\n" + format_issues(issues))
+    else:
+        await TelegramNotifier().send("✅ Canlı preflight: tüm kontroller geçti.")
+
+
 async def _record_initial_heartbeat() -> None:
     """Prime the heartbeat on boot so the watchdog sees the worker as alive
     immediately, rather than waiting for the first 15-minute cycle."""
@@ -365,6 +424,7 @@ async def main() -> None:
         f"🟢 Canlı worker başlatıldı (market={settings.trading_market}, "
         f"strategy={settings.live_strategy}, bot_enabled={settings.bot_enabled})."
     )
+    await _run_startup_preflight()
 
     # Stream live prices into the shared cache in the background.
     ws_client = GateIOWebSocketClient(settings.symbols)
