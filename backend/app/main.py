@@ -139,14 +139,36 @@ def worker_health() -> dict:
 
 @app.get("/health/preflight")
 def preflight() -> dict:
-    """Config-only live-readiness checks (no network), for the operator/dashboard."""
+    """Live-readiness checks (config + go-live strategy gate), for the operator."""
+    from app.db.session import SessionLocal
+    from app.services.strategy.validation import live_strategy_validated
     from app.workers.preflight import config_preflight, has_blocking_errors
 
     issues = config_preflight(settings)
+    validation = None
+    if settings.live_require_walkforward:
+        db = SessionLocal()
+        try:
+            vr = live_strategy_validated(
+                db,
+                settings.live_strategy,
+                settings.market_data_interval,
+                settings.live_validation_max_age_days,
+            )
+        finally:
+            db.close()
+        validation = {
+            "ok": vr.ok,
+            "reason": vr.reason,
+            "run_id": vr.run_id,
+            "strategy": settings.live_strategy,
+            "timeframe": settings.market_data_interval,
+        }
     return {
         "bot_enabled": settings.bot_enabled,
-        "ok": not has_blocking_errors(issues),
+        "ok": not has_blocking_errors(issues) and (validation is None or validation["ok"]),
         "issues": [{"level": i.level, "code": i.code, "message": i.message} for i in issues],
+        "strategy_validation": validation,
     }
 
 

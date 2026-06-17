@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     # strategy so paper and live evaluate identical signals. Set to
     # "capital_preservation_v1" to run the low-frequency mean-reversion strategy live.
     live_strategy: str = "momentum_breakout_v1"
+    # Go-live gate: require the live strategy to have PASSED a recent walk-forward
+    # validation (on the live timeframe) before it may open new trades. Blocks new
+    # entries (open positions are still managed) until a passing, fresh run exists.
+    # Disable only if you validate strategies out-of-band.
+    live_require_walkforward: bool = True
+    # Max age (days) of the passing walk-forward run before it is considered stale.
+    live_validation_max_age_days: int = 90
     # Live market. "spot" (proven path; long-only — short signals are skipped) or
     # "futures" (USDT-perpetual; enables shorts + leverage to fully mirror paper).
     # Default SPOT for safety: validate futures keys on Gate.io testnet before

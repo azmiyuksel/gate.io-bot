@@ -160,6 +160,29 @@ async def run_cycle() -> None:
             db.commit()
             return
 
+        # Go-live gate: block new entries unless the live strategy passed a recent
+        # walk-forward validation on the live timeframe (open positions are still
+        # managed above). Stops an un-validated strategy from trading real money.
+        if settings.live_require_walkforward:
+            from app.services.strategy.validation import live_strategy_validated
+
+            validation = live_strategy_validated(
+                db,
+                settings.live_strategy,
+                settings.market_data_interval,
+                settings.live_validation_max_age_days,
+            )
+            if not validation.ok:
+                db.add(
+                    SystemLog(
+                        level=LogLevel.warning,
+                        source="strategy_validation",
+                        message=f"New entries blocked: live strategy not validated — {validation.reason}",
+                    )
+                )
+                db.commit()
+                return
+
         # Only size NEW entries against trustworthy equity. Never size against a
         # fallback snapshot (guessed/placeholder equity) regardless of whether
         # keys are configured, nor against a stale snapshot.
@@ -383,6 +406,23 @@ async def _run_startup_preflight() -> None:
 
     db = SessionLocal()
     try:
+        # Go-live gate status (needs DB): surface why live may be blocked.
+        if settings.live_require_walkforward:
+            from app.services.strategy.validation import live_strategy_validated
+            from app.workers.preflight import PreflightIssue
+
+            validation = live_strategy_validated(
+                db,
+                settings.live_strategy,
+                settings.market_data_interval,
+                settings.live_validation_max_age_days,
+            )
+            if not validation.ok:
+                issues.append(PreflightIssue(
+                    "warning", "strategy_not_validated",
+                    f"Canlı strateji doğrulanmadı — yeni girişler engellendi: {validation.reason}. "
+                    f"Canlı timeframe'de ({settings.market_data_interval}) geçer bir walk-forward çalıştırın.",
+                ))
         for issue in issues:
             level = LogLevel.error if issue.level == "error" else LogLevel.warning
             db.add(SystemLog(level=level, source="preflight", message=issue.message))
