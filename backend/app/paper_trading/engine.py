@@ -190,6 +190,16 @@ class PaperTradingEngine:
             except Exception:
                 pass  # MTF check is advisory; proceed if it fails
 
+        # Mirror live: apply the same entry gates the live engine runs in
+        # scan_symbol (data-quality, regime, health, correlation) and carry the
+        # combined de-risk multiplier into sizing. Only when mirroring, so
+        # standalone paper stays lightweight.
+        risk_mult = Decimal("1")
+        if exec_.mirror:
+            allowed, risk_mult = self._live_entry_gate(symbol, candles, signal, settings)
+            if not allowed:
+                return
+
         latest = candles[-1]
         # Build a MarketData snapshot from the latest REAL candle (proper OHLC),
         # so execution simulation and risk checks see correct bar values.
@@ -201,7 +211,84 @@ class PaperTradingEngine:
             high=float(latest["high"]),
             low=float(latest["low"]),
         )
-        await self.execute_signal(signal, data)
+        await self.execute_signal(signal, data, risk_mult)
+
+    def _live_entry_gate(self, symbol, candles, signal, settings) -> tuple[bool, Decimal]:
+        """Mirror the live engine's scan_symbol entry filters so paper rejects /
+        de-risks entries the same way live would. Returns (allowed, risk_mult).
+
+        Uses the SAME engine classes and call shapes as TradingEngine (not a
+        reimplementation). Each filter is best-effort: a failure never blocks the
+        entry, matching live's defensive behaviour.
+        """
+        interval = settings.market_data_interval
+        strategy_name = getattr(signal, "strategy", None) or getattr(self.strategy, "name", "")
+        risk_mult = Decimal("1")
+
+        # 1. Market-data quality gate (block on INVALID, de-risk on DEGRADED).
+        try:
+            from app.market_data_quality.engine import MarketDataQualityEngine
+            from app.market_data_quality.models import DataTradeStatus
+
+            mdq = MarketDataQualityEngine(self.db).ingest(candles, symbol, interval, source="gateio")
+            if mdq.trade_status == DataTradeStatus.invalid and settings.mdq_pause_on_invalid:
+                self._log("entry_skipped", f"{symbol}: data_invalid", {"symbol": symbol, "reason": "data_invalid"})
+                return False, risk_mult
+            if mdq.trade_status == DataTradeStatus.degraded:
+                risk_mult *= Decimal(str(settings.mdq_degraded_risk_multiplier))
+        except Exception:
+            pass
+
+        # 2. Market-regime filter (block / de-risk by regime).
+        try:
+            from app.market_regime.engine import MarketRegimeEngine
+
+            candles_list = [
+                {"open": float(c["open"]), "high": float(c["high"]), "low": float(c["low"]),
+                 "close": float(c["close"]), "volume": float(c["volume"]), "timestamp": c["timestamp"]}
+                for c in candles
+            ]
+            regime = MarketRegimeEngine(self.db)
+            regime.update_regime(symbol, interval, candles_list)
+            allowed, reason, rmult = regime.should_trade(strategy_name, symbol)
+            if not allowed:
+                self._log("entry_skipped", f"{symbol}: regime_blocked ({reason})",
+                          {"symbol": symbol, "reason": "regime_blocked"})
+                return False, risk_mult
+            risk_mult *= Decimal(str(rmult))
+        except Exception:
+            pass
+
+        # 3. Strategy-health filter (block when PAUSED/DISABLED, else de-risk).
+        try:
+            from app.strategy_health.engine import StrategyHealthEngine
+
+            health = StrategyHealthEngine(self.db).update_health(strategy_name) or {}
+            if health.get("state") in ("PAUSED", "DISABLED"):
+                self._log("entry_skipped", f"{symbol}: health_{health.get('state')}",
+                          {"symbol": symbol, "reason": "health_blocked"})
+                return False, risk_mult
+            risk_mult *= Decimal(str(health.get("risk_multiplier", 1)))
+        except Exception:
+            pass
+
+        # 4. Correlation filter (block an entry too correlated with an open one).
+        if settings.correlation_filter_enabled:
+            try:
+                from app.portfolio.correlation import CorrelationEngine, max_correlation
+
+                open_syms = [p.symbol for p in self.portfolio.open_positions() if p.symbol != symbol]
+                if open_syms:
+                    corr = CorrelationEngine(self.db).calculate_correlation([symbol, *open_syms], interval)
+                    mx = max_correlation(corr.get("matrix", {}), symbol, open_syms)
+                    if mx > float(settings.max_position_correlation):
+                        self._log("entry_skipped", f"{symbol}: correlation {mx:.2f}",
+                                  {"symbol": symbol, "reason": "correlation_blocked"})
+                        return False, risk_mult
+            except Exception:
+                pass
+
+        return True, risk_mult
 
     def stop(self) -> None:
         self._running = False
@@ -218,7 +305,9 @@ class PaperTradingEngine:
         self._handle_position_exits(data)
         self.portfolio.record_equity()
 
-    async def execute_signal(self, signal: TradingSignal, data: MarketData) -> None:
+    async def execute_signal(
+        self, signal: TradingSignal, data: MarketData, risk_mult: Decimal = Decimal("1")
+    ) -> None:
         approved, reason = self.risk.approve_signal(signal, data)
         if not approved:
             if time() - self._last_risk_log_ts >= 10:
@@ -262,6 +351,11 @@ class PaperTradingEngine:
                 quantity = fallback_qty
         else:
             quantity = fallback_qty
+
+        # Live parity: scale size by the combined de-risk multiplier from the
+        # regime/health/data-quality gates (matches the live engine).
+        if risk_mult != Decimal("1"):
+            quantity = quantity * risk_mult
 
         if quantity <= 0:
             return
