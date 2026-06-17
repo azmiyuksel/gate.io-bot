@@ -162,6 +162,51 @@ def test_adapter_reason_code_is_stable_without_rsi(monkeypatch):
     assert "RSI" in adapter.last_reason
 
 
+def test_short_close_settles_cash_without_inflating_equity(db_session):
+    """Closing a SHORT must settle cash as a buy-back (pay exit cost), not reuse the
+    long formula (entry*qty + pnl) which double-credits the open proceeds and makes
+    equity climb on every short — even losers. Equity must be continuous across the
+    close: a losing short LOWERS equity, a winning short raises it by ~pnl only."""
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from app.models.entities import PaperAccount, PaperPosition
+    from app.paper_trading.broker import PaperBroker
+    from app.paper_trading.models import MarketData
+    from app.paper_trading.portfolio import PaperPortfolio
+
+    now = datetime.now(UTC)
+
+    def _open_short(name: str) -> tuple[PaperAccount, PaperPosition]:
+        # Short 1 @ 100: opening credits proceeds, so cash went 10000 -> ~10100.
+        acc = PaperAccount(name=name, cash_balance=Decimal("10100"), initial_balance=Decimal("10000"))
+        db_session.add(acc)
+        db_session.commit()
+        db_session.refresh(acc)
+        pos = PaperPosition(
+            account_id=acc.id, symbol="AAA_USDT", side="sell",
+            quantity=Decimal("1"), average_entry_price=Decimal("100"), last_price=Decimal("100"),
+        )
+        db_session.add(pos)
+        db_session.commit()
+        return acc, pos
+
+    # Losing short: price rose to 110. Equity must drop below the 10000 start.
+    acc, pos = _open_short("short_loss")
+    PaperBroker(db_session, acc).close_position(pos, MarketData("AAA_USDT", now, 110.0), "stop_loss")
+    db_session.commit()
+    equity = PaperPortfolio(db_session, acc).equity()
+    assert equity < Decimal("10000")          # a loss reduces equity
+    assert equity < Decimal("10100")          # and is NOT the inflated open-cash value
+
+    # Winning short: price fell to 90. Equity rises, but only by ~10 (not ~+100).
+    acc2, pos2 = _open_short("short_win")
+    PaperBroker(db_session, acc2).close_position(pos2, MarketData("AAA_USDT", now, 90.0), "take_profit")
+    db_session.commit()
+    equity2 = PaperPortfolio(db_session, acc2).equity()
+    assert Decimal("10000") < equity2 < Decimal("10025")
+
+
 def test_equity_counts_position_market_value(db_session):
     """Open positions must contribute their market value to equity. A long buy
     deducts the full notional from cash, so if equity only added unrealized PnL it

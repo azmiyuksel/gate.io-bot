@@ -189,7 +189,16 @@ class PaperBroker:
         # cost-free. Deduct a conservative daily cost on notional so simulated PnL
         # is not overstated relative to live trading.
         pnl -= self._funding_cost(position, close_qty, now)
-        self.account.cash_balance += position.average_entry_price * close_qty + pnl
+        # Cash settlement differs by side. A LONG locked entry*qty of cash at open,
+        # so closing returns entry*qty + pnl. A SHORT received entry*qty of proceeds
+        # at open (cash went UP), so closing must PAY to buy back: the net cash delta
+        # is pnl - entry*qty. Using the long formula for shorts double-credits the
+        # proceeds (~+2*entry*qty), making equity climb on every short — even losers.
+        entry_notional = position.average_entry_price * close_qty
+        if is_short:
+            self.account.cash_balance += pnl - entry_notional
+        else:
+            self.account.cash_balance += pnl + entry_notional
         self.account.realized_pnl += pnl
         position.realized_pnl += pnl
 
