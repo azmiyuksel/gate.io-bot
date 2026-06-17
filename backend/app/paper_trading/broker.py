@@ -15,12 +15,17 @@ logger = logging.getLogger(__name__)
 class PaperBroker:
     def __init__(self, db: Session, account: PaperAccount, simulator: ExecutionSimulator | None = None) -> None:
         from app.core.config import get_settings
+        from app.paper_trading.mirror import resolve_paper_exec
 
         self.db = db
         self.account = account
+        self.exec = resolve_paper_exec(db, get_settings())
         if simulator is None:
-            s = get_settings()
-            simulator = ExecutionSimulator(maker_fee=s.paper_maker_fee, taker_fee=s.paper_taker_fee)
+            # Fees follow the mirrored market (spot vs futures) so paper drag
+            # matches what is actually paid live.
+            simulator = ExecutionSimulator(
+                maker_fee=float(self.exec.maker_fee), taker_fee=float(self.exec.taker_fee)
+            )
         self.simulator = simulator
 
     def submit_signal(self, signal: TradingSignal, quantity: Decimal, data: MarketData) -> PaperOrder:
@@ -106,36 +111,33 @@ class PaperBroker:
         self._log("order_filled", f"{order.side} {order.symbol} qty={execution.filled_quantity}")
 
     def _stop_tp_params(self) -> tuple[Decimal, Decimal]:
-        """(ATR stop multiplier, take-profit reward:risk) from config — shared by
-        long/short opens and by the engine's position sizing so the stop the trade
-        is sized against is the stop actually placed."""
-        from app.core.config import get_settings
-
-        s = get_settings()
-        return Decimal(str(s.paper_atr_stop_multiplier)), Decimal(str(s.paper_tp_rr))
+        """(ATR stop multiplier, take-profit reward:risk) — shared by long/short
+        opens and by the engine's position sizing so the stop the trade is sized
+        against is the stop actually placed. Mirrors the live StrategySettings
+        when paper_mirror_live is on."""
+        return self.exec.atr_stop_multiplier, self.exec.tp_rr
 
     def _fits_free_margin(self, notional: Decimal) -> bool:
         """A new long's notional must fit within free margin (equity * leverage)
-        minus the notional already committed to open positions."""
-        from app.core.config import get_settings
-
+        minus the notional already committed to open positions. Mirroring a spot
+        live account, leverage is 1 so notional must fit within equity."""
         from app.paper_trading.portfolio import PaperPortfolio
 
         portfolio = PaperPortfolio(self.db, self.account)
         equity = portfolio.equity()
         if equity <= 0:
             return False
-        leverage = Decimal(str(get_settings().paper_leverage))
+        leverage = self.exec.leverage
         used = sum(p.quantity * p.last_price for p in portfolio.open_positions())
         return (used + notional) <= equity * leverage
 
     def _funding_cost(self, position: PaperPosition, close_qty: Decimal, exit_time: datetime) -> Decimal:
         """Conservative financing carry on the closed notional over the holding
-        period. Disabled when ``funding_cost_enabled`` is off."""
+        period. Disabled for spot (no funding) and when funding is off."""
         from app.core.config import get_settings
 
         settings = get_settings()
-        if not settings.funding_cost_enabled or settings.funding_daily_rate_pct <= 0:
+        if not self.exec.funding_enabled or settings.funding_daily_rate_pct <= 0:
             return Decimal("0")
         opened = position.opened_at
         if opened is None:

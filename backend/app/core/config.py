@@ -131,6 +131,18 @@ class Settings(BaseSettings):
     # Gate.io futures taker/maker fees. Taker 5 bps, maker 2 bps.
     paper_taker_fee: float = 0.0005
     paper_maker_fee: float = 0.0002
+    # Gate.io SPOT taker/maker fees, used when paper mirrors a SPOT live account.
+    # Set these to YOUR Gate.io spot fee tier (base tier is ~0.2%; ~0.1% with a GT
+    # deduction) so paper drag matches what you actually pay live.
+    paper_spot_taker_fee: float = 0.001
+    paper_spot_maker_fee: float = 0.001
+    # Mirror live: when true (default), paper adopts the LIVE account's economics —
+    # same timeframe (market_data_interval), market/direction/leverage (spot=>1x,
+    # long-only; futures=>futures_leverage, long+short), spot-vs-futures fees,
+    # funding, and live risk sizing (max_risk_per_trade_pct + StrategySettings
+    # atr_multiplier / min_reward_risk / max_capital_per_trade_pct, live loss/
+    # drawdown limits). Turn OFF to run paper standalone on its own paper_* knobs.
+    paper_mirror_live: bool = True
     # Auto-pause thresholds (applied to new paper accounts and migrated onto an
     # existing account still on the legacy spot limits). Widened for 5x leverage:
     # mark-to-market equity swings ~leverage x the market, so the spot-era 5%/25%

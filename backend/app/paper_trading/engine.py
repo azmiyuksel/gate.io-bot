@@ -11,7 +11,7 @@ from app.models.entities import PaperAccount, PaperLog, PaperPosition
 from app.models.enums import LogLevel, PaperBotStatus
 from app.paper_trading.broker import PaperBroker
 from app.paper_trading.market_data_stream import GateIOMarketDataStream
-from app.paper_trading.models import BaseStrategy, MarketData, TradingSignal
+from app.paper_trading.models import BaseStrategy, MarketData, PaperSide, TradingSignal
 from app.paper_trading.order_manager import PaperOrderManager
 from app.paper_trading.portfolio import PaperPortfolio
 from app.paper_trading.risk_simulator import PaperRiskSimulator
@@ -119,7 +119,11 @@ class PaperTradingEngine:
                 )
 
     async def _evaluate_symbol_entry(self, symbol: str, settings) -> None:
-        paper_interval = getattr(settings, "paper_market_data_interval", None) or settings.market_data_interval
+        from app.paper_trading.mirror import resolve_paper_exec
+
+        exec_ = resolve_paper_exec(self.db, settings)
+        # Mirror live: trade the live timeframe so signal frequency/quality match.
+        paper_interval = exec_.interval
         try:
             candles = await self._client.candles(
                 symbol,
@@ -151,6 +155,13 @@ class PaperTradingEngine:
             reason_msg = getattr(self.strategy, "last_reason", "") or "no_signal"
             reason_code = getattr(self.strategy, "last_reason_code", "") or "no_signal"
             self._log("entry_skipped", f"{symbol}: {reason_msg}", {"symbol": symbol, "reason": reason_code})
+            return
+
+        # Mirror live: a SPOT live account skips short signals (cannot hold shorts),
+        # so paper must too — otherwise paper trades setups that never happen live.
+        if not exec_.allow_short and signal.side == PaperSide.sell:
+            self._log("entry_skipped", f"{symbol}: short_skipped_spot",
+                      {"symbol": symbol, "reason": "short_skipped_spot"})
             return
 
         # Multi-timeframe confirmation: check HTF trend alignment
@@ -222,16 +233,20 @@ class PaperTradingEngine:
         equity = self.portfolio.equity()
         price = Decimal(str(data.price))
         config = get_settings()
+        from app.paper_trading.mirror import resolve_paper_exec
 
-        # Leverage-aware, fixed-fractional risk sizing. The per-trade risk is
-        # paper_position_risk_pct of equity, sized against the SAME ATR stop the
-        # broker will place (paper_atr_stop_multiplier), so realised risk matches
-        # intent. The notional is then capped by available leverage (margin).
-        risk_pct = Decimal(str(config.paper_position_risk_pct))
-        leverage = Decimal(str(config.paper_leverage))
-        stop_mult = Decimal(str(config.paper_atr_stop_multiplier))
-        max_notional = equity * leverage
-        notional_cap_qty = max_notional / price if price > 0 else Decimal("0")
+        exec_ = resolve_paper_exec(self.db, config)
+
+        # Fixed-fractional risk sizing. Per-trade risk is risk_pct of equity, sized
+        # against the SAME ATR stop the broker will place, so realised risk matches
+        # intent. Notional is capped at notional_cap_pct of equity. When mirroring
+        # live, all of these come from the live risk config (max_risk_per_trade_pct
+        # + StrategySettings), so paper sizes positions exactly as live would.
+        risk_pct = exec_.risk_pct
+        stop_mult = exec_.atr_stop_multiplier
+        notional_cap_qty = (equity * exec_.notional_cap_pct) / price if price > 0 else Decimal("0")
+        fallback_qty = (equity * Decimal(str(config.paper_fallback_capital_pct))) / price if price > 0 else Decimal("0")
+        fallback_qty = min(fallback_qty, notional_cap_qty)
 
         atr_str = signal.metadata.get("atr") if signal.metadata else None
         if atr_str and config.risk_based_sizing_enabled:
@@ -242,11 +257,11 @@ class PaperTradingEngine:
                     risk_based_qty = (equity * risk_pct) / stop_distance
                     quantity = min(risk_based_qty, notional_cap_qty)
                 else:
-                    quantity = (equity * Decimal(str(config.paper_fallback_capital_pct))) / price if price > 0 else Decimal("0")
+                    quantity = fallback_qty
             except Exception:
-                quantity = (equity * Decimal(str(config.paper_fallback_capital_pct))) / price if price > 0 else Decimal("0")
+                quantity = fallback_qty
         else:
-            quantity = (equity * Decimal(str(config.paper_fallback_capital_pct))) / price if price > 0 else Decimal("0")
+            quantity = fallback_qty
 
         if quantity <= 0:
             return

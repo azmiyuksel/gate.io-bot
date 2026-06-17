@@ -47,6 +47,21 @@ async def main() -> None:
             except (TypeError, AttributeError):
                 pass
 
+            # Mirror live: when paper mirrors the live account, write the live
+            # (mirrored) limits onto the account so the dashboard shows the same
+            # limits the gate enforces. Otherwise apply the legacy futures migration.
+            if settings.paper_mirror_live:
+                try:
+                    from app.paper_trading.mirror import resolve_paper_exec
+                    ex = resolve_paper_exec(db, settings)
+                    account.max_exposure_pct = ex.max_exposure_pct
+                    account.max_daily_loss_pct = ex.daily_max_loss_pct
+                    account.max_drawdown_pct = ex.max_drawdown_pct
+                    account.max_open_positions = ex.max_open_positions
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
             # Futures migration: an account created with the legacy spot risk limits
             # would block leveraged trading (exposure cap <1x) or auto-pause on
             # ordinary leveraged volatility (5%/25% spot limits). Raise legacy values
@@ -55,13 +70,13 @@ async def main() -> None:
             try:
                 from decimal import Decimal as _D
                 changed = False
-                if account.max_exposure_pct is not None and _D(str(account.max_exposure_pct)) < _D("1"):
+                if not settings.paper_mirror_live and account.max_exposure_pct is not None and _D(str(account.max_exposure_pct)) < _D("1"):
                     account.max_exposure_pct = _D(str(settings.paper_leverage))
                     changed = True
-                if account.max_daily_loss_pct is not None and _D(str(account.max_daily_loss_pct)) <= _D("0.05"):
+                if not settings.paper_mirror_live and account.max_daily_loss_pct is not None and _D(str(account.max_daily_loss_pct)) <= _D("0.05"):
                     account.max_daily_loss_pct = _D(str(settings.paper_max_daily_loss_pct))
                     changed = True
-                if account.max_drawdown_pct is not None and _D(str(account.max_drawdown_pct)) <= _D("0.25"):
+                if not settings.paper_mirror_live and account.max_drawdown_pct is not None and _D(str(account.max_drawdown_pct)) <= _D("0.25"):
                     account.max_drawdown_pct = _D(str(settings.paper_max_drawdown_pct))
                     changed = True
                 if changed:

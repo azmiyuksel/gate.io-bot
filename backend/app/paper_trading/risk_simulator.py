@@ -19,23 +19,36 @@ class PaperRiskSimulator:
         self.portfolio = PaperPortfolio(db, account)
 
     def approve_signal(self, signal: TradingSignal, data: MarketData) -> tuple[bool, str]:
+        from app.core.config import get_settings
+        from app.paper_trading.mirror import resolve_paper_exec
+
         if self.account.status != PaperBotStatus.running:
             return False, "system_not_running"
         equity = self.portfolio.equity()
         if equity <= 0:
             return False, "no_equity"
+
+        # Mirror live: enforce the live account's limits (max-positions/exposure/
+        # drawdown/daily-loss) so paper pauses under the same conditions the live
+        # circuit breaker would. Otherwise use the account's own columns.
+        exec_ = resolve_paper_exec(self.db, get_settings())
+        max_positions = exec_.max_open_positions if exec_.mirror else self.account.max_open_positions
+        max_exposure = exec_.max_exposure_pct if exec_.mirror else self.account.max_exposure_pct
+        max_drawdown = exec_.max_drawdown_pct if exec_.mirror else self.account.max_drawdown_pct
+        max_daily_loss = exec_.daily_max_loss_pct if exec_.mirror else self.account.max_daily_loss_pct
+
         open_positions = self.portfolio.open_positions()
-        if len(open_positions) >= self.account.max_open_positions:
+        if len(open_positions) >= max_positions:
             return False, "max_open_positions"
         if any(p.symbol == signal.symbol for p in open_positions):
             return False, "already_in_position"
-        if self.portfolio.exposure_pct() >= self.account.max_exposure_pct:
+        if self.portfolio.exposure_pct() >= max_exposure:
             return False, "max_exposure"
         latest_dd = self._check_drawdown()
-        if abs(latest_dd) >= self.account.max_drawdown_pct:
+        if abs(latest_dd) >= max_drawdown:
             self.pause("max_drawdown_reached")
             return False, "max_drawdown_reached"
-        if self._daily_loss_pct() >= self.account.max_daily_loss_pct:
+        if self._daily_loss_pct() >= max_daily_loss:
             self.pause("daily_loss_limit_reached")
             return False, "daily_loss_limit_reached"
         return True, "approved"
