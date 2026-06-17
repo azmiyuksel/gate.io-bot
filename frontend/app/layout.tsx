@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import { HelpButton } from "@/components/help-button";
 import { Navbar } from "@/components/navbar";
 import { ToastProvider } from "@/components/ui/toast";
 import { AuthProvider } from "@/lib/auth-context";
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <AuthProvider>
             <Navbar />
             <div id="main-content" className="min-h-screen lg:ml-56">{children}</div>
+            <HelpButton />
           </AuthProvider>
         </ToastProvider>
       </body>

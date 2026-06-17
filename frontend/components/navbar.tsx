@@ -7,6 +7,7 @@ import {
   Beaker,
   BookOpen,
   Database,
+  HelpCircle,
   LineChart,
   LayoutDashboard,
   LogOut,
@@ -34,6 +35,7 @@ const NAV_ITEMS = [
   { href: "/backtests", label: "Backtest", icon: LineChart },
   { href: "/walk-forward", label: "Walk-Forward", icon: BarChart3 },
   { href: "/learning", label: "Otomatik Öğrenme", icon: BookOpen },
+  { href: "/help", label: "Yardım", icon: HelpCircle },
 ] as const;
 
 export function Navbar() {
