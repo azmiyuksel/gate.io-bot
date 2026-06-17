@@ -165,14 +165,14 @@ class PaperTradingEngine:
                 if htf_candles and len(htf_candles) >= 50:
                     from app.services.strategy.indicators import ema as calc_ema
                     htf_closes = [Decimal(str(c["close"])) for c in htf_candles]
-                    htf_ema200 = calc_ema(htf_closes, 50)
+                    htf_ema = calc_ema(htf_closes, 50)
                     htf_last = htf_closes[-1]
                     direction = signal.metadata.get("direction") if signal.metadata else "long"
-                    if direction == "long" and htf_last < htf_ema200:
+                    if direction == "long" and htf_last < htf_ema:
                         self._log("entry_skipped", f"{symbol}: htf_trend_mismatch (long but 4h below EMA50)",
                                   {"symbol": symbol, "reason": "htf_trend_mismatch"})
                         return
-                    if direction == "short" and htf_last > htf_ema200:
+                    if direction == "short" and htf_last > htf_ema:
                         self._log("entry_skipped", f"{symbol}: htf_trend_mismatch (short but 4h above EMA50)",
                                   {"symbol": symbol, "reason": "htf_trend_mismatch"})
                         return

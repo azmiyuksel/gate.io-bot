@@ -96,6 +96,15 @@ class TradingEngine:
         if not self._check_circuit_breaker(symbol):
             return
 
+        # Per-symbol guard: never stack a second position on a pair we already
+        # hold (mirrors paper's `already_in_position`). Without this a sustained
+        # breakout re-fires every cycle and concentrates several entries on one
+        # symbol/direction — defeating max_open_positions / exposure diversification.
+        if self.positions.has_open(symbol):
+            self._log("already_in_position", f"{symbol}: skipped, position already open")
+            self.db.commit()
+            return
+
         result = await self._fetch_and_validate_candles(symbol)
         if result is None:
             return
@@ -103,6 +112,12 @@ class TradingEngine:
 
         signal = self._evaluate_strategy_signal(symbol, candles)
         if signal is None:
+            return
+
+        # Higher-timeframe trend confirmation (mirrors paper). Live previously
+        # ignored strategy_mtf_enabled entirely, so live took entries paper would
+        # reject — another paper/live divergence now closed.
+        if not await self._check_mtf_filter(symbol, signal):
             return
 
         # Convert exchange candles to list of dicts for feature calculation
@@ -279,6 +294,47 @@ class TradingEngine:
                 "correlation_filter",
                 f"{symbol}: skipped, correlation {mx:.2f} with open positions "
                 f"> {get_settings().max_position_correlation}",
+            )
+            self.db.commit()
+            return False
+        return True
+
+    async def _check_mtf_filter(self, symbol: str, signal) -> bool:
+        """Multi-timeframe confirmation: require the higher-timeframe (e.g. 4h)
+        trend to agree with the entry direction. Advisory — a fetch/indicator
+        failure does not block the entry. Mirrors the paper engine so live and
+        paper apply the same gate."""
+        _settings = get_settings()
+        if not getattr(_settings, "strategy_mtf_enabled", False):
+            return True
+        direction = getattr(signal, "direction", "long") or "long"
+        try:
+            # +1 so dropping the still-forming bar still leaves 50 closed bars.
+            htf = await self.client.candles(
+                symbol, interval=_settings.strategy_mtf_interval, limit=51, drop_unclosed=True
+            )
+        except Exception:
+            return True
+        if not htf or len(htf) < 50:
+            return True
+        from app.services.strategy.indicators import ema as calc_ema
+
+        closes = [Decimal(str(c["close"])) for c in htf]
+        htf_ema = calc_ema(closes, 50)
+        if htf_ema is None or htf_ema <= 0:
+            return True
+        last = closes[-1]
+        if direction == "long" and last < htf_ema:
+            self._log(
+                "mtf_filter",
+                f"{symbol}: long skipped, {_settings.strategy_mtf_interval} trend below EMA50 (HTF downtrend)",
+            )
+            self.db.commit()
+            return False
+        if direction == "short" and last > htf_ema:
+            self._log(
+                "mtf_filter",
+                f"{symbol}: short skipped, {_settings.strategy_mtf_interval} trend above EMA50 (HTF uptrend)",
             )
             self.db.commit()
             return False

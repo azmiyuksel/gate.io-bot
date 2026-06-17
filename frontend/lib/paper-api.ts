@@ -10,20 +10,41 @@ import type {
   PaperStatus,
   PaperTrade,
 } from "@/types/paper";
-import { authFetch, getAccessToken } from "@/lib/auth-api";
+import { authFetch, getFreshAccessToken } from "@/lib/auth-api";
 
-export function createPaperStream(onData: (data: PaperStatus) => void): EventSource | null {
-  const token = getAccessToken();
-  if (!token) return null;
+export interface PaperStream {
+  close: () => void;
+}
+
+export function createPaperStream(onData: (data: PaperStatus) => void): PaperStream {
   const publicUrl = process.env.NEXT_PUBLIC_API_URL || "";
   const baseUrl = publicUrl || "";
-  const url = `${baseUrl}/api/v1/paper/stream?token=${encodeURIComponent(token)}`;
 
-  let es: EventSource;
+  let es: EventSource | null = null;
+  let closed = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectDelay = 1000;
   const maxReconnectDelay = 30000;
 
-  function connect() {
+  function scheduleReconnect() {
+    if (closed) return;
+    reconnectTimer = setTimeout(() => void connect(), reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+  }
+
+  async function connect() {
+    if (closed) return;
+    // EventSource cannot set an Authorization header, so the short-lived access
+    // token rides in the query string. It must be FRESH on every (re)connect —
+    // otherwise an expired token makes the stream 401 ("invalid token") forever,
+    // even while normal authFetch calls keep working via their 401-refresh.
+    const token = await getFreshAccessToken();
+    if (closed) return;
+    if (!token) {
+      scheduleReconnect();
+      return;
+    }
+    const url = `${baseUrl}/api/v1/paper/stream?token=${encodeURIComponent(token)}`;
     es = new EventSource(url);
     es.onmessage = (event) => {
       reconnectDelay = 1000;
@@ -37,14 +58,23 @@ export function createPaperStream(onData: (data: PaperStatus) => void): EventSou
       }
     };
     es.onerror = () => {
-      es.close();
-      setTimeout(connect, reconnectDelay);
-      reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+      // An expired-token 401 surfaces here too; reconnect re-mints the token.
+      es?.close();
+      es = null;
+      scheduleReconnect();
     };
   }
 
-  connect();
-  return es!;
+  void connect();
+
+  return {
+    close() {
+      closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      es?.close();
+      es = null;
+    },
+  };
 }
 
 export async function startPaperTrading(

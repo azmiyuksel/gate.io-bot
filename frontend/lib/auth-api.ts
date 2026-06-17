@@ -67,6 +67,30 @@ export async function register(email: string, password: string): Promise<TokenPa
   return tokens;
 }
 
+// Decode a JWT's exp claim and report whether it is expired (with a small skew).
+// Used by the SSE stream, which carries the token in the URL and cannot rely on
+// authFetch's 401-refresh, so it must proactively avoid sending a dead token.
+export function isTokenExpired(token: string, skewSeconds = 30): boolean {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return true;
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(b64));
+    if (!payload.exp) return false;
+    return Date.now() / 1000 >= payload.exp - skewSeconds;
+  } catch {
+    return true;
+  }
+}
+
+// Return a currently-valid access token, refreshing it first if the stored one
+// is missing or (about to be) expired. Returns null when no session can be had.
+export async function getFreshAccessToken(): Promise<string | null> {
+  const token = getAccessToken();
+  if (token && !isTokenExpired(token)) return token;
+  return await refreshAccessToken();
+}
+
 export async function refreshAccessToken(): Promise<string | null> {
   const refresh_token = getRefreshToken();
   if (!refresh_token) return null;

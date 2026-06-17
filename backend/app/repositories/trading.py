@@ -29,6 +29,18 @@ class PositionRepository(Repository[Position]):
     def open_count(self) -> int:
         return self.db.query(Position).filter(Position.status == PositionStatus.open).count()
 
+    def has_open(self, symbol: str) -> bool:
+        """True when a position is already open on ``symbol`` (any direction).
+
+        Guards against stacking several entries on the same pair across cycles —
+        which would turn "diversified" positions into one concentrated bet."""
+        return (
+            self.db.query(Position.id)
+            .filter(Position.status == PositionStatus.open, Position.symbol == symbol)
+            .first()
+            is not None
+        )
+
     def open_notional(self) -> Decimal:
         """Total notional value of all open positions (entry_price * quantity)."""
         value = self.db.query(

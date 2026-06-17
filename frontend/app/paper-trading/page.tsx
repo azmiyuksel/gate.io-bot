@@ -26,6 +26,7 @@ import { LastUpdated } from "@/components/ui/last-updated";
 import { useToast } from "@/components/ui/toast";
 import { getAccessToken } from "@/lib/auth-api";
 import { fmtUTCShort, money } from "@/lib/utils";
+import type { PaperStream } from "@/lib/paper-api";
 import {
   createPaperStream,
   getPaperEconomics,
@@ -94,7 +95,7 @@ export default function PaperTradingPage() {
   const [quickSide, setQuickSide] = useState<"buy" | "sell">("buy");
   const [quickQty, setQuickQty] = useState("0.01");
 
-  const sseRef = useRef<EventSource | null>(null);
+  const sseRef = useRef<PaperStream | null>(null);
   const botStatusRef = useRef("STOPPED");
   const actionRef = useRef<
     (fn: () => Promise<boolean>, successMsg: string, btnId?: string) => Promise<void>
