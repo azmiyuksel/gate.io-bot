@@ -114,16 +114,19 @@ async def run_cycle() -> None:
         snapshot = await account.refresh()
         equity = snapshot.total_equity
 
-        # 3. Global kill-switch: trip on breached limits, halt cycle if tripped.
+        # 3. Always manage open positions FIRST so stops/take-profits/trailing are
+        # honoured even when the circuit breaker is tripped. Positions are most
+        # vulnerable in a deep drawdown — exactly when the breaker fires — so they
+        # must never be abandoned by an early return below.
+        engine = TradingEngine(db, client)
+        await engine.manage_open_positions()
+
+        # 4. Global kill-switch: trip on breached limits and halt NEW ENTRIES if
+        # tripped (open positions were already managed above).
         breaker = CircuitBreaker(db)
         drawdown = account.drawdown_pct()
         if breaker.check_and_trip(equity, drawdown):
             return
-
-        engine = TradingEngine(db, client)
-        # Always manage open positions so stops/take-profits are honoured, even
-        # while new entries are paused.
-        await engine.manage_open_positions()
 
         # New entries require BOTH the env master switch (BOT_ENABLED) and the
         # strategy's own enable flag. If either is off, no new trades are opened

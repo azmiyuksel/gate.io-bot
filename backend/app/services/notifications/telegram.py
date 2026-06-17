@@ -14,7 +14,19 @@ def _redact_url(url: str) -> str:
 
 
 class TelegramNotifier:
-    async def send(self, message: str) -> None:
+    @staticmethod
+    def _payload(chat_id: str, message: str, parse_mode: str | None) -> dict:
+        # parse_mode defaults to None (plain text). Raw alerts often contain
+        # underscores/asterisks (e.g. "BTC_USDT", "pnl=-1.2") that Telegram's
+        # Markdown parser rejects with HTTP 400 — dropping the alert. Only the
+        # formatted helper methods opt in to Markdown, where dynamic values sit
+        # inside `code` spans and are safe.
+        payload = {"chat_id": chat_id, "text": message}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        return payload
+
+    async def send(self, message: str, parse_mode: str | None = None) -> None:
         settings = get_settings()
         if not settings.telegram_bot_token or not settings.telegram_chat_id:
             return
@@ -24,18 +36,13 @@ class TelegramNotifier:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.post(
-                    url,
-                    json={
-                        "chat_id": settings.telegram_chat_id,
-                        "text": message,
-                        "parse_mode": "Markdown",
-                    },
+                    url, json=self._payload(settings.telegram_chat_id, message, parse_mode)
                 )
                 response.raise_for_status()
         except Exception as exc:  # noqa: BLE001 - alerts are non-critical
             logger.warning("Telegram notification failed: %s", exc)
 
-    def send_sync(self, message: str) -> None:
+    def send_sync(self, message: str, parse_mode: str | None = None) -> None:
         """Synchronous version of send() for use in non-async contexts."""
         settings = get_settings()
         if not settings.telegram_bot_token or not settings.telegram_chat_id:
@@ -44,12 +51,7 @@ class TelegramNotifier:
         try:
             with httpx.Client(timeout=10) as client:
                 response = client.post(
-                    url,
-                    json={
-                        "chat_id": settings.telegram_chat_id,
-                        "text": message,
-                        "parse_mode": "Markdown",
-                    },
+                    url, json=self._payload(settings.telegram_chat_id, message, parse_mode)
                 )
                 response.raise_for_status()
         except Exception as exc:  # noqa: BLE001 - alerts are non-critical
@@ -64,7 +66,7 @@ class TelegramNotifier:
             f"Miktar: `{quantity:.6f}`\n"
             f"Fiyat: `${price:,.2f}`"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_trade_closed(self, symbol: str, pnl: float, reason: str) -> None:
         emoji = "\u2705" if pnl >= 0 else "\u274c"
@@ -74,7 +76,7 @@ class TelegramNotifier:
             f"PnL: `${pnl:,.2f}`\n"
             f"Sebep: _{reason}_"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_stop_loss_triggered(self, symbol: str, loss: float) -> None:
         msg = (
@@ -82,7 +84,7 @@ class TelegramNotifier:
             f"Sembol: `{symbol}`\n"
             f"Zarar: `${loss:,.2f}`"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_daily_loss_limit(self, loss_pct: float) -> None:
         msg = (
@@ -90,11 +92,11 @@ class TelegramNotifier:
             f"Günlük zarar: `%{loss_pct:.2f}`\n"
             f"Sistem duraklatıldı."
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_system_paused(self, reason: str) -> None:
         msg = f"\U0001f534 *Paper Trading Duraklatıldı*\nSebep: _{reason}_"
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_daily_summary(self, metrics: dict) -> None:
         msg = (
@@ -104,7 +106,7 @@ class TelegramNotifier:
             f"Sharpe: `{metrics.get('rolling_sharpe', 0):.2f}`\n"
             f"Drawdown: `%{abs(metrics.get('drawdown', 0)) * 100:.2f}`"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_portfolio_rebalance(self, reason: str, old_weights: dict, new_weights: dict) -> None:
         old_str = ", ".join([f"{k}: {v:.1%}" for k, v in old_weights.items()])
@@ -115,16 +117,17 @@ class TelegramNotifier:
             f"Eski Ağırlıklar: `{old_str}`\n"
             f"Yeni Ağırlıklar: `{new_str}`"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
-    async def send_portfolio_risk_limit(self, limit_type: str, value: float) -> None:
+    async def send_portfolio_risk_limit(self, portfolio: str, reason: str, equity: float) -> None:
         msg = (
             f"⚠️ *Portföy Risk Sınırı Aşıldı*\n"
-            f"Sınır Tipi: `{limit_type}`\n"
-            f"Mevcut Değer: `{value:.2%}`\n"
+            f"Portföy: `{portfolio}`\n"
+            f"Sebep: `{reason}`\n"
+            f"Equity: `${equity:,.2f}`\n"
             f"Sistem risk kontrolü devrede."
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_portfolio_correlation_warning(self, pairs_above_limit: list) -> None:
         pairs_str = "\n".join([f"• `{p[0]}` vs `{p[1]}`: {p[2]:.2f}" for p in pairs_above_limit])
@@ -133,7 +136,7 @@ class TelegramNotifier:
             f"Korelasyon sınırı (>0.8) aşan çiftler:\n"
             f"{pairs_str}"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_portfolio_drawdown_warning(self, current_drawdown: float) -> None:
         msg = (
@@ -141,7 +144,7 @@ class TelegramNotifier:
             f"Mevcut Drawdown: `%{current_drawdown * 100:.2f}`\n"
             f"Lütfen risk limitlerinizi kontrol edin."
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_regime_transition(self, symbol: str, old_regime: str, new_regime: str, confidence: float) -> None:
         msg = (
@@ -151,7 +154,7 @@ class TelegramNotifier:
             f"Yeni Rejim: *{new_regime}*\n"
             f"Güven Skoru: `{confidence:.2%}`"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_volatility_spike(self, symbol: str, atr_value: float) -> None:
         msg = (
@@ -160,7 +163,7 @@ class TelegramNotifier:
             f"ATR: `{atr_value:.6f}`\n"
             f"Risk limitleri daraltıldı (%50 exposure)."
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_regime_confidence_warning(self, symbol: str, score: float) -> None:
         msg = (
@@ -169,7 +172,7 @@ class TelegramNotifier:
             f"Güven Skoru: `{score:.2%}`\n"
             f"Yeni işlemler duraklatıldı."
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_strategy_degradation(self, strategy_name: str, drift_score: float, action: str) -> None:
         msg = (
@@ -178,7 +181,7 @@ class TelegramNotifier:
             f"Drift Skoru: `{drift_score:.2f}`\n"
             f"Alınan Önlem: *{action}*"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_strategy_paused(self, strategy_name: str, reason: str) -> None:
         msg = (
@@ -187,7 +190,7 @@ class TelegramNotifier:
             f"Sebep: `{reason}`\n"
             f"Tekrar aktif edilene kadar yeni işlemler engellendi."
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_strategy_risk_reduced(self, strategy_name: str, multiplier: float) -> None:
         msg = (
@@ -195,7 +198,7 @@ class TelegramNotifier:
             f"Strateji: `{strategy_name}`\n"
             f"Yeni Risk Çarpanı: `{multiplier:.2f}x`"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_strategy_recovered(self, strategy_name: str) -> None:
         msg = (
@@ -203,7 +206,7 @@ class TelegramNotifier:
             f"Strateji: `{strategy_name}`\n"
             f"Normal risk ayarlarına geri dönüldü."
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_execution_slippage_warning(self, strategy_name: str, slippage_pct: float, category: str) -> None:
         msg = (
@@ -212,7 +215,7 @@ class TelegramNotifier:
             f"Fiyat Kayması: `%{slippage_pct * 100:.3f}`\n"
             f"Kategori: *{category}*"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_execution_latency_spike(self, strategy_name: str, latency_ms: float) -> None:
         msg = (
@@ -220,7 +223,7 @@ class TelegramNotifier:
             f"Strateji: `{strategy_name}`\n"
             f"Gecikme Süresi: `{latency_ms:.1f} ms`"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
     async def send_execution_fill_rate_drop(self, strategy_name: str, fill_rate: float) -> None:
         msg = (
@@ -228,7 +231,7 @@ class TelegramNotifier:
             f"Strateji: `{strategy_name}`\n"
             f"Gerçekleşme Oranı: `%{fill_rate * 100:.1f}`"
         )
-        await self.send(msg)
+        await self.send(msg, parse_mode="Markdown")
 
 
 

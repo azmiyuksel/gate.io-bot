@@ -1,6 +1,4 @@
 """Tests for the frequent momentum/breakout strategy (long + short)."""
-from decimal import Decimal
-
 from app.services.strategy.momentum_breakout import MomentumBreakoutStrategy
 
 

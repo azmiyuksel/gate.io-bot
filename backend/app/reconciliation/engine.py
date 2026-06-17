@@ -14,7 +14,13 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.models.entities import Order, Position, ReconciliationLog, SystemLog
-from app.models.enums import LogLevel, OrderStatus, ReconcileAction
+from app.models.enums import (
+    LogLevel,
+    OrderSide,
+    OrderStatus,
+    PositionStatus,
+    ReconcileAction,
+)
 from app.services.exchange.gateio import GateIOClient
 
 # Gate.io spot order status -> local OrderStatus
@@ -85,6 +91,18 @@ class ReconciliationEngine:
                     return price
         return None
 
+    @staticmethod
+    def _fee_in_quote(remote: dict, symbol: str) -> Decimal:
+        """Exchange fee, only when it is denominated in the quote currency so it
+        can be subtracted from a quote-denominated PnL directly. A base- or
+        points-denominated fee is skipped rather than mis-subtracted."""
+        fee = _to_decimal(remote.get("fee"))
+        if fee <= 0:
+            return Decimal("0")
+        ccy = str(remote.get("fee_currency") or "").upper()
+        quote = symbol.split("_")[1].upper() if "_" in symbol else ""
+        return fee if (ccy and quote and ccy == quote) else Decimal("0")
+
     async def reconcile_order(self, order: Order) -> ReconciliationLog:
         previous = str(order.status)
         if not order.exchange_order_id:
@@ -129,28 +147,50 @@ class ReconciliationEngine:
         # Align the linked position with the real fill (price and, on a partial
         # fill, the actually-filled quantity).
         if action in (ReconcileAction.filled, ReconcileAction.partially_filled) and fill_price:
-            self._sync_position(order, fill_price, filled, original_qty)
+            self._sync_position(
+                order, fill_price, filled, original_qty, self._fee_in_quote(remote, order.symbol)
+            )
 
         return self._log(order, action, previous, str(mapped), filled,
                          f"exchange status={remote_status}")
 
     def _sync_position(
-        self, order: Order, fill_price: Decimal, filled: Decimal, original: Decimal
+        self,
+        order: Order,
+        fill_price: Decimal,
+        filled: Decimal,
+        original: Decimal,
+        fee: Decimal = Decimal("0"),
     ) -> None:
         if order.position_id is None:
             return
         position = self.db.get(Position, order.position_id)
         if position is None:
             return
-        if order.side.value == "buy":
+        # An ENTRY order shares the position's side; a CLOSE order is the opposite
+        # side. This disambiguates a short's close (a BUY) from a long's entry.
+        is_entry = order.side == position.side
+        if is_entry:
             position.entry_price = fill_price
             if 0 < filled < original:
                 position.quantity = filled
-        elif order.side.value == "sell":
-            # Correct the exit price if the actual fill differs from the
-            # locally recorded price.  This fixes PnL drift for closed
-            # positions whose exit fill was partially reconciled.
-            position.realized_pnl = (fill_price - position.entry_price) * position.quantity
+            return
+
+        # CLOSE order: recompute realized PnL from the authoritative exchange fill.
+        # Overwrite (not accumulate) so re-reconciling the same close is idempotent
+        # and never double-counts the PnL the engine already booked. Respect
+        # direction — a SHORT (position.side == sell) profits when price falls.
+        qty = filled if (filled and Decimal("0") < filled <= position.quantity) else position.quantity
+        if position.side == OrderSide.sell:
+            position.realized_pnl = (position.entry_price - fill_price) * qty - fee
+        else:
+            position.realized_pnl = (fill_price - position.entry_price) * qty - fee
+        # A fully-filled close must mark the position closed so it is no longer
+        # treated as open (and re-managed) by the trading engine.
+        if not filled or filled >= position.quantity:
+            position.status = PositionStatus.closed
+            if position.closed_at is None:
+                position.closed_at = datetime.now(UTC)
 
     async def reconcile_open_orders(self) -> list[ReconciliationLog]:
         logs = [await self.reconcile_order(order) for order in self.open_orders()]

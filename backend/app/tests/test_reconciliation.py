@@ -75,3 +75,50 @@ async def test_reconcile_partial_fill_on_cancelled_ioc(db_session) -> None:
     # Same session => `position` is the instance _sync_position mutated.
     assert position.entry_price == Decimal("101")
     assert position.quantity == Decimal("0.6")
+
+
+async def test_reconcile_long_close_sets_pnl_and_closes(db_session) -> None:
+    """Reconciling a long's SELL close must recompute realized PnL from the real
+    fill (price-drift fix), subtract a quote-denominated fee, and mark the
+    position closed — not leave it open with a wrong-sign PnL."""
+    from app.models.entities import Order, Position
+    from app.models.enums import OrderSide, PositionStatus, ReconcileAction
+
+    position = Position(
+        symbol="BTC_USDT",
+        side=OrderSide.buy,
+        entry_price=Decimal("100"),
+        quantity=Decimal("2"),
+        stop_loss=Decimal("90"),
+        take_profit=Decimal("130"),
+    )
+    db_session.add(position)
+    db_session.flush()
+    order = Order(
+        exchange_order_id="sell-1",
+        position_id=position.id,
+        symbol="BTC_USDT",
+        side=OrderSide.sell,
+        status=OrderStatus.open,
+        price=Decimal("110"),
+        quantity=Decimal("2"),
+    )
+    db_session.add(order)
+    db_session.commit()
+
+    class FakeClient:
+        async def get_order(self, symbol, order_id):
+            return {
+                "status": "closed",
+                "filled_amount": "2",
+                "avg_deal_price": "110",
+                "fee": "1.5",
+                "fee_currency": "USDT",
+            }
+
+    log = await ReconciliationEngine(db_session, FakeClient()).reconcile_order(order)
+    assert log.action == ReconcileAction.filled
+    # (110 - 100) * 2 - 1.5 fee
+    assert position.realized_pnl == Decimal("18.5")
+    assert position.status == PositionStatus.closed
+    assert position.closed_at is not None

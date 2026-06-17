@@ -126,7 +126,8 @@ async def test_run_cycle_skips_when_strategy_disabled(_settings):
 
 @pytest.mark.asyncio
 async def test_run_cycle_trips_circuit_breaker(_settings):
-    """run_cycle must stop when circuit breaker trips."""
+    """When the circuit breaker is tripped, run_cycle must still MANAGE open
+    positions (stops/take-profits) but open NO new entries."""
     _settings.bot_enabled = True
 
     with patch("app.workers.scheduler.SessionLocal") as mock_session_cls, \
@@ -162,7 +163,10 @@ async def test_run_cycle_trips_circuit_breaker(_settings):
         from app.workers.scheduler import run_cycle
         await run_cycle()
 
-        mock_engine_inst.manage_open_positions.assert_not_called()
+        # Open positions must still be managed even while tripped...
+        mock_engine_inst.manage_open_positions.assert_awaited_once()
+        # ...but no new entries may be opened.
+        mock_engine_inst.scan_symbol.assert_not_called()
 
 
 @pytest.mark.asyncio
