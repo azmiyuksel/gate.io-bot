@@ -6,6 +6,7 @@ from app.models.trading import (
     StrategySettings,
     SystemLog,
     Trade,
+    WorkerHeartbeat,
 )
 from app.models.paper import (
     PaperAccount,
@@ -94,6 +95,7 @@ __all__ = [
     "StrategySettings",
     "SystemLog",
     "Trade",
+    "WorkerHeartbeat",
     "User",
     "RefreshToken",
     "AuditLog",

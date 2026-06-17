@@ -31,6 +31,7 @@ from app.models.trading import (  # noqa: F401
     StrategySettings,
     SystemLog,
     Trade,
+    WorkerHeartbeat,
 )
 from app.models.paper import (  # noqa: F401
     PaperAccount,

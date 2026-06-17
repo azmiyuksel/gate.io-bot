@@ -24,6 +24,7 @@ _init_error: str | None = None
 async def lifespan(app: FastAPI):
     global _initialized, _init_error
     configure_logging()
+    watchdog_task = None
     try:
         for warning in settings.validate_runtime_secrets():
             logger.warning("config_warning", extra={"warning": warning})
@@ -32,7 +33,19 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.exception("startup_failed")
         _init_error = str(exc)
-    yield
+    # Start the live-worker watchdog (no-op unless WORKER_WATCHDOG_ENABLED): the
+    # API is a separate, always-on process, so it can detect the scheduler dying.
+    if _initialized and settings.worker_watchdog_enabled:
+        import asyncio
+
+        from app.workers.watchdog import worker_watchdog_loop
+
+        watchdog_task = asyncio.create_task(worker_watchdog_loop())
+    try:
+        yield
+    finally:
+        if watchdog_task is not None:
+            watchdog_task.cancel()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -101,6 +114,27 @@ def health() -> dict:
     elif not _initialized:
         status = "starting"
     return {"status": status, "detail": detail}
+
+
+@app.get("/health/worker")
+def worker_health() -> dict:
+    """Live-worker liveness: heartbeat age and staleness for external monitors."""
+    from app.db.session import SessionLocal
+    from app.workers.heartbeat import heartbeat_age_seconds, is_stale
+
+    db = SessionLocal()
+    try:
+        age = heartbeat_age_seconds(db, "scheduler")
+    finally:
+        db.close()
+    threshold = settings.worker_heartbeat_stale_seconds
+    return {
+        "worker": "scheduler",
+        "age_seconds": age,
+        "stale": is_stale(age, threshold),
+        "threshold_seconds": threshold,
+        "watchdog_enabled": settings.worker_watchdog_enabled,
+    }
 
 
 @app.get("/health/ready")

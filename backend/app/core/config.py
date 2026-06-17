@@ -209,6 +209,19 @@ class Settings(BaseSettings):
     # Max age (seconds) of an equity snapshot before it is considered stale and
     # unsafe to size new positions against. Trading runs every 15m, so allow ~2 cycles.
     max_equity_staleness_seconds: int = 1800
+
+    # --- Live worker watchdog / heartbeat ---
+    # The live scheduler writes a heartbeat every cycle; the API process polls it
+    # and alerts (Telegram + log) when the worker goes silent — so a crashed or
+    # stuck worker that would leave open positions unmanaged is surfaced.
+    # Disabled by default so PAPER-only deployments (no scheduler) aren't spammed;
+    # set WORKER_WATCHDOG_ENABLED=true on the LIVE deployment.
+    worker_watchdog_enabled: bool = False
+    # How often the API watchdog checks the heartbeat (seconds).
+    worker_watchdog_check_seconds: int = 300
+    # Heartbeat older than this is treated as a dead/stuck worker. The trading
+    # loop runs every 15m, so ~3 missed cycles (45m) avoids false alarms.
+    worker_heartbeat_stale_seconds: int = 2700
     gateio_ws_url: str = "wss://api.gateio.ws/ws/v4/"
     market_data_interval: str = "15m"
     # Paper trading runs on a faster timeframe than live (frequent momentum/breakout

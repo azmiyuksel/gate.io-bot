@@ -137,3 +137,20 @@ class HistoricalCandle(Base):
     volume: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
     source: Mapped[str] = mapped_column(String(32), default="gateio")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class WorkerHeartbeat(Base):
+    """Liveness signal written by a background worker each cycle.
+
+    A separate process (the API server's watchdog) reads ``last_beat_at`` to
+    detect a dead or stuck worker — critical for live trading, where a silently
+    crashed scheduler leaves open positions unmanaged. One upserted row per
+    worker name.
+    """
+    __tablename__ = "worker_heartbeats"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    worker: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    last_beat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="ok")
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)

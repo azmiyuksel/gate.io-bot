@@ -18,6 +18,7 @@ from app.services.exchange.gateio import GateIOClient
 from app.services.notifications.telegram import TelegramNotifier
 from app.services.risk.circuit_breaker import CircuitBreaker
 from app.services.trading_engine import TradingEngine
+from app.workers.heartbeat import record_heartbeat
 
 
 async def monitor_portfolio_risk() -> None:
@@ -105,6 +106,8 @@ async def run_cycle() -> None:
     settings = get_settings()
     db = SessionLocal()
     client = GateIOClient()
+    cycle_status = "ok"
+    cycle_detail: str | None = None
     try:
         # 1. Always reconcile open orders with the exchange first.
         await ReconciliationEngine(db, client).reconcile_open_orders()
@@ -185,11 +188,20 @@ async def run_cycle() -> None:
                     )
                 )
                 db.commit()
-    except Exception:
+    except Exception as exc:
         # Never leave uncommitted/partial state behind for the next cycle.
         db.rollback()
+        cycle_status = "error"
+        cycle_detail = f"{type(exc).__name__}: {exc}"
         raise
     finally:
+        # Heartbeat: record that the trading loop executed so the API-side
+        # watchdog can detect a dead/stuck worker. Best-effort — it must never
+        # mask the original error or break the cycle.
+        try:
+            record_heartbeat(db, "scheduler", cycle_status, cycle_detail)
+        except Exception:
+            db.rollback()
         await client.close()
         db.close()
 
@@ -320,16 +332,48 @@ async def daily_report() -> None:
     await TelegramNotifier().send("Daily report: check dashboard for PnL, drawdown and open risk.")
 
 
+def _on_job_error(event) -> None:
+    """APScheduler error listener: surface a failing job immediately (the
+    heartbeat staleness alert would otherwise only fire after several cycles)."""
+    import logging
+
+    logging.getLogger(__name__).error("scheduler job %s failed: %s", event.job_id, event.exception)
+    # send_sync: the listener runs in a synchronous APScheduler context.
+    TelegramNotifier().send_sync(
+        f"⚠️ Canlı worker job hatası ({event.job_id}): {event.exception}"
+    )
+
+
+async def _record_initial_heartbeat() -> None:
+    """Prime the heartbeat on boot so the watchdog sees the worker as alive
+    immediately, rather than waiting for the first 15-minute cycle."""
+    db = SessionLocal()
+    try:
+        record_heartbeat(db, "scheduler", "starting", None)
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 async def main() -> None:
     configure_logging()
     settings = get_settings()
     await startup_recovery()
+    await _record_initial_heartbeat()
+    await TelegramNotifier().send(
+        f"🟢 Canlı worker başlatıldı (market={settings.trading_market}, "
+        f"strategy={settings.live_strategy}, bot_enabled={settings.bot_enabled})."
+    )
 
     # Stream live prices into the shared cache in the background.
     ws_client = GateIOWebSocketClient(settings.symbols)
     ws_task = asyncio.create_task(ws_client.run())
 
+    from apscheduler.events import EVENT_JOB_ERROR
+
     scheduler = AsyncIOScheduler()
+    scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
     scheduler.add_job(run_cycle, "interval", minutes=15, max_instances=1)
     scheduler.add_job(ingest_market_data, "interval", minutes=15, max_instances=1)
     scheduler.add_job(monitor_portfolio_risk, "interval", minutes=15, max_instances=1)
@@ -348,6 +392,9 @@ async def main() -> None:
     try:
         await stop_event.wait()
     finally:
+        # Graceful-shutdown alert: an unexpected restart then shows up as a
+        # stop followed by a start (or, on a hard crash, the watchdog fires).
+        await TelegramNotifier().send("🟠 Canlı worker durduruluyor.")
         scheduler.shutdown(wait=False)
         ws_client.stop()
         ws_task.cancel()
