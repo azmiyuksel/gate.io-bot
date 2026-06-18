@@ -341,9 +341,10 @@ class TradingEngine:
         return True
 
     async def _check_slippage_guard(self, symbol: str, signal) -> bool:
-        """Pre-trade slippage guard: a market BUY has no price cap, so if the live
-        price has already run away from the signal price, abort rather than chase
-        the fill into adverse slippage."""
+        """Pre-trade slippage guard: a market order has no price cap, so if the
+        live price has already moved adversely beyond the signal price, abort
+        rather than chase the fill. Direction-aware: a LONG is hurt when price
+        rises (pay more); a SHORT is hurt when price falls (sell less)."""
         _settings = get_settings()
         entry_slip_band = Decimal(str(_settings.entry_max_slippage_pct))
         if entry_slip_band <= 0:
@@ -351,11 +352,18 @@ class TradingEngine:
         live_price = await self.client.last_price(symbol)
         if live_price is None or live_price <= 0:
             return True
-        adverse_move = (live_price - signal.entry_price) / signal.entry_price
+        is_short = (getattr(signal, "direction", "long") or "long") == "short"
+        # Long adverse: price rose (buy costs more). Short adverse: price fell
+        # (sell proceeds less). Both expressed as a positive adverse fraction.
+        if is_short:
+            adverse_move = (signal.entry_price - live_price) / signal.entry_price
+        else:
+            adverse_move = (live_price - signal.entry_price) / signal.entry_price
         if adverse_move > entry_slip_band:
+            direction = "short" if is_short else "long"
             self._log(
                 "slippage_guard",
-                f"{symbol}: entry skipped, price moved {adverse_move:.4%} "
+                f"{symbol}: {direction} entry skipped, price moved {adverse_move:.4%} "
                 f"(live={live_price} signal={signal.entry_price}) > max {entry_slip_band:.2%}",
             )
             self.db.commit()
@@ -387,12 +395,60 @@ class TradingEngine:
 
         try:
             if market == "futures":
-                # Best-effort leverage set (often already configured); never block
-                # the entry on it.
+                # Set leverage and VERIFY it took effect — a silent failure here
+                # could place the order at the account's pre-existing (possibly
+                # much higher) leverage, blowing past the 2% risk budget. The
+                # old `except Exception: pass` swallowed this. Now it is fatal
+                # to the entry (the position is never opened at the wrong
+                # leverage); the local poll / existing stops keep guarding any
+                # already-open positions.
                 try:
                     await self.client.set_futures_leverage(symbol, get_settings().futures_leverage)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._log(
+                        "leverage_set_failed",
+                        f"{symbol}: FAILED to set leverage {get_settings().futures_leverage}x: {exc}. "
+                        f"Entry aborted — refusing to trade at an unverified leverage.",
+                        LogLevel.error,
+                    )
+                    await self.notifier.send(
+                        f"\u26a0\ufe0f {symbol}: leverage set FAILED ({exc}). Entry aborted."
+                    )
+                    self.db.commit()
+                    return
+                # Read back the contract leverage and abort on mismatch. Gate.io
+                # applies leverage per-contract; the position row carries it once
+                # a position exists. We verify via the position endpoint right
+                # after the set call (an existing position reflects the setting;
+                # a flat contract returns no position, in which case we trust the
+                # set call's success).
+                if get_settings().futures_leverage_verify:
+                    try:
+                        fut_pos = await self.client.get_futures_position(symbol)
+                        if fut_pos:
+                            actual_lev = int(fut_pos.get("leverage") or 0)
+                            if actual_lev and actual_lev != int(get_settings().futures_leverage):
+                                self._log(
+                                    "leverage_mismatch",
+                                    f"{symbol}: configured leverage {get_settings().futures_leverage}x "
+                                    f"but contract reports {actual_lev}x. Entry aborted.",
+                                    LogLevel.error,
+                                )
+                                await self.notifier.send(
+                                    f"\u26a0\ufe0f {symbol}: LEVERAGE MISMATCH — configured "
+                                    f"{get_settings().futures_leverage}x, exchange reports {actual_lev}x. Entry aborted."
+                                )
+                                self.db.commit()
+                                return
+                    except Exception as exc:
+                        # Read-back failure is non-fatal (the set call succeeded);
+                        # log and proceed, since aborting on a transient read
+                        # failure would block all entries under flaky networks.
+                        self._log(
+                            "leverage_verify_failed",
+                            f"{symbol}: leverage read-back failed ({exc}); proceeding (set call succeeded)",
+                            LogLevel.warning,
+                        )
                 response = await self.client.place_futures_market_order(symbol, final_quantity, direction)
             else:
                 # Market BUY on Gate.io spot takes a QUOTE (USDT) amount to spend.
@@ -514,6 +570,13 @@ class TradingEngine:
                 price = await self.client.last_price(position.symbol)
                 if price is None or price <= 0:
                     price = Decimal(str(latest["close"]))
+
+                # Liquidation guard (futures only): read back the exchange's
+                # liquidation price and force-close before the liquidation engine
+                # fires. With 5x leverage a fast adverse move can hit liquidation
+                # faster than the 15-min-polled ATR stop — this closes first.
+                if await self._check_liquidation_risk(position, price):
+                    continue
 
                 # Direction-aware exits: a SHORT's protective stop sits ABOVE entry
                 # (rising price is the loss) and its target BELOW entry, mirrored.
@@ -902,6 +965,75 @@ class TradingEngine:
         position.exchange_stop_order_id = None
         position.stop_placed_at = None
         self.db.commit()
+
+    async def _check_liquidation_risk(self, position: Position, price: Decimal) -> bool:
+        """Liquidation-distance guard for futures positions.
+
+        Reads back the exchange's liquidation price and force-closes the
+        position when the mark price is within ``futures_liq_warning_pct`` of
+        it — BEFORE the exchange's liquidation engine fires. This defends
+        against a fast adverse move that gaps through the (15-min-polled) ATR
+        stop. Spot positions and a disabled guard return False (no action).
+
+        Returns True when the position was force-closed (caller should skip the
+        rest of the cycle for it), False otherwise.
+        """
+        _settings = get_settings()
+        if _settings.trading_market.lower() != "futures":
+            return False
+        warn_pct = Decimal(str(_settings.futures_liq_warning_pct))
+        if warn_pct <= 0:
+            return False
+        try:
+            fut_pos = await self.client.get_futures_position(position.symbol)
+        except Exception as exc:
+            # Best-effort: a failed read-back must not abort stop management.
+            self._log(
+                "liq_check_failed",
+                f"{position.symbol}: liquidation-price read-back failed ({exc})",
+                LogLevel.warning,
+            )
+            return False
+        if not fut_pos:
+            return False
+        liq_raw = fut_pos.get("liquidation_price")
+        if liq_raw in (None, "", "0"):
+            return False  # no liquidation price (cross-margin or flat)
+        liq_price = Decimal(str(liq_raw))
+        if liq_price <= 0:
+            return False
+        is_short = position.side == OrderSide.sell
+        # Long: liquidation sits BELOW price; distance = (price - liq) / price.
+        # Short: liquidation sits ABOVE price; distance = (liq - price) / price.
+        if is_short:
+            distance = (liq_price - price) / price
+        else:
+            distance = (price - liq_price) / price
+        if distance > warn_pct:
+            return False
+        # Within the warning band — close before liquidation. The exchange stop
+        # may not have fired yet (it rests at the ATR stop, not the liq price),
+        # so an explicit close is required.
+        self._log(
+            "liquidation_warning",
+            f"{position.symbol}: mark {price} within {distance:.4%} of liquidation "
+            f"{liq_price} (warn {warn_pct:.2%}) — force-closing",
+            LogLevel.error,
+        )
+        await self.notifier.send(
+            f"\U0001f534 LIQUIDATION RISK {position.symbol}: mark={price} liq={liq_price} "
+            f"distance={distance:.4%} < {warn_pct:.2%}. Force-closing before liquidation."
+        )
+        try:
+            await self.close_position(position, "liquidation_warning")
+        except Exception as exc:
+            self._log(
+                "liquidation_close_failed",
+                f"{position.symbol}: force-close on liquidation warning failed ({exc})",
+                LogLevel.error,
+            )
+            self.db.commit()
+        return True
 
     def _commit_or_rollback(self, error_detail: str) -> None:
         """Commit; on failure roll back, log, and re-raise (exchange order is live,

@@ -57,6 +57,16 @@ class Settings(BaseSettings):
     trading_market: str = "spot"
     futures_settle: str = "usdt"
     futures_leverage: int = 5
+    # Liquidation-distance guard (futures only). Each cycle the live futures
+    # position is read back and the distance from the mark price to the
+    # exchange's liquidation price is computed. When distance falls below this
+    # fraction the position is force-closed BEFORE the exchange's liquidation
+    # engine fires — defending against a fast adverse move that gaps through
+    # the (15-min-polled) ATR stop. Set to 0 to disable.
+    futures_liq_warning_pct: float = 0.03
+    # Verify the configured leverage was actually applied before placing a
+    # futures entry (read back the contract leverage and abort on mismatch).
+    futures_leverage_verify: bool = True
     default_quote_currency: str = "USDT"
     # Stablecoins counted as cash at par (not marked to market) in equity.
     stablecoins: str = "USDT,USDC,DAI,TUSD,FDUSD"
@@ -67,7 +77,11 @@ class Settings(BaseSettings):
 
     # Graded de-risking: shrink size as account drawdown approaches the max.
     drawdown_derisk_enabled: bool = True
-    drawdown_derisk_floor: float = 0.0
+    # Floor for the drawdown de-risk multiplier. 0.0 means new entries are sized
+    # to ZERO near the max drawdown — which halts recovery (no new trades can
+    # dig out). 0.2 keeps a 20%-sized entry alive near the limit so recovery is
+    # still possible while risk is heavily reduced.
+    drawdown_derisk_floor: float = 0.2
 
     # --- Stablecoin (quote) depeg monitoring ---
     # Pair used to proxy the quote stablecoin's peg (drift from 1.0).
@@ -233,9 +247,12 @@ class Settings(BaseSettings):
     # The live scheduler writes a heartbeat every cycle; the API process polls it
     # and alerts (Telegram + log) when the worker goes silent — so a crashed or
     # stuck worker that would leave open positions unmanaged is surfaced.
-    # Disabled by default so PAPER-only deployments (no scheduler) aren't spammed;
-    # set WORKER_WATCHDOG_ENABLED=true on the LIVE deployment.
-    worker_watchdog_enabled: bool = False
+    # ON by default: the watchdog primes silently on first observation and only
+    # alerts on a healthy->stale TRANSITION, so a paper-only deployment (no
+    # scheduler, no heartbeat) does NOT get spammed — it simply never sees a
+    # transition. Set WORKER_WATCHDOG_ENABLED=false only if you explicitly want
+    # no monitoring at all.
+    worker_watchdog_enabled: bool = True
     # How often the API watchdog checks the heartbeat (seconds).
     worker_watchdog_check_seconds: int = 300
     # Heartbeat older than this is treated as a dead/stuck worker. The trading
