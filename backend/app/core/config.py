@@ -301,6 +301,13 @@ class Settings(BaseSettings):
     # directional bias: 0.30 == up to 30% net long (or short). 0 disables
     # (legacy gross-only).
     max_net_exposure_pct: float = 0.30
+    # Beta-weighted net exposure cap: like max_net_exposure_pct but each
+    # position's notional is weighted by its beta to BTC (the crypto market
+    # factor). A 30%-net-long book in high-beta alts (SOL beta ~1.5) is more
+    # directional than 30% in BTC — the beta-weighted cap catches that. Uses
+    # the correlation engine's covariance to estimate beta. 0 disables.
+    max_beta_weighted_exposure_pct: float = 0.30
+    beta_benchmark_symbol: str = "BTC_USDT"
     # Fractional Kelly position sizing (opt-in). When enabled and a track record
     # exists, size is scaled by ¼-Kelly (Kelly fraction / 4) — edge-quality-aware
     # sizing that grows with a demonstrated win-rate/payoff edge and shrinks

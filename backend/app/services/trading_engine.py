@@ -267,6 +267,7 @@ class TradingEngine:
             signal.atr_value,
             side=getattr(signal, "direction", "long"),
             expectancy_type=getattr(signal, "expectancy_type", "reversion"),
+            symbol=symbol,
         )
         if not decision.allowed:
             self._log("risk", f"{symbol}: {decision.reason}")

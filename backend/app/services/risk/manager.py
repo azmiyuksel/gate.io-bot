@@ -80,6 +80,7 @@ class RiskManager:
         atr_value: Decimal,
         side: str = "long",
         expectancy_type: str = "reversion",
+        symbol: str = "",
     ) -> RiskDecision:
         # Master env kill-switch: live entries require BOT_ENABLED=true as well
         # as the strategy's own enable flag (defense-in-depth alongside scheduler).
@@ -132,6 +133,29 @@ class RiskManager:
                     False,
                     f"max_net_exposure: post-trade net {post_net:.2f} "
                     f"|abs| > limit {equity * max_net_exposure_pct:.2f}",
+                )
+
+        # --- BETA-WEIGHTED NET EXPOSURE GUARD (market-factor risk) ---
+        # Like the net guard but each position's notional is weighted by its
+        # beta to BTC (the crypto market factor). A 30%-net-long book in
+        # high-beta alts (SOL beta ~1.5) is more directional than 30% in BTC —
+        # the beta-weighted cap catches that. Beta is estimated from the
+        # correlation engine's covariance; missing symbols default to beta 1.0
+        # (conservative — assume market beta when unknown).
+        max_beta_pct = Decimal(str(getattr(get_settings(), "max_beta_weighted_exposure_pct", 0) or 0))
+        if max_beta_pct > 0:
+            betas = self._betas_to_benchmark()
+            existing_beta_net = self.positions.beta_weighted_net_notional(
+                betas, benchmark=get_settings().beta_benchmark_symbol
+            )
+            beta_new = betas.get(symbol, 1.0)
+            signed_beta_new = (new_notional if side != "short" else -new_notional) * Decimal(str(beta_new))
+            post_beta_net = existing_beta_net + signed_beta_new
+            if abs(post_beta_net) > equity * max_beta_pct:
+                return RiskDecision(
+                    False,
+                    f"max_beta_weighted_exposure: post-trade beta-net {post_beta_net:.2f} "
+                    f"|abs| > limit {equity * max_beta_pct:.2f}",
                 )
 
         daily_limit = -(equity * settings.daily_max_loss_pct)
@@ -213,6 +237,37 @@ class RiskManager:
             )
 
         return RiskDecision(True, "approved", quantity, stop_loss, take_profit)
+
+    def _betas_to_benchmark(self) -> dict[str, float]:
+        """Beta of each open position's symbol to the benchmark (default BTC).
+
+        Beta = Cov(symbol, benchmark) / Var(benchmark), estimated from the
+        correlation engine's covariance matrix over the trading timeframe.
+        Missing symbols default to 1.0 (conservative — assume market beta).
+        Returns {symbol: beta} for the benchmark + all open position symbols.
+        """
+        try:
+            from app.portfolio.correlation import CorrelationEngine
+
+            bench = get_settings().beta_benchmark_symbol
+            symbols = list({bench, *self.positions.open_symbols()})
+            if len(symbols) < 2:
+                return {bench: 1.0}
+            corr = CorrelationEngine(self.db).calculate_correlation(
+                symbols, get_settings().market_data_interval
+            )
+            cov = corr.get("covariance", {})
+            bench_var = float(cov.get(bench, {}).get(bench, 0.0) or 0.0)
+            if bench_var <= 0:
+                return {s: 1.0 for s in symbols}
+            return {
+                s: float(cov.get(s, {}).get(bench, 0.0) or 0.0) / bench_var
+                for s in symbols
+            }
+        except Exception:
+            # Best-effort: on any failure, default all to 1.0 (raw notional
+            # equivalent — the beta guard degrades to the plain net guard).
+            return {}
 
     def _kelly_scale(self, side: str) -> Decimal | None:
         """Fractional Kelly scaling factor for the current strategy track record.

@@ -86,6 +86,33 @@ class PositionRepository(Repository[Position]):
         )
         return [r[0] for r in rows]
 
+    def beta_weighted_net_notional(
+        self, betas: dict[str, float], benchmark: str = "BTC_USDT"
+    ) -> Decimal:
+        """Beta-weighted NET notional of all open positions.
+
+        Each position's signed notional is multiplied by its beta to the
+        benchmark (default BTC), so a SOL long (beta ~1.5) counts 1.5x a BTC
+        long of the same size. This is a more accurate directional-risk measure
+        than raw net notional: a 30%-net-long book in high-beta alts is more
+        directional than a 30%-net-long book in BTC. Positions in the benchmark
+        itself use beta 1.0; symbols missing from `betas` default to 1.0
+        (conservative — assume market beta when unknown).
+        """
+        rows = (
+            self.db.query(Position.side, Position.entry_price, Position.quantity, Position.symbol)
+            .filter(Position.status == PositionStatus.open)
+            .all()
+        )
+        total = Decimal("0")
+        for r in rows:
+            signed = float(r.entry_price) * float(r.quantity)
+            if r.side == "sell":  # short — subtract
+                signed = -signed
+            beta = float(betas.get(r.symbol, 1.0) if r.symbol != benchmark else 1.0)
+            total += Decimal(str(signed * beta))
+        return total
+
 
 class OrderRepository(Repository[Order]):
     def __init__(self, db: Session) -> None:
