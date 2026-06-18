@@ -607,3 +607,142 @@ async def test_get_order_status_returns_current_state(monkeypatch):
     status = await c.get_order_status("BTC_USDT", "123")
     assert status["status"] == "closed"
     assert status["filled_total"] == "500"
+
+
+# --- Funding rate signal (futures microstructure input) ---
+
+
+async def test_get_futures_funding_rate_returns_rate(monkeypatch):
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        return {"r": "0.0008", "next_funding_time": "1700000000"}
+
+    monkeypatch.setattr(c, "request", fake_request)
+    funding = await c.get_futures_funding_rate("BTC_USDT")
+    assert funding is not None
+    assert funding["r"] == "0.0008"
+
+
+async def test_get_futures_funding_rate_returns_none_on_failure(monkeypatch):
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(c, "request", fake_request)
+    # Best-effort: a fetch failure returns None (advisory, never blocks an entry).
+    assert await c.get_futures_funding_rate("BTC_USDT") is None
+
+
+async def test_funding_signal_de_risks_adverse_long(db_session, monkeypatch):
+    """A positive funding rate above the threshold is a headwind for a LONG
+    (it pays shorts while held) -> size is de-risked by funding_signal_risk_mult."""
+    from unittest.mock import AsyncMock
+
+    from app.core.config import get_settings
+    from app.models.entities import StrategySettings
+    from app.services.strategy.signals import Signal
+    from app.services.trading_engine import TradingEngine
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "trading_market", "futures", raising=False)
+    monkeypatch.setattr(settings, "funding_signal_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "funding_signal_threshold_pct", 0.0005, raising=False)
+    monkeypatch.setattr(settings, "funding_signal_risk_mult", 0.5, raising=False)
+
+    row = db_session.query(StrategySettings).first() or StrategySettings()
+    if row.id is None:
+        db_session.add(row)
+    row.is_enabled = True
+    row.atr_multiplier = Decimal("2")
+    row.min_reward_risk = Decimal("1.5")
+    row.max_capital_per_trade_pct = Decimal("0.05")
+    db_session.commit()
+
+    client = AsyncMock()
+    client.get_futures_funding_rate = AsyncMock(return_value={"r": "0.0008"})  # adverse for long
+    engine = TradingEngine(db_session, client)
+    engine.notifier = AsyncMock()
+    sig = Signal(True, "long", "long_breakout", Decimal("100"), Decimal("2"))
+    mult = await engine._check_funding_signal("BTC_USDT", sig)
+    assert mult == Decimal("0.5")
+
+
+async def test_funding_signal_does_not_boost_favorable_long(db_session, monkeypatch):
+    """A NEGATIVE funding rate is favorable for a long (shorts pay longs) — but
+    the signal is asymmetric (protect capital first): it does NOT boost size."""
+    from unittest.mock import AsyncMock
+
+    from app.core.config import get_settings
+    from app.models.entities import StrategySettings
+    from app.services.strategy.signals import Signal
+    from app.services.trading_engine import TradingEngine
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "trading_market", "futures", raising=False)
+    monkeypatch.setattr(settings, "funding_signal_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "funding_signal_threshold_pct", 0.0005, raising=False)
+
+    row = db_session.query(StrategySettings).first() or StrategySettings()
+    if row.id is None:
+        db_session.add(row)
+    row.is_enabled = True
+    db_session.commit()
+
+    client = AsyncMock()
+    client.get_futures_funding_rate = AsyncMock(return_value={"r": "-0.0008"})  # favorable for long
+    engine = TradingEngine(db_session, client)
+    engine.notifier = AsyncMock()
+    sig = Signal(True, "long", "long_breakout", Decimal("100"), Decimal("2"))
+    mult = await engine._check_funding_signal("BTC_USDT", sig)
+    assert mult == Decimal("1")  # no boost, no de-risk
+
+
+async def test_funding_signal_de_risks_adverse_short(db_session, monkeypatch):
+    """A negative funding rate above the threshold is a headwind for a SHORT."""
+    from unittest.mock import AsyncMock
+
+    from app.core.config import get_settings
+    from app.models.entities import StrategySettings
+    from app.services.strategy.signals import Signal
+    from app.services.trading_engine import TradingEngine
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "trading_market", "futures", raising=False)
+    monkeypatch.setattr(settings, "funding_signal_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "funding_signal_threshold_pct", 0.0005, raising=False)
+    monkeypatch.setattr(settings, "funding_signal_risk_mult", 0.5, raising=False)
+
+    row = db_session.query(StrategySettings).first() or StrategySettings()
+    if row.id is None:
+        db_session.add(row)
+    row.is_enabled = True
+    db_session.commit()
+
+    client = AsyncMock()
+    client.get_futures_funding_rate = AsyncMock(return_value={"r": "-0.0008"})  # adverse for short
+    engine = TradingEngine(db_session, client)
+    engine.notifier = AsyncMock()
+    sig = Signal(True, "short", "short_breakout", Decimal("100"), Decimal("2"))
+    mult = await engine._check_funding_signal("BTC_USDT", sig)
+    assert mult == Decimal("0.5")
+
+
+async def test_funding_signal_no_op_on_spot(db_session, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.core.config import get_settings
+    from app.services.strategy.signals import Signal
+    from app.services.trading_engine import TradingEngine
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "trading_market", "spot", raising=False)
+    monkeypatch.setattr(settings, "funding_signal_enabled", True, raising=False)
+
+    client = AsyncMock()
+    engine = TradingEngine(db_session, client)
+    sig = Signal(True, "long", "long_breakout", Decimal("100"), Decimal("2"))
+    mult = await engine._check_funding_signal("BTC_USDT", sig)
+    assert mult == Decimal("1")
+    client.get_futures_funding_rate.assert_not_called()

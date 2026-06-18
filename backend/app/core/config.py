@@ -216,6 +216,20 @@ class Settings(BaseSettings):
     # ~0.01% per 8h funding ≈ 0.03%/day is a typical neutral-market baseline.
     funding_cost_enabled: bool = True
     funding_daily_rate_pct: float = 0.0003
+    # --- Funding rate as a SIGNAL input (futures only) ---
+    # The perpetual funding rate is a microstructure signal: a strongly positive
+    # funding rate means longs pay shorts — a headwind for new longs and a
+    # tailwind for new shorts. A strongly negative rate is the mirror. Extreme
+    # funding signals crowded positioning (contrarian). The momentum strategy
+    # uses this to de-risk entries that would carry an adverse funding drag.
+    # Thresholds are FRACTIONS (0.0005 = 0.05% per 8h funding interval).
+    # When |funding| > funding_signal_threshold, the entry risk multiplier is
+    # scaled by funding_signal_risk_mult (0.5 = halve size) in the adverse
+    # direction; a favorable funding does NOT boost size (asymmetric — protect
+    # capital first). 0 disables the funding signal.
+    funding_signal_enabled: bool = True
+    funding_signal_threshold_pct: float = 0.0005
+    funding_signal_risk_mult: float = 0.5
 
     # --- Paper-trading entry threshold overrides ---
     # Paper runs DELIBERATELY looser than live so the simulation generates enough
@@ -234,6 +248,15 @@ class Settings(BaseSettings):
     paper_trend_tolerance_pct: float = 0.02
     # Default trailing-stop distance (used when StrategySettings is missing).
     strategy_trailing_stop_pct: float = 0.03
+    # ATR Chandelier trailing stop: when enabled, the trailing stop distance is
+    # ATR * chandelier_mult instead of a fixed % of price. Volatility-adaptive:
+    # in calm markets the stop rides tight (capture profit), in volatile markets
+    # it gives room (avoid whipsaw). The fixed-% trailing is the fallback when
+    # disabled or ATR is unavailable. The Chandelier exit (Le Beau) is the
+    # standard trend-following trailing — it lets winners run in trends and
+    # tightens in chop, where a fixed % either whipsaws or lags.
+    chandelier_trailing_enabled: bool = True
+    chandelier_atr_mult: float = 3.0
     # Number of candles that represent a "daily" range (depends on candle interval).
     strategy_daily_range_candles: int = 24
     # Tradable universe (comma-separated Gate.io spot pairs). Expanded to a broader

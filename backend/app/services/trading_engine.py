@@ -148,7 +148,14 @@ class TradingEngine:
 
         health_mult = Decimal(str(health_status.get("risk_multiplier", 1)))
 
-        result = self._approve_risk_and_size(symbol, equity, signal, risk_mult, health_mult, data_risk_mult)
+        # Funding-rate signal (futures only): an adverse funding rate is a
+        # headwind for the entry direction — de-risk the size. A favorable
+        # funding does NOT boost size (asymmetric — protect capital first).
+        funding_mult = await self._check_funding_signal(symbol, signal)
+
+        result = self._approve_risk_and_size(
+            symbol, equity, signal, risk_mult, health_mult, data_risk_mult, funding_mult
+        )
         if result is None:
             return
         final_quantity, stop_loss, take_profit = result
@@ -242,10 +249,10 @@ class TradingEngine:
 
     def _approve_risk_and_size(
         self, symbol: str, equity: Decimal, signal, risk_mult: Decimal,
-        health_mult: Decimal, data_risk_mult: Decimal,
+        health_mult: Decimal, data_risk_mult: Decimal, funding_mult: Decimal = Decimal("1"),
     ):
         """Run the risk manager and scale the position quantity by all active
-        risk multipliers (regime, health, data-quality, drawdown).
+        risk multipliers (regime, health, data-quality, drawdown, funding).
 
         Returns (final_quantity, stop_loss, take_profit) on success, None when
         the risk manager rejects the entry or the scaled quantity is <= 0.
@@ -271,7 +278,9 @@ class TradingEngine:
                 Decimal(str(_s.max_account_drawdown_pct)),
                 Decimal(str(_s.drawdown_derisk_floor)),
             )
-        final_quantity = decision.quantity * risk_mult * health_mult * data_risk_mult * dd_mult
+        final_quantity = (
+            decision.quantity * risk_mult * health_mult * data_risk_mult * dd_mult * funding_mult
+        )
         if final_quantity <= 0:
             self._log(
                 "risk_filter",
@@ -378,6 +387,57 @@ class TradingEngine:
             self.db.commit()
             return False
         return True
+
+    async def _check_funding_signal(self, symbol: str, signal) -> Decimal:
+        """Funding-rate risk multiplier (futures only).
+
+        The perpetual funding rate is a microstructure signal: a strongly
+        positive funding rate means longs pay shorts — a headwind for a new
+        LONG (it carries that cost while held). A strongly negative rate is a
+        headwind for a new SHORT. When the funding rate exceeds the threshold
+        in the ADVERSE direction for the entry, the size is scaled by
+        `funding_signal_risk_mult` (de-risked). A favorable funding does NOT
+        boost size — asymmetric, protect capital first.
+
+        Returns the multiplier (1.0 = no adjustment, funding_signal_risk_mult =
+        de-risked). Spot or a disabled signal returns 1.0. A fetch failure
+        returns 1.0 (advisory — never block an entry on a funding fetch).
+        """
+        _settings = get_settings()
+        if _settings.trading_market.lower() != "futures":
+            return Decimal("1")
+        if not getattr(_settings, "funding_signal_enabled", False):
+            return Decimal("1")
+        threshold = Decimal(str(_settings.funding_signal_threshold_pct))
+        if threshold <= 0:
+            return Decimal("1")
+        try:
+            funding_data = await self.client.get_futures_funding_rate(symbol)
+        except Exception:
+            return Decimal("1")
+        if not funding_data:
+            return Decimal("1")
+        rate_raw = funding_data.get("r")
+        if rate_raw in (None, ""):
+            return Decimal("1")
+        try:
+            rate = Decimal(str(rate_raw))
+        except Exception:
+            return Decimal("1")
+        is_short = (getattr(signal, "direction", "long") or "long") == "short"
+        # Adverse direction: long suffers when funding is positive (pays shorts);
+        # short suffers when funding is negative (pays longs).
+        adverse = (rate > threshold) if not is_short else (rate < -threshold)
+        if not adverse:
+            return Decimal("1")
+        mult = Decimal(str(_settings.funding_signal_risk_mult))
+        self._log(
+            "funding_signal",
+            f"{symbol}: {'short' if is_short else 'long'} de-risked by funding "
+            f"rate {rate:.6f} (adverse > threshold {threshold:.6f}) -> size x{mult}",
+        )
+        self.db.commit()
+        return mult
 
     async def _check_slippage_guard(self, symbol: str, signal) -> bool:
         """Pre-trade slippage guard: a market order has no price cap, so if the
@@ -786,7 +846,9 @@ class TradingEngine:
     async def manage_open_positions(self) -> None:
         for position in self.positions.open_positions():
             try:
-                candles = await self.client.candles(position.symbol, limit=2)
+                # Fetch enough candles for ATR(14) + the latest bar. The ATR feeds
+                # the Chandelier trailing stop (volatility-adaptive distance).
+                candles = await self.client.candles(position.symbol, limit=30)
                 if not candles:
                     self._log(
                         "empty_candle",
@@ -800,6 +862,20 @@ class TradingEngine:
                 price = await self.client.last_price(position.symbol)
                 if price is None or price <= 0:
                     price = Decimal(str(latest["close"]))
+
+                # ATR for the Chandelier trailing stop (None when insufficient data).
+                from app.services.strategy.indicators import atr as calc_atr
+
+                atr_value = calc_atr(
+                    [
+                        {
+                            "open": c["open"], "high": c["high"], "low": c["low"],
+                            "close": c["close"], "volume": c.get("volume"),
+                        }
+                        for c in candles
+                    ],
+                    14,
+                )
 
                 # Liquidation guard (futures only): read back the exchange's
                 # liquidation price and force-close before the liquidation engine
@@ -849,7 +925,7 @@ class TradingEngine:
                 elif tp_hit:
                     await self.close_position(position, "take_profit")
                 else:
-                    await self._update_trailing_stop(position, price)
+                    await self._update_trailing_stop(position, price, atr_value)
             except Exception as exc:
                 self._log(
                     "position_manage_error",
@@ -999,9 +1075,28 @@ class TradingEngine:
             pct = Decimal(str(get_settings().strategy_trailing_stop_pct))
         return Decimal(str(pct))
 
-    async def _update_trailing_stop(self, position: Position, price: Decimal) -> None:
+    async def _update_trailing_stop(self, position: Position, price: Decimal, atr_value: Decimal | None = None) -> None:
+        """Update the trailing stop. Uses the ATR Chandelier exit when enabled
+        and ATR is available (volatility-adaptive: tight in calm markets, room
+        in volatile ones), falling back to the fixed-% trailing otherwise.
+
+        Also moves the stop to breakeven once unrealized profit exceeds the
+        trigger threshold. Amend the resting exchange stop on any change.
+        """
         is_short = position.side == OrderSide.sell
-        trailing_pct = self._trailing_stop_pct()
+        _settings = get_settings()
+        # Determine the trailing distance: ATR Chandelier or fixed %.
+        use_chandelier = (
+            getattr(_settings, "chandelier_trailing_enabled", False)
+            and atr_value is not None and atr_value > 0
+        )
+        if use_chandelier:
+            trailing_distance = atr_value * Decimal(str(_settings.chandelier_atr_mult))
+            # Express as a fraction of price for the ratchet formula below.
+            trailing_pct = trailing_distance / price if price > 0 else self._trailing_stop_pct()
+        else:
+            trailing_pct = self._trailing_stop_pct()
+            trailing_distance = price * trailing_pct
         stop_amended = False
         if is_short:
             # Ratchet the stop DOWN as price falls; skip until a new low is made.

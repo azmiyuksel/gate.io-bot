@@ -567,3 +567,22 @@ class GateIOClient:
             return None
         # Gate.io returns a single position object (or an empty body when flat).
         return data if isinstance(data, dict) else (data[0] if data else None)
+
+    async def get_futures_funding_rate(self, contract: str) -> dict | None:
+        """Fetch the current funding rate for a USDT-perp contract.
+
+        Returns the raw Gate.io funding object (with ``r`` as the funding rate
+        fraction, ``next_funding_time`` as a unix timestamp) or None on failure.
+        Used by the funding-signal regime input: a strongly positive funding
+        rate is a headwind for longs (they pay shorts) and a tailwind for
+        shorts; a strongly negative rate is the mirror. Extreme funding is a
+        contrarian/mean-reversion signal (crowded positioning).
+        """
+        try:
+            data = await self.request(
+                "GET", f"/futures/{self._settle}/funding_rate",
+                params={"contract": contract},
+            )
+            return data if isinstance(data, dict) else (data[0] if data else None)
+        except Exception:
+            return None
