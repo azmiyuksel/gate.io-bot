@@ -480,3 +480,130 @@ async def test_get_futures_position_returns_none_when_flat(monkeypatch):
 
     monkeypatch.setattr(c, "request", fake_request)
     assert await c.get_futures_position("BTC_USDT") is None
+
+
+# --- Maker limit orders (capture the rebate instead of paying taker) ---
+
+
+async def test_place_limit_buy_posts_passive_maker(monkeypatch):
+    """A limit BUY posts at the given price as a post-only maker order."""
+    c = GateIOClient()
+    sent = {}
+
+    async def fake_pair(symbol):
+        return {"precision": 2, "min_quote_amount": "5"}
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        sent["body"] = json_body
+        sent["path"] = path
+        return {"id": "lim-1"}
+
+    monkeypatch.setattr(c, "currency_pair_info", fake_pair)
+    monkeypatch.setattr(c, "request", fake_request)
+    await c.place_limit_buy("BTC_USDT", Decimal("100.12"), Decimal("49000"))
+    assert sent["body"]["type"] == "limit"
+    assert sent["body"]["side"] == "buy"
+    assert sent["body"]["price"] == "49000"
+    assert Decimal(str(sent["body"]["amount"])) == Decimal("100.12")
+    assert sent["body"]["post_only"] is True
+    assert sent["body"]["time_in_force"] == "gtc"
+
+
+async def test_place_limit_sell_uses_base_amount(monkeypatch):
+    c = GateIOClient()
+    sent = {}
+
+    async def fake_pair(symbol):
+        return {"amount_precision": 4, "min_base_amount": "0.001"}
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        sent["body"] = json_body
+        return {"id": "lim-2"}
+
+    monkeypatch.setattr(c, "currency_pair_info", fake_pair)
+    monkeypatch.setattr(c, "request", fake_request)
+    await c.place_limit_sell("BTC_USDT", Decimal("0.5"), Decimal("51000"))
+    assert sent["body"]["side"] == "sell"
+    assert Decimal(str(sent["body"]["amount"])) == Decimal("0.5")
+    assert sent["body"]["price"] == "51000"
+    assert sent["body"]["post_only"] is True
+
+
+async def test_place_limit_buy_below_min_raises(monkeypatch):
+    c = GateIOClient()
+
+    async def fake_pair(symbol):
+        return {"precision": 2, "min_quote_amount": "5"}
+
+    monkeypatch.setattr(c, "currency_pair_info", fake_pair)
+    with pytest.raises(OrderBelowMinimum):
+        await c.place_limit_buy("BTC_USDT", Decimal("4"), Decimal("49000"))
+
+
+async def test_place_futures_limit_order_signs_size_for_short(monkeypatch):
+    """A futures limit SHORT signs the size negative and posts as a maker."""
+    c = GateIOClient()
+
+    async def fake_contract(contract):
+        return {"quanto_multiplier": "0.0001", "order_size_min": "1"}
+
+    sent = {}
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        sent["body"] = json_body
+        sent["path"] = path
+        return {"id": "fut-lim-1"}
+
+    monkeypatch.setattr(c, "futures_contract_info", fake_contract)
+    monkeypatch.setattr(c, "request", fake_request)
+    await c.place_futures_limit_order("BTC_USDT", Decimal("1"), "short", Decimal("51000"))
+    # 1 / 0.0001 = 10000 contracts, NEGATIVE for a short.
+    assert sent["body"]["size"] == -10000
+    assert sent["body"]["price"] == "51000"
+    assert sent["body"]["tif"] == "gtc"
+    assert sent["body"]["post_only"] is True
+    assert sent["body"]["reduce_only"] is False
+
+
+async def test_cancel_spot_order_swallows_404(monkeypatch):
+    import httpx as _httpx
+
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        request = _httpx.Request("DELETE", "https://example/x")
+        raise _httpx.HTTPStatusError(
+            "not found", request=request,
+            response=_httpx.Response(404, request=request),
+        )
+
+    monkeypatch.setattr(c, "request", fake_request)
+    await c.cancel_spot_order("BTC_USDT", "123")  # no raise
+
+
+async def test_cancel_futures_order_swallows_404(monkeypatch):
+    import httpx as _httpx
+
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        request = _httpx.Request("DELETE", "https://example/x")
+        raise _httpx.HTTPStatusError(
+            "not found", request=request,
+            response=_httpx.Response(404, request=request),
+        )
+
+    monkeypatch.setattr(c, "request", fake_request)
+    await c.cancel_futures_order("BTC_USDT", "456")  # no raise
+
+
+async def test_get_order_status_returns_current_state(monkeypatch):
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        return {"id": "123", "status": "closed", "filled_total": "500"}
+
+    monkeypatch.setattr(c, "request", fake_request)
+    status = await c.get_order_status("BTC_USDT", "123")
+    assert status["status"] == "closed"
+    assert status["filled_total"] == "500"

@@ -228,6 +228,68 @@ class GateIOClient:
             },
         )
 
+    async def _submit_spot_limit(
+        self, symbol: str, side: str, amount: Decimal, price: Decimal,
+        post_only: bool = True, time_in_force: str = "gtc",
+    ) -> dict:
+        """Submit a spot LIMIT order. ``post_only`` (IOC-rejecting maker) is the
+        default so the order rests as a maker and never crosses the book (no
+        taker fee). Used by the adaptive/limit entry path to capture the maker
+        rebate instead of paying market slippage."""
+        body = {
+            "currency_pair": symbol,
+            "type": "limit",
+            "side": side,
+            "amount": str(amount),
+            "price": str(price),
+            "account": "spot",
+            "time_in_force": time_in_force,
+        }
+        if post_only:
+            body["post_only"] = True
+        return await self.request("POST", "/spot/orders", json_body=body)
+
+    async def place_limit_buy(self, symbol: str, quote_amount: Decimal, price: Decimal) -> dict:
+        """Limit BUY (maker). `quote_amount` is the USDT to spend, rounded to the
+        pair's price precision and checked against min_quote_amount."""
+        info = await self.currency_pair_info(symbol)
+        amount = self._round_down(quote_amount, int(info.get("precision", 8) or 8))
+        min_quote = Decimal(str(info.get("min_quote_amount", "0") or "0"))
+        if amount <= 0 or amount < min_quote:
+            raise OrderBelowMinimum(
+                f"{symbol} limit buy quote {amount} below minimum {min_quote}"
+            )
+        return await self._submit_spot_limit(symbol, "buy", amount, price)
+
+    async def place_limit_sell(self, symbol: str, base_amount: Decimal, price: Decimal) -> dict:
+        """Limit SELL (maker). `base_amount` is the BASE quantity, rounded to
+        amount_precision and checked against min_base_amount."""
+        info = await self.currency_pair_info(symbol)
+        amount = self._round_down(base_amount, int(info.get("amount_precision", 8) or 8))
+        min_base = Decimal(str(info.get("min_base_amount", "0") or "0"))
+        if amount <= 0 or amount < min_base:
+            raise OrderBelowMinimum(
+                f"{symbol} limit sell base {amount} below minimum {min_base}"
+            )
+        return await self._submit_spot_limit(symbol, "sell", amount, price)
+
+    async def cancel_spot_order(self, symbol: str, order_id: str) -> None:
+        """Cancel a spot order. Best-effort: a 404 (already filled/cancelled) is
+        swallowed since the desired end state is reached."""
+        try:
+            await self.request(
+                "DELETE", f"/spot/orders/{order_id}", params={"currency_pair": symbol}
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+
+    async def get_order_status(self, symbol: str, order_id: str) -> dict:
+        """Fetch a spot order's current status (for adaptive limit fill checks)."""
+        return await self.request(
+            "GET", f"/spot/orders/{order_id}", params={"currency_pair": symbol}
+        )
+
     async def place_market_buy(self, symbol: str, quote_amount: Decimal) -> dict:
         """Market BUY. On Gate.io spot the `amount` is the QUOTE to spend (USDT),
         rounded to the pair's price precision and checked against min_quote_amount."""
@@ -328,6 +390,50 @@ class GateIOClient:
             "reduce_only": reduce_only,
         }
         return await self.request("POST", f"/futures/{self._settle}/orders", json_body=body)
+
+    async def place_futures_limit_order(
+        self, contract: str, base_quantity: Decimal, direction: str,
+        price: Decimal, reduce_only: bool = False, post_only: bool = True,
+    ) -> dict:
+        """Limit order on USDT-perpetual futures (maker). ``post_only`` rejects
+        the order if it would cross the book, guaranteeing a maker fill (no
+        taker fee). Used by the adaptive/limit entry path to capture the maker
+        rebate on futures. Size is signed (negative = short)."""
+        info = await self.futures_contract_info(contract)
+        size = self._contracts_for_base(abs(base_quantity), info)
+        order_size_min = int(info.get("order_size_min", 1) or 1)
+        if size < order_size_min:
+            raise OrderBelowMinimum(
+                f"{contract} futures limit size {size} contracts below minimum {order_size_min}"
+            )
+        signed = -size if direction == "short" else size
+        body = {
+            "contract": contract,
+            "size": signed,
+            "price": str(price),
+            "tif": "gtc",
+            "reduce_only": reduce_only,
+            "post_only": post_only,
+        }
+        return await self.request("POST", f"/futures/{self._settle}/orders", json_body=body)
+
+    async def cancel_futures_order(self, contract: str, order_id: str) -> None:
+        """Cancel a futures order. Best-effort: a 404 is swallowed."""
+        try:
+            await self.request(
+                "DELETE", f"/futures/{self._settle}/orders/{order_id}",
+                params={"contract": contract},
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+
+    async def get_futures_order_status(self, contract: str, order_id: str) -> dict:
+        """Fetch a futures order's current status (for adaptive limit fill checks)."""
+        return await self.request(
+            "GET", f"/futures/{self._settle}/orders/{order_id}",
+            params={"contract": contract},
+        )
 
     async def get_order(self, symbol: str, order_id: str) -> dict:
         return await self.request("GET", f"/spot/orders/{order_id}", params={"currency_pair": symbol})

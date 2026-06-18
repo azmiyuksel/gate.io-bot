@@ -251,6 +251,31 @@ class ExecutionQualityEngine:
         self.db.refresh(metric)
         return metric
 
+    def recent_slippage_pct(self, side: str = "long", lookback: int = 10) -> float | None:
+        """Mean absolute slippage of the most recent `lookback` fills on the
+        given side. Used by the TCA feedback loop to switch the next entry to a
+        passive limit order when recent taker fills have been slipping badly.
+
+        Returns None when there is no recent fill history (cold start) so the
+        caller falls back to the configured default order type.
+        """
+        from sqlalchemy import desc
+
+        rows = (
+            self.db.query(SlippageLog.slippage_pct)
+            .join(ExecutionOrder, SlippageLog.execution_order_id == ExecutionOrder.id)
+            .filter(ExecutionOrder.side == side)
+            .order_by(desc(SlippageLog.created_at))
+            .limit(int(lookback))
+            .all()
+        )
+        if not rows:
+            return None
+        vals = [abs(float(r[0])) for r in rows if r[0] is not None]
+        if not vals:
+            return None
+        return sum(vals) / len(vals)
+
     def detect_anomalies(self, strategy_name: str) -> Tuple[bool, str]:
         """
         Detects execution anomalies:

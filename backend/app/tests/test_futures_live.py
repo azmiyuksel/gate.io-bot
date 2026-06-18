@@ -120,13 +120,24 @@ async def test_futures_routes_short_to_futures_order(db_session):
     client = AsyncMock()
     client.place_futures_market_order = AsyncMock(return_value={"id": "9", "fill_price": "100"})
     client.set_futures_leverage = AsyncMock(return_value={})
+    client.get_futures_position = AsyncMock(return_value=None)  # flat -> trust the set call
     with patch("app.services.trading_engine.get_settings",
-               return_value=_settings(trading_market="futures", futures_leverage=5)):
+               return_value=_settings(
+                   trading_market="futures", futures_leverage=5,
+                   # Use a plain market order so the test exercises the market
+                   # routing path (not the adaptive limit path).
+                   entry_order_type="market",
+                   futures_leverage_verify=True,
+               )):
         engine = TradingEngine(db_session, client)
         engine.notifier = AsyncMock()
         engine._record_execution_quality = lambda **kw: None  # avoid nested-savepoint in test DB
+        engine._place_exchange_stop = AsyncMock()  # no live exchange stop in test
         sig = Signal(True, "short", "short_breakout", Decimal("100"), Decimal("2"))
-        await engine._execute_entry("BTC_USDT", sig, Decimal("1"), Decimal("104"), Decimal("97"), "momentum_breakout_v1")
+        await engine._execute_entry(
+            "BTC_USDT", sig, Decimal("1"), Decimal("104"), Decimal("97"),
+            "momentum_breakout_v1", Decimal("10000"),
+        )
 
     client.place_futures_market_order.assert_awaited_once()
     args = client.place_futures_market_order.await_args

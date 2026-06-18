@@ -411,6 +411,26 @@ class Settings(BaseSettings):
     # moved adversely beyond this fraction of the signal price (don't chase fills).
     # Set to 0 to disable.
     entry_max_slippage_pct: float = 0.01
+    # Entry order type: "market" (taker, always fills, pays slippage), "limit"
+    # (maker, posts at signal price, may miss), or "adaptive" (try a passive limit
+    # first with a short timeout, fall back to market on timeout — captures the
+    # maker rebate when possible without sacrificing fill rate).
+    entry_order_type: str = "adaptive"
+    # For adaptive/limit entries: how long to wait for a maker fill (seconds)
+    # before falling back to a market order. Short enough to not stall the cycle.
+    entry_limit_timeout_seconds: int = 30
+    # Limit offset: post the passive limit this fraction BELOW the signal close
+    # (long) / ABOVE (short) so it rests as a maker order. 0 = at the signal price.
+    entry_limit_offset_pct: float = 0.0
+    # Order splitting: when the entry notional exceeds this fraction of equity,
+    # split into N TWAP child orders to reduce market impact on less-liquid
+    # altcoins (WIF/BONK/PEPE etc). 0 disables splitting.
+    entry_split_threshold_pct: float = 0.03
+    entry_split_child_count: int = 3
+    # TCA feedback: when the recent fill slippage exceeds this fraction, switch
+    # the NEXT entry to a passive limit order (capture the maker rebate instead
+    # of paying taker slippage). 0 disables the TCA feedback loop.
+    tca_slippage_feedback_pct: float = 0.003
 
     # --- Portfolio Allocator ---
     alloc_weight_strategy: float = 0.40
