@@ -49,7 +49,10 @@ class Settings(BaseSettings):
     # Disable only if you validate strategies out-of-band.
     live_require_walkforward: bool = True
     # Max age (days) of the passing walk-forward run before it is considered stale.
-    live_validation_max_age_days: int = 90
+    # 45 days for a 5m/15m momentum strategy: crypto spans multiple regime shifts
+    # in 90 days, so a 90-day-stale validation providing go-live cover is too
+    # generous. Re-validate roughly monthly.
+    live_validation_max_age_days: int = 45
     # Live market. "spot" (proven path; long-only — short signals are skipped) or
     # "futures" (USDT-perpetual; enables shorts + leverage to fully mirror paper).
     # Default SPOT for safety: validate futures keys on Gate.io testnet before
@@ -309,6 +312,12 @@ class Settings(BaseSettings):
     research_survivors: int = 4
     # Cross-validation folds for overfit detection (k-fold purged CV).
     research_cv_folds: int = 5
+    # Purge gap (bars) dropped between IS and OOS folds in k-fold CV — the
+    # López de Prado leakage-prevention technique. ~ the longest indicator
+    # lookback (e.g. 200 for EMA200) so a position held across the boundary
+    # does not leak IS alpha into the OOS fold. 0 = no purge (legacy behavior,
+    # understates overfit).
+    research_cv_purge_bars: int = 200
     # Minimum track record in calendar days required for promotion.
     research_min_track_days: int = 90
     # Deflated Sharpe Ratio confidence threshold (p-value, 0..1).

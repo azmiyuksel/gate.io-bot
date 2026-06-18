@@ -104,24 +104,39 @@ class ResearchBacktestRunner:
     def _kfold_cv_overfit(
         self, data: pd.DataFrame, config: BacktestConfig, folds: int = 5
     ) -> tuple[float, list[float], bool]:
-        """k-fold purged cross-validation for overfit detection.
+        """k-fold PURGED cross-validation for overfit detection.
 
         Splits data into `folds` sequential chunks. For each fold:
           - IS = data before the fold (expanding training set)
           - OOS = the fold itself (next contiguous chunk)
+        A PURGE GAP (embargo) of `research_cv_folds_purge_bars` bars is dropped
+        between the IS block and the OOS fold on BOTH sides — this is the
+        López de Prado leakage-prevention technique the walk-forward splitter
+        already uses. Without it, adjacent train/test chunks share
+        autocorrelation (a position held across the boundary leaks returns),
+        understating overfit. "Purged CV" must actually purge.
+
         Overfit is flagged when mean(OOS Sharpe) < 0.5 * mean(IS Sharpe).
         """
         n = len(data)
         if n < MIN_CANDLES * (folds + 1) or folds < 2:
             return 0.0, [], False
 
+        # Purge gap in bars: ~ the longest indicator lookback (e.g. 200 for
+        # EMA200) so a position held into the OOS fold does not leak IS alpha.
+        # Default to a sensible floor if the config is missing.
+        purge = int(getattr(self.settings, "research_cv_purge_bars", 0) or 200)
+
         is_sharpes: list[float] = []
         oos_sharpes: list[float] = []
         fold_size = n // (folds + 1)
 
         for k in range(1, folds + 1):
-            is_data = data.iloc[: k * fold_size]
-            oos_data = data.iloc[k * fold_size : (k + 1) * fold_size]
+            is_end = k * fold_size
+            oos_start = k * fold_size
+            # Drop `purge` bars between IS and OOS on both sides.
+            is_data = data.iloc[: max(is_end - purge, 0)]
+            oos_data = data.iloc[oos_start + purge : (k + 1) * fold_size - purge]
             if len(oos_data) < MIN_CANDLES // 2:
                 continue
             is_run = self._run_safe(is_data, config)
@@ -142,28 +157,52 @@ class ResearchBacktestRunner:
     def _deflated_sharpe_ratio(
         self, observed_sharpe: float, n_trials: int | None = None, var_sharpe: float | None = None
     ) -> float:
-        """Harvey-Liu Deflated Sharpe Ratio test.
+        """Harvey-Liu Deflated Sharpe Ratio p-value.
 
-        Estimates the probability that the observed Sharpe is the maximum among
-        N independent trials, where each trial's Sharpe is approximately normal.
-        Returns the DSR p-value: lower values indicate the observed Sharpe is
-        unlikely to be a spurious maximum from multiple testing.
+        Returns the probability that the observed Sharpe is a spurious maximum
+        from multiple testing — i.e. the probability under the null that the
+        BEST of N trials reaches at least the observed Sharpe. Lower p-values
+        => the observed Sharpe is unlikely to be chance and is more trustworthy.
 
-        Reference: Harvey, Liu (2015) "Backtesting"
+        Implementation (Bailey & López de Prado 2014, "The Deflated Sharpe
+        Ratio"):
+          1. Compute the expected maximum Sharpe under the null (E[max] over N
+             trials with Sharpe std `σ_SR`): E[max] ≈ σ_SR·[(1-γ)·Z⁻¹(1-1/N) +
+             γ·Z⁻¹(1-1/(N·e))].
+          2. Deflate the observed Sharpe by subtracting E[max]: SR* = SR − E[max].
+          3. The DSR p-value = Φ(SR* / σ_SR): how likely a single trial under
+             the null reaches the deflated Sharpe. (One-sided: smaller is more
+             significant.)
+
+        The previous implementation returned `Φ(z)^N` (the probability that ALL
+        N trials are below z), which is not the DSR — it conflated the
+        selection-bias test with a joint CDF and produced misleadingly high
+        "p-values" for good strategies. This uses the proper deflation.
         """
         if observed_sharpe <= 0:
-            return 0.0
+            return 1.0  # no edge to deflate; maximum spuriousness probability
         n_trials = n_trials or self.settings.research_population
         var_sharpe = var_sharpe or (1.0 / self.settings.research_min_trades)
-        se = math.sqrt(var_sharpe)
-        z = observed_sharpe / se if se > 0 else 0.0
+        se = math.sqrt(var_sharpe) if var_sharpe > 0 else 0.0
+        if se <= 0 or n_trials < 2:
+            # Too few trials or no variance: cannot assess selection bias.
+            # Return a conservative high p-value (do not trust a single shot).
+            return 1.0
+        # Expected max Sharpe under the null over n_trials.
+        from app.backtest.multiple_testing import expected_max_sharpe
+
+        exp_max = expected_max_sharpe(n_trials, se)
+        # Deflate: subtract the expected-max bias.
+        deflated = observed_sharpe - exp_max
+        # p-value = P(SR_null >= deflated) = 1 - Φ(deflated / se).
         try:
             from scipy import stats
-            prob_one = float(stats.norm.cdf(z))
+
+            pvalue = float(1.0 - stats.norm.cdf(deflated / se))
         except ImportError:
-            prob_one = float(0.5 * (1 + math.erf(z / math.sqrt(2))))
-        prob_max = prob_one ** n_trials
-        return round(min(prob_max, 1.0), 6)
+            z = deflated / se
+            pvalue = float(0.5 * (1.0 - math.erf(z / math.sqrt(2))))
+        return round(min(max(pvalue, 0.0), 1.0), 6)
 
     def _min_track_days(self, data: pd.DataFrame) -> int:
         """Estimate calendar days of track record from timestamp range."""

@@ -18,9 +18,18 @@ KNOWN_STRATEGIES = (MOMENTUM_NAME, CAPITAL_PRESERVATION_NAME)
 def build_strategy(name: str):
     """Return a fresh strategy instance for ``name``.
 
-    Unknown names fall back to the frequent momentum strategy (the project
-    default) rather than raising, so a typo can never silently disable trading.
+    Hard-fails on an unknown name. The previous behaviour fell back to the
+    momentum strategy "so a typo can never silently disable trading" — but a
+    typo here silently runs the WRONG strategy, which is worse: it trades an
+    unvalidated strategy on live capital. A typo must surface immediately so
+    the operator fixes the config instead of discovering the mismatch from
+    a PnL swing.
     """
     if name == CAPITAL_PRESERVATION_NAME:
         return CapitalPreservationStrategy()
-    return MomentumBreakoutStrategy()
+    if name == MOMENTUM_NAME:
+        return MomentumBreakoutStrategy()
+    raise ValueError(
+        f"Unknown strategy '{name}'. Known strategies: {list(KNOWN_STRATEGIES)}. "
+        f"Set LIVE_STRATEGY / PAPER_STRATEGY to one of these (check .env for a typo)."
+    )

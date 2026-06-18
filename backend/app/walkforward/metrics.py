@@ -2,6 +2,18 @@ import numpy as np
 
 
 def objective_score(metrics: dict) -> float:
+    """Walk-forward optimizer fitness.
+
+    Combines risk-adjusted return (Sharpe), reward asymmetry (profit factor),
+    and growth (CAGR), penalized for drawdown depth and thin-sample noise.
+
+    Drawdown is penalized as an ECONOMIC cost, not a raw 0-1 fraction: a 30%
+    drawdown needs a 43% gain to recover, so it is scaled by a penalty factor
+    (5x) before subtraction. The previous `cagr - drawdown` mixed quantities on
+    different scales (CAGR can be 10x, drawdown a 0-1 fraction) and let a
+    high-CAGR/high-DD strategy score well — under-penalizing the very risk a
+    capital-preservation bot must avoid.
+    """
     sharpe = float(metrics.get("sharpe_ratio", 0))
     profit_factor = min(float(metrics.get("profit_factor", 0)), 5)
     cagr = float(metrics.get("cagr", 0))
@@ -9,7 +21,11 @@ def objective_score(metrics: dict) -> float:
     total_trades = float(metrics.get("total_trades", 0))
     # Penalize strategies with very few trades — they lack statistical significance.
     trade_penalty = max(0, (20 - total_trades)) * 0.1
-    return sharpe + profit_factor + cagr - drawdown - trade_penalty
+    # Drawdown economic penalty: ~5x the raw fraction so a 20% DD costs ~1.0
+    # (on the Sharpe/PF/CAGR scale) instead of 0.2. Recovery math: a DD of d
+    # requires a gain of d/(1-d) to break even, which steepens superlinearly.
+    drawdown_penalty = drawdown * 5.0
+    return sharpe + profit_factor + cagr - drawdown_penalty - trade_penalty
 
 
 def walk_forward_efficiency(train_profit: float, test_profit: float) -> float:

@@ -25,6 +25,12 @@ class WalkForwardConfig:
     n_trials: int = 30
     initial_cash: float = 10_000
     base_parameters: dict = field(default_factory=dict)
+    # Strategy class to validate. Must match a key in backtest/engine.py
+    # STRATEGY_REGISTRY so the run backtests the ACTUAL strategy that trades
+    # live (closes the "validated strategy != traded strategy" gap). Defaults
+    # to the live default strategy. The optimizer selects a matching parameter
+    # search space for this strategy.
+    strategy_class: str = "momentum_breakout_v1"
 
 
 @dataclass(frozen=True)

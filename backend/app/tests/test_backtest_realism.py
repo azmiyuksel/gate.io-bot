@@ -178,3 +178,78 @@ def test_limit_mode_runs_and_avoids_slippage_premium():
         # price equals the (prior-bar) signal close, which is below the next open.
         for trade in limit_result["trades"]:
             assert trade.entry_price <= trade.exit_price or trade.pnl <= 0
+
+
+# --- Registry: validated strategy == traded strategy ---
+
+
+def test_engine_hard_fails_on_unknown_strategy_class():
+    """An unknown strategy_class must raise, not silently fall back to
+    EmaRsiAtrStrategy. The old fallback validated a mean-reversion strategy
+    while the live breakout strategy traded unvalidated — a dangerous illusion.
+    """
+    import pytest
+
+    data = _oscillating_uptrend()
+    cfg = BacktestConfig(
+        symbol="BTC_USDT",
+        timeframe="1h",
+        start_at=datetime(2024, 1, 1, tzinfo=UTC),
+        end_at=datetime(2024, 3, 1, tzinfo=UTC),
+        strategy_class="nonexistent_strategy_v9",
+    )
+    with pytest.raises(ValueError, match="Unknown strategy_class"):
+        BacktestEngine().run(data, cfg)
+
+
+def test_momentum_strategy_registered_and_runs():
+    """A run tagged momentum_breakout_v1 must backtest the actual momentum
+    breakout strategy, not a silent fallback."""
+    data = _momentum_breakout_curve()
+    cfg = BacktestConfig(
+        symbol="BTC_USDT",
+        timeframe="1h",
+        start_at=datetime(2024, 1, 1, tzinfo=UTC),
+        end_at=datetime(2024, 4, 1, tzinfo=UTC),
+        strategy_class="momentum_breakout_v1",
+        parameters={"donchian_lookback": 20, "vol_spike_mult": 1.2, "min_atr_pct": 0.001},
+    )
+    result = BacktestEngine().run(data, cfg)
+    assert "metrics" in result
+    # The momentum strategy class must be the one that ran (not EmaRsiAtr).
+    from app.backtest.engine import STRATEGY_REGISTRY
+    from app.backtest.strategy_runner import MomentumBreakoutBacktestStrategy
+
+    assert STRATEGY_REGISTRY["momentum_breakout_v1"] is MomentumBreakoutBacktestStrategy
+
+
+def test_capital_preservation_strategy_registered():
+    from app.backtest.engine import STRATEGY_REGISTRY
+    from app.backtest.strategy_runner import CapitalPreservationBacktestStrategy
+
+    assert STRATEGY_REGISTRY["capital_preservation_v1"] is CapitalPreservationBacktestStrategy
+
+
+def _momentum_breakout_curve(n: int = 600) -> pd.DataFrame:
+    """A curve with periodic breakouts on expanding volume so the momentum
+    strategy produces signals: a slow drift up with sharp step-ups every ~40 bars."""
+    idx = pd.date_range("2024-01-01", periods=n, freq="h", tz="UTC")
+    rng = np.random.default_rng(11)
+    close = np.empty(n)
+    vol = np.empty(n)
+    price = 100.0
+    for i in range(n):
+        # Step up every ~40 bars (breakout), noisy drift otherwise.
+        if i > 0 and i % 40 == 0:
+            price *= 1.02
+        price += rng.normal(0, 0.15)
+        close[i] = max(price, 10.0)
+        # Volume spikes on breakout bars, baseline otherwise.
+        vol[i] = 50.0 if (i % 40 == 0 and i > 0) else 10.0
+    openp = np.roll(close, 1)
+    openp[0] = close[0]
+    high = np.maximum(openp, close) + 0.3
+    low = np.minimum(openp, close) - 0.3
+    return pd.DataFrame(
+        {"open": openp, "high": high, "low": low, "close": close, "volume": vol}, index=idx
+    )

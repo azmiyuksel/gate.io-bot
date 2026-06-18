@@ -1,4 +1,9 @@
-from app.walkforward.metrics import robustness_score, walk_forward_efficiency, wfe_label
+from app.walkforward.metrics import (
+    objective_score,
+    robustness_score,
+    walk_forward_efficiency,
+    wfe_label,
+)
 from app.walkforward.validator import WalkForwardValidator
 
 
@@ -51,3 +56,30 @@ def test_aggregate_results_wfe_uses_annualized_returns() -> None:
     assert round(agg["wfe"], 4) == 0.8
     # total_return is the compounded OOS return (1.05^3 - 1), not a profit ratio.
     assert round(agg["total_return"], 6) == round(1.05**3 - 1, 6)
+
+
+def test_objective_score_penalizes_drawdown_economically():
+    """Drawdown must be penalized as an economic cost (5x), not a raw 0-1
+    fraction. A 30% DD should cost ~1.5 in the score, not 0.3 — otherwise a
+    high-CAGR/high-DD strategy scores well, under-penalizing the very risk a
+    capital-preservation bot must avoid."""
+    high_dd = objective_score(
+        {"sharpe_ratio": 1.0, "profit_factor": 1.5, "cagr": 0.5, "max_drawdown": -0.30, "total_trades": 50}
+    )
+    low_dd = objective_score(
+        {"sharpe_ratio": 1.0, "profit_factor": 1.5, "cagr": 0.5, "max_drawdown": -0.05, "total_trades": 50}
+    )
+    # Same Sharpe/PF/CAGR, but the 30%-DD strategy must score materially lower.
+    assert low_dd - high_dd > 1.0  # 5x * (0.30 - 0.05) = 1.25
+
+
+def test_objective_score_still_penalizes_thin_samples():
+    """A strategy with very few trades (< 20) is penalized for low significance."""
+    thin = objective_score(
+        {"sharpe_ratio": 2.0, "profit_factor": 3.0, "cagr": 0.5, "max_drawdown": -0.05, "total_trades": 5}
+    )
+    rich = objective_score(
+        {"sharpe_ratio": 2.0, "profit_factor": 3.0, "cagr": 0.5, "max_drawdown": -0.05, "total_trades": 50}
+    )
+    # thin: trade_penalty = (20-5)*0.1 = 1.5; rich: 0.
+    assert rich - thin == 1.5

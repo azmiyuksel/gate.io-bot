@@ -109,6 +109,9 @@ class WalkForwardEngine:
                 max_open_positions=int(params.get("max_open_positions", 3)),
                 max_capital_per_trade_pct=float(params.get("max_capital_per_trade_pct", 0.01)),
                 parameters=params,
+                # Test on the same strategy class that was optimized — not the
+                # default ema_rsi_atr (which would validate a different strategy).
+                strategy_class=config.strategy_class,
             ),
         )
 

@@ -172,6 +172,11 @@ def _config_from_payload(payload: WalkForwardStart) -> WalkForwardConfig:
         n_trials=payload.n_trials,
         initial_cash=float(payload.initial_cash),
         base_parameters=payload.parameters,
+        # Bind the run to the actual strategy class that trades live. The
+        # strategy_name is the same string used by the live engine and the
+        # go-live gate; mapping it to strategy_class makes the walk-forward
+        # validate the real strategy, not a silent fallback.
+        strategy_class=payload.strategy_name,
     )
 
 

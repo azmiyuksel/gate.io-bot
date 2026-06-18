@@ -21,7 +21,16 @@ def _settings(**over):
 
 def test_factory_defaults_to_momentum():
     assert isinstance(build_strategy("momentum_breakout_v1"), MomentumBreakoutStrategy)
-    assert isinstance(build_strategy("unknown_xyz"), MomentumBreakoutStrategy)  # safe fallback
+
+
+def test_factory_hard_fails_on_unknown_strategy():
+    # A typo must surface immediately — silently running the wrong strategy on
+    # live capital is worse than a startup error. The old fallback-to-momentum
+    # behaviour traded an unvalidated strategy under a mistyped name.
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown strategy"):
+        build_strategy("unknown_xyz")
 
 
 def test_factory_selects_capital_preservation():

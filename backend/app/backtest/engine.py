@@ -12,15 +12,26 @@ from app.backtest.portfolio import Portfolio
 from app.backtest.reports import build_plotly_report
 from app.backtest.strategy_runner import (
     BollingerBandsStrategy,
+    CapitalPreservationBacktestStrategy,
     EmaRsiAtrStrategy,
     MacdStrategy,
+    MomentumBreakoutBacktestStrategy,
 )
 from app.core.config import get_settings
 from app.models.entities import HistoricalCandle
 from app.services.exchange.gateio import GateIOClient
 
 
+# Single source of truth mapping a strategy name (the same string used by the
+# live engine, paper adapter, walk-forward runs, and the go-live gate) to the
+# backtest class that implements it. This MUST stay in sync with
+# app.services.strategy.factory.KNOWN_STRATEGIES — a run tagged
+# "momentum_breakout_v1" now backtests the actual momentum strategy, not a
+# silent fallback to EmaRsiAtrStrategy (which validated a mean-reversion
+# strategy while the live breakout strategy traded unvalidated).
 STRATEGY_REGISTRY: dict[str, type] = {
+    "momentum_breakout_v1": MomentumBreakoutBacktestStrategy,
+    "capital_preservation_v1": CapitalPreservationBacktestStrategy,
     "ema_rsi_atr": EmaRsiAtrStrategy,
     "macd": MacdStrategy,
     "bollinger_bands": BollingerBandsStrategy,
@@ -130,7 +141,18 @@ class BacktestEngine:
     def run(self, data: pd.DataFrame, config: BacktestConfig) -> dict:
         if data.empty:
             raise ValueError("No historical data available for backtest")
-        strategy_cls = STRATEGY_REGISTRY.get(config.strategy_class, EmaRsiAtrStrategy)
+        # Hard-fail on an unknown strategy class: the previous silent fallback
+        # to EmaRsiAtrStrategy meant a run tagged "momentum_breakout_v1"
+        # validated a mean-reversion strategy while the live breakout strategy
+        # traded unvalidated — a dangerous validation illusion. A typo or
+        # unregistered class must surface immediately.
+        if config.strategy_class not in STRATEGY_REGISTRY:
+            raise ValueError(
+                f"Unknown strategy_class '{config.strategy_class}'. "
+                f"Known: {sorted(STRATEGY_REGISTRY)}. Register the strategy in "
+                f"backtest/engine.py STRATEGY_REGISTRY before running."
+            )
+        strategy_cls = STRATEGY_REGISTRY[config.strategy_class]
         strategy = strategy_cls(config.parameters)
         prepared = strategy.prepare(data)
         portfolio = Portfolio(config.initial_cash)
