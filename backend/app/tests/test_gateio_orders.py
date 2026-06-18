@@ -307,3 +307,176 @@ def test_symbols_property_normalizes_and_dedupes():
         trading_symbols="btc_usdt, ETH_USDT ,btc_usdt,, sol_usdt",
     )
     assert s.symbols == ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
+
+
+# --- Exchange-side stop orders (capital preservation) ---
+
+
+async def test_place_spot_stop_loss_long_sells_on_price_drop(monkeypatch):
+    """A LONG spot stop fires when price <= trigger and sells the base amount."""
+    c = GateIOClient()
+    sent = {}
+
+    async def fake_pair(symbol):
+        return {"amount_precision": 4, "min_base_amount": "0.001"}
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        sent["method"] = method
+        sent["path"] = path
+        sent["body"] = json_body
+        return {"id": "stop-1"}
+
+    monkeypatch.setattr(c, "currency_pair_info", fake_pair)
+    monkeypatch.setattr(c, "request", fake_request)
+    resp = await c.place_spot_stop_loss("BTC_USDT", Decimal("49000"), Decimal("0.5"), is_short=False)
+    assert resp["id"] == "stop-1"
+    # Long stop: trigger rule "<=" (price falls to stop), put side "sell".
+    assert sent["body"]["trigger"]["rule"] == "<="
+    assert sent["body"]["trigger"]["price"] == "49000"
+    assert sent["body"]["put"]["side"] == "sell"
+    assert sent["body"]["put"]["type"] == "market"
+    assert Decimal(str(sent["body"]["put"]["amount"])) == Decimal("0.5")
+    assert sent["body"]["market"]["currency_pair"] == "BTC_USDT"
+    assert sent["path"] == "/spot/price_orders"
+
+
+async def test_place_spot_stop_loss_short_inverts_rule_and_side(monkeypatch):
+    c = GateIOClient()
+    sent = {}
+
+    async def fake_pair(symbol):
+        return {"amount_precision": 4, "min_base_amount": "0.001"}
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        sent["body"] = json_body
+        return {"id": "stop-2"}
+
+    monkeypatch.setattr(c, "currency_pair_info", fake_pair)
+    monkeypatch.setattr(c, "request", fake_request)
+    await c.place_spot_stop_loss("BTC_USDT", Decimal("51000"), Decimal("0.5"), is_short=True)
+    # Short stop: trigger rule ">=" (price rises to stop), put side "buy".
+    assert sent["body"]["trigger"]["rule"] == ">="
+    assert sent["body"]["put"]["side"] == "buy"
+
+
+async def test_place_spot_stop_loss_below_min_raises(monkeypatch):
+    c = GateIOClient()
+
+    async def fake_pair(symbol):
+        return {"amount_precision": 4, "min_base_amount": "0.001"}
+
+    monkeypatch.setattr(c, "currency_pair_info", fake_pair)
+    with pytest.raises(OrderBelowMinimum):
+        await c.place_spot_stop_loss("BTC_USDT", Decimal("49000"), Decimal("0.0005"), is_short=False)
+
+
+async def test_place_futures_stop_loss_long_closes_position_on_drop(monkeypatch):
+    """A LONG futures stop is a close-only conditional order firing on price <= trigger."""
+    c = GateIOClient()
+    sent = {}
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        sent["method"] = method
+        sent["path"] = path
+        sent["body"] = json_body
+        return {"id": "fut-stop-1"}
+
+    monkeypatch.setattr(c, "request", fake_request)
+    resp = await c.place_futures_stop_loss("BTC_USDT", Decimal("49000"), is_short=False)
+    assert resp["id"] == "fut-stop-1"
+    assert sent["body"]["close"] is True
+    assert sent["body"]["reduce_only"] is True
+    assert sent["body"]["rule"] == "<="
+    assert sent["body"]["price"] == "49000"
+    assert sent["body"]["contract"] == "BTC_USDT"
+    assert sent["body"]["size"] == 0
+    assert "/conditional_orders" in sent["path"]
+
+
+async def test_place_futures_stop_loss_short_uses_ge_rule(monkeypatch):
+    c = GateIOClient()
+    sent = {}
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        sent["body"] = json_body
+        return {"id": "fut-stop-2"}
+
+    monkeypatch.setattr(c, "request", fake_request)
+    await c.place_futures_stop_loss("BTC_USDT", Decimal("51000"), is_short=True)
+    # Short stop: price rises to stop -> rule ">=".
+    assert sent["body"]["rule"] == ">="
+
+
+async def test_cancel_spot_price_order_swallows_404(monkeypatch):
+    """A 404 (already triggered/cancelled) is swallowed — desired end state reached."""
+    import httpx as _httpx
+
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        request = _httpx.Request("DELETE", "https://example/x")
+        raise _httpx.HTTPStatusError(
+            "not found", request=request,
+            response=_httpx.Response(404, request=request),
+        )
+
+    monkeypatch.setattr(c, "request", fake_request)
+    # Should not raise.
+    await c.cancel_spot_price_order("123")
+
+
+async def test_cancel_futures_conditional_order_swallows_404(monkeypatch):
+    import httpx as _httpx
+
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        request = _httpx.Request("DELETE", "https://example/x")
+        raise _httpx.HTTPStatusError(
+            "not found", request=request,
+            response=_httpx.Response(404, request=request),
+        )
+
+    monkeypatch.setattr(c, "request", fake_request)
+    await c.cancel_futures_conditional_order("456")
+
+
+async def test_cancel_spot_price_order_propagates_non_404(monkeypatch):
+    """A 500 on cancel must propagate (the stop may still be resting)."""
+    import httpx as _httpx
+
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        request = _httpx.Request("DELETE", "https://example/x")
+        raise _httpx.HTTPStatusError(
+            "server error", request=request,
+            response=_httpx.Response(500, request=request),
+        )
+
+    monkeypatch.setattr(c, "request", fake_request)
+    with pytest.raises(_httpx.HTTPStatusError):
+        await c.cancel_spot_price_order("123")
+
+
+async def test_get_futures_position_returns_position_dict(monkeypatch):
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        return {"contract": "BTC_USDT", "size": 10, "liquidation_price": "40000", "leverage": 5}
+
+    monkeypatch.setattr(c, "request", fake_request)
+    pos = await c.get_futures_position("BTC_USDT")
+    assert pos is not None
+    assert pos["liquidation_price"] == "40000"
+    assert pos["leverage"] == 5
+
+
+async def test_get_futures_position_returns_none_when_flat(monkeypatch):
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        return None
+
+    monkeypatch.setattr(c, "request", fake_request)
+    assert await c.get_futures_position("BTC_USDT") is None

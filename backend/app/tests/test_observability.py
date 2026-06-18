@@ -30,7 +30,7 @@ def test_metrics_endpoint_exposes_prometheus():
     assert "http_requests_total" in res.text
 
 
-def test_trailing_stop_uses_configured_pct(db_session):
+async def test_trailing_stop_uses_configured_pct(db_session, monkeypatch):
     # 5% trailing stop configured in StrategySettings.
     db_session.add(StrategySettings(name="capital_preservation_v1", trailing_stop_pct=Decimal("0.05")))
     position = Position(
@@ -45,7 +45,12 @@ def test_trailing_stop_uses_configured_pct(db_session):
     db_session.commit()
 
     engine = TradingEngine(db_session, client=None)
-    engine._update_trailing_stop(position, Decimal("120"))
+    # Trailing stop now amends the resting exchange stop; stub it out so the
+    # unit test stays focused on the % math without a live exchange client.
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(engine, "_amend_exchange_stop", AsyncMock())
+    await engine._update_trailing_stop(position, Decimal("120"))
     # new stop = 120 * (1 - 0.05) = 114
     assert position.stop_loss == Decimal("114.00")
 

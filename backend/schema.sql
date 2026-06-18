@@ -27,9 +27,12 @@ CREATE TABLE IF NOT EXISTS positions (
   take_profit NUMERIC(24, 10) NOT NULL,
   trailing_stop NUMERIC(24, 10),
   realized_pnl NUMERIC(24, 10) NOT NULL DEFAULT 0,
+  exchange_stop_order_id VARCHAR(128),
+  stop_placed_at TIMESTAMPTZ,
   opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   closed_at TIMESTAMPTZ
 );
+CREATE INDEX IF NOT EXISTS idx_positions_exchange_stop_order_id ON positions(exchange_stop_order_id);
 
 CREATE TABLE IF NOT EXISTS orders (
   id SERIAL PRIMARY KEY,

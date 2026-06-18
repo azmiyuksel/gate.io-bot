@@ -353,3 +353,111 @@ class GateIOClient:
         if bid not in (None, "", "0") and ask not in (None, "", "0"):
             return (Decimal(str(bid)) + Decimal(str(ask))) / 2
         return None
+
+    # ------------------------------------------------------------------
+    # Exchange-side stop orders (capital preservation).
+    #
+    # A stop resting on the exchange protects the position even when the
+    # scheduler is stuck/crashed or a fast adverse move gaps through the
+    # 15-min polling cadence. The local poll in TradingEngine remains as a
+    # secondary safety net and to drive trailing/breakeven amendments.
+    #
+    # Gate.io exposes two distinct mechanisms:
+    #   - Spot: price-triggered conditional orders (`/spot/price_orders`) that
+    #     fire a market order when the trigger price is crossed.
+    #   - Futures: close-only conditional orders (`/futures/{settle}/conditional_orders`)
+    #     that close the position when the mark/last price crosses the trigger.
+    # ------------------------------------------------------------------
+
+    async def place_spot_stop_loss(
+        self, symbol: str, stop_price: Decimal, base_amount: Decimal, is_short: bool
+    ) -> dict:
+        """Place a spot price-triggered stop-loss that rests on the exchange.
+
+        For a LONG the stop fires when price falls to ``stop_price`` (rule "<=")
+        and sells ``base_amount`` of the base asset. For a SHORT on spot (which
+        cannot exist — shorts are futures-only) the rule would invert, but this
+        path is only reached for longs since ``_execute_entry`` skips shorts on
+        spot. We keep the ``is_short`` flag for symmetry and future proofing.
+        """
+        info = await self.currency_pair_info(symbol)
+        amount = self._round_down(base_amount, int(info.get("amount_precision", 8) or 8))
+        min_base = Decimal(str(info.get("min_base_amount", "0") or "0"))
+        if amount <= 0 or amount < min_base:
+            raise OrderBelowMinimum(
+                f"{symbol} stop-loss sell base {amount} below minimum {min_base}"
+            )
+        # Long stop: price <= trigger -> sell. Short would be price >= trigger -> buy.
+        rule = ">=" if is_short else "<="
+        side = "buy" if is_short else "sell"
+        body = {
+            "trigger": {"price": str(stop_price), "rule": rule},
+            "put": {
+                "type": "market",
+                "side": side,
+                "price": "0",
+                "amount": str(amount),
+                "account": "spot",
+                "time_in_force": "ioc",
+            },
+            "market": {"currency_pair": symbol},
+        }
+        return await self.request("POST", "/spot/price_orders", json_body=body)
+
+    async def cancel_spot_price_order(self, order_id: str) -> None:
+        """Cancel a spot price-triggered order. Best-effort: a 404 (already
+        triggered/cancelled) is swallowed since the desired end state is reached."""
+        try:
+            await self.request("DELETE", f"/spot/price_orders/{order_id}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+
+    async def place_futures_stop_loss(
+        self, contract: str, stop_price: Decimal, is_short: bool
+    ) -> dict:
+        """Place a futures close-only conditional stop-loss order.
+
+        ``close=true`` instructs Gate.io to close the entire position when the
+        trigger fires, so no size is required. A LONG stop fires when the price
+        falls to ``stop_price`` (rule "<="); a SHORT stop fires when the price
+        rises to it (rule ">=").
+        """
+        rule = ">=" if is_short else "<="
+        body = {
+            "contract": contract,
+            "close": True,
+            "price": str(stop_price),
+            "rule": rule,
+            "reduce_only": True,
+            "size": 0,
+        }
+        return await self.request(
+            "POST", f"/futures/{self._settle}/conditional_orders", json_body=body
+        )
+
+    async def cancel_futures_conditional_order(self, order_id: str) -> None:
+        """Cancel a futures conditional order. Best-effort: a 404 is swallowed."""
+        try:
+            await self.request(
+                "DELETE", f"/futures/{self._settle}/conditional_orders/{order_id}"
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+
+    async def get_futures_position(self, contract: str) -> dict | None:
+        """Fetch the live futures position for ``contract``.
+
+        Returns the raw Gate.io position object (with ``liquidation_price``,
+        ``entry_price``, ``size``, ``leverage``, ``margin``, ...) or None when
+        no position is open on that contract. Used for liquidation-distance
+        monitoring and leverage read-back verification.
+        """
+        data = await self.request(
+            "GET", f"/futures/{self._settle}/positions/{contract}"
+        )
+        if not data:
+            return None
+        # Gate.io returns a single position object (or an empty body when flat).
+        return data if isinstance(data, dict) else (data[0] if data else None)

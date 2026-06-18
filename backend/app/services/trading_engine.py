@@ -485,6 +485,12 @@ class TradingEngine:
             ack_time=ack_time,
         )
 
+        # Place the protective stop on the EXCHANGE so it rests there and
+        # protects the position even if the scheduler is stuck/crashed or a
+        # fast adverse move gaps through the 15-min local poll. Best-effort:
+        # on failure the local poll remains as a degraded safety net (logged).
+        await self._place_exchange_stop(position)
+
         await self.notifier.send(f"Opened {direction.upper()} {symbol}: qty={actual_base_qty} entry={fill_price}")
 
     # ------------------------------------------------------------------
@@ -546,7 +552,7 @@ class TradingEngine:
                 elif tp_hit:
                     await self.close_position(position, "take_profit")
                 else:
-                    self._update_trailing_stop(position, price)
+                    await self._update_trailing_stop(position, price)
             except Exception as exc:
                 self._log(
                     "position_manage_error",
@@ -556,6 +562,12 @@ class TradingEngine:
                 self.db.commit()
 
     async def close_position(self, position: Position, reason: str, _retry: int = 3) -> Order:
+        # Cancel the resting exchange stop before closing — the close order
+        # supersedes it. If the stop already triggered (404) the cancel is a
+        # no-op; if it is still resting it is removed so it cannot fire on a
+        # position we are actively closing (which would double-close or, on
+        # spot, attempt to sell more than we hold after the close fills).
+        await self._cancel_exchange_stop(position)
         last_exc: Exception | None = None
         for attempt in range(_retry):
             try:
@@ -624,7 +636,6 @@ class TradingEngine:
             position.closed_at = datetime.now(UTC)
         # Accumulate realized PnL across partial closes instead of overwriting it.
         position.realized_pnl = (position.realized_pnl or Decimal("0")) + pnl
-
         order = Order(
             exchange_order_id=str(response.get("id")),
             position_id=position.id,
@@ -668,6 +679,14 @@ class TradingEngine:
             ack_time=ack_time,
         )
 
+        # Partial close: the close_position entry cancelled the resting stop,
+        # but a residual position remains and still needs exchange-side
+        # protection. Re-place the stop at the existing stop_loss for the
+        # reduced quantity. (Futures close-only stops are size-agnostic so the
+        # re-place is identical; spot re-places with the new smaller base qty.)
+        if position.status == PositionStatus.open:
+            await self._place_exchange_stop(position)
+
         await self.notifier.send(f"Closed {position.symbol}: {reason}, pnl={pnl}")
         return order
 
@@ -683,9 +702,10 @@ class TradingEngine:
             pct = Decimal(str(get_settings().strategy_trailing_stop_pct))
         return Decimal(str(pct))
 
-    def _update_trailing_stop(self, position: Position, price: Decimal) -> None:
+    async def _update_trailing_stop(self, position: Position, price: Decimal) -> None:
         is_short = position.side == OrderSide.sell
         trailing_pct = self._trailing_stop_pct()
+        stop_amended = False
         if is_short:
             # Ratchet the stop DOWN as price falls; skip until a new low is made.
             if position.trailing_stop and price >= position.trailing_stop:
@@ -696,6 +716,7 @@ class TradingEngine:
                     position.stop_loss = new_stop
                     position.trailing_stop = new_stop
                     self.db.commit()
+                    stop_amended = True
         else:
             if position.trailing_stop and price <= position.trailing_stop:
                 return
@@ -704,6 +725,7 @@ class TradingEngine:
                 position.stop_loss = new_stop
                 position.trailing_stop = new_stop
                 self.db.commit()
+                stop_amended = True
         # Breakeven stop: once unrealized profit exceeds the trigger threshold,
         # move stop-loss to entry price so the trade cannot become a loss.
         if not position.breakeven_stop:
@@ -723,6 +745,163 @@ class TradingEngine:
                         f"{position.symbol}: stop moved to breakeven ({position.entry_price})",
                     )
                     self.db.commit()
+                    stop_amended = True
+        # The resting exchange stop must track the new stop level. One amend
+        # call covers both a trailing ratchet and a breakeven move (whichever
+        # fired this cycle). Skipped when nothing changed.
+        if stop_amended:
+            await self._amend_exchange_stop(position)
+
+    # ------------------------------------------------------------------
+    # Exchange-side stop management
+    # ------------------------------------------------------------------
+
+    async def _place_exchange_stop(self, position: Position) -> None:
+        """Place a protective stop on the exchange so it rests there.
+
+        Best-effort: on failure the position stays open and the local 15-min
+        poll remains the only protection (degraded mode). A failure is logged
+        and alerted so the operator can intervene. Idempotent-ish: if a stop
+        is already resting (``exchange_stop_order_id`` set) this is a no-op.
+        """
+        if position.exchange_stop_order_id:
+            return
+        is_short = position.side == OrderSide.sell
+        market = get_settings().trading_market.lower()
+        stop_price = position.stop_loss
+        try:
+            if market == "futures":
+                resp = await self.client.place_futures_stop_loss(
+                    position.symbol, stop_price, is_short=is_short
+                )
+            else:
+                # Spot shorts cannot exist; this path is long-only.
+                resp = await self.client.place_spot_stop_loss(
+                    position.symbol, stop_price, base_amount=position.quantity, is_short=is_short
+                )
+            order_id = str(resp.get("id") or "")
+            if not order_id:
+                raise RuntimeError(f"exchange returned no stop order id: {resp}")
+            position.exchange_stop_order_id = order_id
+            position.stop_placed_at = datetime.now(UTC)
+            self.db.commit()
+            self._log(
+                "exchange_stop_placed",
+                f"{position.symbol}: exchange stop placed at {stop_price} (id={order_id})",
+            )
+        except Exception as exc:
+            # Critical: the position is untracked-by-exchange-stop. Alert so an
+            # operator can place a manual stop. Local polling still guards it.
+            self._log(
+                "exchange_stop_failed",
+                f"{position.symbol}: FAILED to place exchange stop at {stop_price}: {exc}. "
+                f"DEGRADED — local poll only. Place a manual stop if needed.",
+                LogLevel.error,
+            )
+            await self.notifier.send(
+                f"\u26a0\ufe0f {position.symbol}: exchange stop FAILED ({exc}). "
+                f"DEGRADED mode — local poll only. Entry={position.entry_price} stop={stop_price}."
+            )
+            self.db.commit()
+
+    async def _amend_exchange_stop(self, position: Position) -> None:
+        """Amend the resting exchange stop to track ``position.stop_loss``.
+
+        Gate.io has no native amend for conditional orders, so this cancels the
+        old stop and re-places a new one at the current stop level. If the
+        cancel fails for a reason other than 404 (already triggered), we still
+        attempt the re-place: the old stop may have already fired, in which
+        case the position is closing/closed and the new stop is harmless. On
+        full failure the position falls back to local-poll-only protection.
+        """
+        old_id = position.exchange_stop_order_id
+        is_short = position.side == OrderSide.sell
+        market = get_settings().trading_market.lower()
+        stop_price = position.stop_loss
+        if not old_id:
+            # No resting stop — try to place one (covers positions opened in
+            # degraded mode whose exchange placement failed at entry time).
+            await self._place_exchange_stop(position)
+            return
+        # Cancel the existing stop first.
+        try:
+            if market == "futures":
+                await self.client.cancel_futures_conditional_order(old_id)
+            else:
+                await self.client.cancel_spot_price_order(old_id)
+        except Exception as exc:
+            self._log(
+                "exchange_stop_amend_cancel_failed",
+                f"{position.symbol}: cancel of old stop {old_id} failed ({exc}); "
+                f"attempting re-place anyway",
+                LogLevel.warning,
+            )
+        # Re-place at the new stop level.
+        try:
+            if market == "futures":
+                resp = await self.client.place_futures_stop_loss(
+                    position.symbol, stop_price, is_short=is_short
+                )
+            else:
+                resp = await self.client.place_spot_stop_loss(
+                    position.symbol, stop_price, base_amount=position.quantity, is_short=is_short
+                )
+            new_id = str(resp.get("id") or "")
+            if not new_id:
+                raise RuntimeError(f"exchange returned no stop order id: {resp}")
+            position.exchange_stop_order_id = new_id
+            position.stop_placed_at = datetime.now(UTC)
+            self.db.commit()
+            self._log(
+                "exchange_stop_amended",
+                f"{position.symbol}: exchange stop amended to {stop_price} "
+                f"(old={old_id} new={new_id})",
+            )
+        except Exception as exc:
+            # Re-place failed — the position may now have NO resting exchange
+            # stop. Clear the id so a later amend retry can re-place from scratch.
+            position.exchange_stop_order_id = None
+            position.stop_placed_at = None
+            self.db.commit()
+            self._log(
+                "exchange_stop_amend_failed",
+                f"{position.symbol}: FAILED to re-place exchange stop at {stop_price}: {exc}. "
+                f"DEGRADED — local poll only.",
+                LogLevel.error,
+            )
+            await self.notifier.send(
+                f"\u26a0\ufe0f {position.symbol}: exchange stop amend FAILED ({exc}). "
+                f"DEGRADED mode. stop={stop_price}."
+            )
+
+    async def _cancel_exchange_stop(self, position: Position) -> None:
+        """Cancel the resting exchange stop. Used when the position is closed
+        (the close order supersedes the stop) or when the stop has already
+        triggered (404 is expected and swallowed)."""
+        order_id = position.exchange_stop_order_id
+        if not order_id:
+            return
+        market = get_settings().trading_market.lower()
+        try:
+            if market == "futures":
+                await self.client.cancel_futures_conditional_order(order_id)
+            else:
+                await self.client.cancel_spot_price_order(order_id)
+            self._log(
+                "exchange_stop_cancelled",
+                f"{position.symbol}: exchange stop {order_id} cancelled on close",
+            )
+        except Exception as exc:
+            # 404 is expected (stop already fired or was cancelled). Other
+            # errors are non-fatal at this point — the position is closing.
+            self._log(
+                "exchange_stop_cancel_failed",
+                f"{position.symbol}: cancel of stop {order_id} on close failed ({exc})",
+                LogLevel.warning,
+            )
+        position.exchange_stop_order_id = None
+        position.stop_placed_at = None
+        self.db.commit()
 
     def _commit_or_rollback(self, error_detail: str) -> None:
         """Commit; on failure roll back, log, and re-raise (exchange order is live,
