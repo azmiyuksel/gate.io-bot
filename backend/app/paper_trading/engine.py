@@ -453,12 +453,16 @@ class PaperTradingEngine:
                     pass
 
             # Check exits: stop-loss checked before take-profit (capital protection first)
+            # A take_profit of 0/None means the TP is disabled (trend-following
+            # strategies let winners run via trailing + breakeven) — skip the TP
+            # check so the position is never exited at price>=0.
+            tp_active = position.take_profit is not None and position.take_profit > 0
             if is_short:
                 if position.stop_loss and price >= position.stop_loss:
                     reason = "trailing_stop" if position.breakeven_triggered else "stop_loss"
                     self.broker.close_position(position, data, reason)
                     self._log(f"{reason}_triggered", f"{data.symbol} {reason} triggered at ~{price}")
-                elif position.take_profit and price <= position.take_profit:
+                elif tp_active and position.take_profit and price <= position.take_profit:
                     self.broker.close_position(position, data, "take_profit")
                     self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
             else:
@@ -466,7 +470,7 @@ class PaperTradingEngine:
                     reason = "trailing_stop" if position.breakeven_triggered else "stop_loss"
                     self.broker.close_position(position, data, reason)
                     self._log(f"{reason}_triggered", f"{data.symbol} {reason} triggered at ~{price}")
-                elif position.take_profit and price >= position.take_profit:
+                elif tp_active and position.take_profit and price >= position.take_profit:
                     self.broker.close_position(position, data, "take_profit")
                     self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
 

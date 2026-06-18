@@ -46,6 +46,12 @@ class MomentumBreakoutStrategy:
         self.rsi_short_min = Decimal(str(s.momentum_rsi_short_min))
         self.min_atr_pct = Decimal(str(s.momentum_min_atr_pct))
         self.breakout_buffer_atr = Decimal(str(s.momentum_breakout_buffer_atr))
+        # Round-trip cost floor: a breakout smaller than the realistic cost of
+        # round-tripping (2x taker + spread + slippage) is instantly underwater,
+        # so the breakout buffer is floored at this fraction of price. Without
+        # it, a "breakout" can fire inside the bid-ask and bleed fees on every
+        # such signal — a silent edge leak for a frequent-trading strategy.
+        self.round_trip_cost_pct = Decimal(str(s.momentum_round_trip_cost_pct))
         # Symmetric strategy: shorts are always allowed (futures). Kept as a flag so
         # a long-only (spot) deployment can disable shorts without code changes.
         self.allow_short = bool(s.momentum_allow_short)
@@ -79,7 +85,13 @@ class MomentumBreakoutStrategy:
         # Breakout reference levels: the prior N-bar extreme EXCLUDING the forming bar.
         window_high = max(highs[-self.donchian_lookback - 1 : -1])
         window_low = min(lows[-self.donchian_lookback - 1 : -1])
-        buffer = atr_v * self.breakout_buffer_atr
+        # Buffer floored at the round-trip cost: a breakout must clear the prior
+        # extreme by AT LEAST the cost of round-tripping, otherwise it fires
+        # inside the bid-ask+fees band and is instantly underwater. The ATR-based
+        # buffer is the noise filter; the cost floor is the economic floor.
+        atr_buffer = atr_v * self.breakout_buffer_atr
+        cost_buffer = last_price * self.round_trip_cost_pct
+        buffer = max(atr_buffer, cost_buffer)
 
         up_momentum = ema_f > ema_s and last_price > ema_t
         down_momentum = ema_f < ema_s and last_price < ema_t
@@ -108,12 +120,21 @@ class MomentumBreakoutStrategy:
         if up_momentum and breaks_high:
             if rsi_v >= self.rsi_long_max:
                 return Signal(False, "", "rsi_extended", diagnostics=diag)
-            return Signal(True, "long", "long_breakout", last_price, atr_v, diagnostics=diag)
+            return Signal(
+                True, "long", "long_breakout", last_price, atr_v, diagnostics=diag,
+                # Trend-following: no fixed take-profit. Let winners run via
+                # trailing + breakeven — a fixed R:R TP cuts the big winners
+                # that are the main edge of a breakout strategy.
+                expectancy_type="trend",
+            )
 
         if self.allow_short and down_momentum and breaks_low:
             if rsi_v <= self.rsi_short_min:
                 return Signal(False, "", "rsi_extended", diagnostics=diag)
-            return Signal(True, "short", "short_breakout", last_price, atr_v, diagnostics=diag)
+            return Signal(
+                True, "short", "short_breakout", last_price, atr_v, diagnostics=diag,
+                expectancy_type="trend",
+            )
 
         if not (up_momentum or down_momentum):
             return Signal(False, "", "no_momentum", diagnostics=diag)

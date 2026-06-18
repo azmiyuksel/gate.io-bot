@@ -74,7 +74,12 @@ class RiskManager:
         return self.trades.pnl_since(since)
 
     def approve_entry(
-        self, equity: Decimal, entry: Decimal, atr_value: Decimal, side: str = "long"
+        self,
+        equity: Decimal,
+        entry: Decimal,
+        atr_value: Decimal,
+        side: str = "long",
+        expectancy_type: str = "reversion",
     ) -> RiskDecision:
         # Master env kill-switch: live entries require BOT_ENABLED=true as well
         # as the strategy's own enable flag (defense-in-depth alongside scheduler).
@@ -98,9 +103,10 @@ class RiskManager:
         if self.positions.open_count() >= settings.max_open_positions:
             return RiskDecision(False, "max_open_positions")
 
-        # --- TOTAL EXPOSURE GUARD ---
+        # --- TOTAL EXPOSURE GUARD (gross) ---
         # Sum existing open position values plus the proposed new notional and
-        # ensure the total stays below a safe fraction of equity.
+        # ensure the total stays below a safe fraction of equity. Gross = longs
+        # + shorts both add (bounds total market exposure regardless of direction).
         max_total_exposure_pct = Decimal(str(get_settings().max_total_exposure_pct))
         existing_exposure = self.positions.open_notional()
         new_notional = equity * settings.max_capital_per_trade_pct
@@ -109,6 +115,24 @@ class RiskManager:
                 False,
                 f"max_total_exposure: {existing_exposure + new_notional:.2f} > limit {equity * max_total_exposure_pct:.2f}",
             )
+
+        # --- NET EXPOSURE GUARD (directional bias) ---
+        # Longs minus shorts (signed). A market-neutral book (longs ≈ shorts)
+        # has near-zero net and should not be over-bound by the gross cap, while
+        # a one-way long book hits the net cap. Binds the directional bias so
+        # "8 longs" can't become a 30%+ one-way bet. The new position's signed
+        # notional is added to the existing net to check the post-trade bias.
+        max_net_exposure_pct = Decimal(str(get_settings().max_net_exposure_pct))
+        if max_net_exposure_pct > 0:
+            existing_net = self.positions.net_notional()
+            signed_new = new_notional if side != "short" else -new_notional
+            post_net = existing_net + signed_new
+            if abs(post_net) > equity * max_net_exposure_pct:
+                return RiskDecision(
+                    False,
+                    f"max_net_exposure: post-trade net {post_net:.2f} "
+                    f"|abs| > limit {equity * max_net_exposure_pct:.2f}",
+                )
 
         daily_limit = -(equity * settings.daily_max_loss_pct)
         weekly_limit = -(equity * settings.weekly_max_loss_pct)
@@ -123,14 +147,19 @@ class RiskManager:
         # formula would put a short's stop below entry where it can never trigger).
         stop_distance = atr_value * settings.atr_multiplier
         is_long = side != "short"
+        # Take-profit is set only for mean-reversion strategies. A trend-following
+        # (momentum/breakout) strategy edges on the fat right tail — a fixed R:R
+        # take-profit cuts the big winners that are its main edge, so the TP is
+        # left at 0 (disabled) and winners are managed by trailing + breakeven.
+        use_take_profit = expectancy_type != "trend"
         if is_long:
             stop_loss = entry - stop_distance
-            take_profit = entry + (stop_distance * settings.min_reward_risk)
-            valid = stop_loss > 0 and take_profit > entry
+            take_profit = entry + (stop_distance * settings.min_reward_risk) if use_take_profit else Decimal("0")
+            valid = stop_loss > 0 and (not use_take_profit or take_profit > entry)
         else:
             stop_loss = entry + stop_distance
-            take_profit = entry - (stop_distance * settings.min_reward_risk)
-            valid = take_profit > 0 and stop_loss > entry
+            take_profit = entry - (stop_distance * settings.min_reward_risk) if use_take_profit else Decimal("0")
+            valid = (not use_take_profit or take_profit > 0) and stop_loss > entry
         risk_per_unit = stop_distance
         if not valid or risk_per_unit <= 0:
             return RiskDecision(False, "invalid_risk_levels")

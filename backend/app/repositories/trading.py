@@ -42,11 +42,49 @@ class PositionRepository(Repository[Position]):
         )
 
     def open_notional(self) -> Decimal:
-        """Total notional value of all open positions (entry_price * quantity)."""
-        value = self.db.query(
-            func.coalesce(func.sum(Position.entry_price * Position.quantity), 0)
-        ).filter(Position.status == PositionStatus.open).scalar()
-        return Decimal(str(value))
+        """GROSS notional of all open positions (sum of |entry_price * quantity|).
+
+        Longs and shorts both ADD to gross — this bounds total market exposure
+        regardless of direction. Used by the gross exposure guard.
+        """
+        rows = (
+            self.db.query(Position.side, Position.entry_price, Position.quantity)
+            .filter(Position.status == PositionStatus.open)
+            .all()
+        )
+        return Decimal(str(sum(abs(float(r.entry_price) * float(r.quantity)) for r in rows)))
+
+    def net_notional(self) -> Decimal:
+        """NET notional of all open positions (longs minus shorts, signed).
+
+        A long and a short on the same asset partially offset, so net exposure
+        measures the directional bias of the book. Positive = net long,
+        negative = net short. Used by the net exposure guard — a market-neutral
+        book (longs ≈ shorts) has near-zero net and should not be over-bound by
+        the gross cap, while a one-way long book hits the net cap.
+        """
+        rows = (
+            self.db.query(Position.side, Position.entry_price, Position.quantity)
+            .filter(Position.status == PositionStatus.open)
+            .all()
+        )
+        total = Decimal("0")
+        for r in rows:
+            signed = float(r.entry_price) * float(r.quantity)
+            if r.side == "sell":  # short — subtract
+                signed = -signed
+            total += Decimal(str(signed))
+        return total
+
+    def open_symbols(self) -> list[str]:
+        """Symbols of all open positions (deduped)."""
+        rows = (
+            self.db.query(Position.symbol)
+            .filter(Position.status == PositionStatus.open)
+            .distinct()
+            .all()
+        )
+        return [r[0] for r in rows]
 
 
 class OrderRepository(Repository[Order]):

@@ -16,6 +16,12 @@ class Signal:
     entry_price: Decimal | None = None
     atr_value: Decimal | None = None
     diagnostics: dict | None = None
+    # Strategy "expectancy type": "reversion" (fixed R:R take-profit suits
+    # mean-reversion) or "trend" (no fixed TP — let winners run via trailing +
+    # breakeven, suits trend-following/momentum). The risk manager uses this to
+    # decide whether to set a take-profit. Default "reversion" keeps the legacy
+    # behavior for strategies that don't set it.
+    expectancy_type: str = "reversion"
 
 
 class CapitalPreservationStrategy:

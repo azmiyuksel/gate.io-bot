@@ -108,3 +108,135 @@ def test_risk_based_sizing_targets_fixed_risk(db_session, monkeypatch):
     assert risk.allowed
     assert risk.quantity == Decimal("200") / Decimal("60")
     assert risk.quantity * (entry - risk.stop_loss) == Decimal("200")
+
+
+def test_trend_strategy_disables_take_profit(db_session, monkeypatch):
+    """A trend-following (momentum) strategy must NOT set a fixed take-profit —
+    a fixed R:R TP cuts the big winners that are its main edge. TP is set to 0
+    so the position is managed only by trailing + breakeven + stop-loss."""
+    from decimal import Decimal
+
+    from app.core.config import get_settings
+    from app.models.entities import StrategySettings
+    from app.services.risk.manager import RiskManager
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "bot_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "risk_based_sizing_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "max_risk_per_trade_pct", 0.02, raising=False)
+    monkeypatch.setattr(settings, "max_total_exposure_pct", 0.30, raising=False)
+    monkeypatch.setattr(settings, "max_net_exposure_pct", 0.30, raising=False)
+    monkeypatch.setattr(settings, "vol_targeting_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "drawdown_derisk_enabled", False, raising=False)
+
+    row = db_session.query(StrategySettings).first() or StrategySettings()
+    if row.id is None:
+        db_session.add(row)
+    row.is_enabled = True
+    row.atr_multiplier = Decimal("2")
+    row.min_reward_risk = Decimal("1.5")
+    row.max_capital_per_trade_pct = Decimal("0.05")
+    db_session.commit()
+
+    # Trend expectancy -> take_profit is 0 (disabled).
+    trend = RiskManager(db_session).approve_entry(
+        Decimal("10000"), Decimal("100"), Decimal("2"), expectancy_type="trend"
+    )
+    assert trend.allowed
+    assert trend.take_profit == Decimal("0")
+    # Stop still set (capital protection intact).
+    assert trend.stop_loss > 0
+
+    # Reversion expectancy -> take_profit set normally (1.5 R).
+    reversion = RiskManager(db_session).approve_entry(
+        Decimal("10000"), Decimal("100"), Decimal("2"), expectancy_type="reversion"
+    )
+    assert reversion.allowed
+    assert reversion.take_profit > reversion.stop_loss
+
+
+def test_net_exposure_guard_blocks_one_way_book(db_session, monkeypatch):
+    """The net exposure cap must block a one-way long book that passes the gross
+    cap — a 30% gross + 30% new long is 60% gross (blocked) but more importantly
+    60% net long (blocked by the net cap before it ever gets there)."""
+    from decimal import Decimal
+
+    from app.core.config import get_settings
+    from app.models.entities import Position, StrategySettings
+    from app.models.enums import OrderSide, PositionStatus
+    from app.services.risk.manager import RiskManager
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "bot_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "risk_based_sizing_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "max_risk_per_trade_pct", 0.02, raising=False)
+    monkeypatch.setattr(settings, "vol_targeting_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "drawdown_derisk_enabled", False, raising=False)
+    # Tight net cap so the test triggers without huge positions.
+    monkeypatch.setattr(settings, "max_total_exposure_pct", 0.50, raising=False)
+    monkeypatch.setattr(settings, "max_net_exposure_pct", 0.20, raising=False)
+
+    row = db_session.query(StrategySettings).first() or StrategySettings()
+    if row.id is None:
+        db_session.add(row)
+    row.is_enabled = True
+    row.atr_multiplier = Decimal("2")
+    row.min_reward_risk = Decimal("1.5")
+    row.max_capital_per_trade_pct = Decimal("0.05")
+    db_session.commit()
+
+    # Existing long: 2500 notional on 10000 equity = 25% net long.
+    db_session.add(Position(
+        symbol="BTC_USDT", side=OrderSide.buy, entry_price=Decimal("100"),
+        quantity=Decimal("25"), stop_loss=Decimal("90"), take_profit=Decimal("0"),
+        status=PositionStatus.open,
+    ))
+    db_session.commit()
+
+    # New long: 5% notional = 500. Post-trade net = 3000 = 30% > 20% cap -> blocked.
+    decision = RiskManager(db_session).approve_entry(
+        Decimal("10000"), Decimal("100"), Decimal("2"), side="long"
+    )
+    assert decision.allowed is False
+    assert "max_net_exposure" in decision.reason
+
+
+def test_net_exposure_guard_allows_market_neutral(db_session, monkeypatch):
+    """A long + short book has low NET exposure even with high gross — the net
+    cap should NOT block a market-neutral entry that the gross cap passes."""
+    from decimal import Decimal
+
+    from app.core.config import get_settings
+    from app.models.entities import Position, StrategySettings
+    from app.models.enums import OrderSide, PositionStatus
+    from app.services.risk.manager import RiskManager
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "bot_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "risk_based_sizing_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "max_risk_per_trade_pct", 0.02, raising=False)
+    monkeypatch.setattr(settings, "vol_targeting_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "drawdown_derisk_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "max_total_exposure_pct", 0.50, raising=False)
+    monkeypatch.setattr(settings, "max_net_exposure_pct", 0.20, raising=False)
+
+    row = db_session.query(StrategySettings).first() or StrategySettings()
+    if row.id is None:
+        db_session.add(row)
+    row.is_enabled = True
+    row.atr_multiplier = Decimal("2")
+    row.min_reward_risk = Decimal("1.5")
+    row.max_capital_per_trade_pct = Decimal("0.05")
+    db_session.commit()
+
+    # Existing long 2500 notional; new SHORT 500 -> post-trade net = 2000 = 20% (at cap, ok).
+    db_session.add(Position(
+        symbol="BTC_USDT", side=OrderSide.buy, entry_price=Decimal("100"),
+        quantity=Decimal("25"), stop_loss=Decimal("90"), take_profit=Decimal("0"),
+        status=PositionStatus.open,
+    ))
+    db_session.commit()
+    decision = RiskManager(db_session).approve_entry(
+        Decimal("10000"), Decimal("100"), Decimal("2"), side="short"
+    )
+    assert decision.allowed is True

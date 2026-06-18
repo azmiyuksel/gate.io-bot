@@ -101,7 +101,15 @@ class Settings(BaseSettings):
     # too correlated with an already-open position, so "8 positions" don't collapse
     # into one concentrated directional bet.
     correlation_filter_enabled: bool = True
-    max_position_correlation: float = 0.85
+    # Pairwise correlation cap (candidate vs EACH open position). Lowered from
+    # 0.85 (which let 8 positions at 0.84 corr each pass — effectively one 8x
+    # directional bet) to 0.65 so a "diversified" book is actually diversified.
+    max_position_correlation: float = 0.65
+    # Aggregate portfolio correlation cap: the MEAN pairwise correlation of the
+    # candidate + all open positions must stay below this. Three positions each
+    # at 0.64 pairwise corr pass the pairwise cap but form one concentrated
+    # bet — the aggregate cap catches that. 0 disables (legacy pairwise-only).
+    max_portfolio_correlation: float = 0.55
 
     # --- Volatility targeting (opt-in): scale size inversely to volatility ---
     vol_targeting_enabled: bool = False
@@ -186,9 +194,20 @@ class Settings(BaseSettings):
     momentum_rsi_long_max: float = 80.0
     momentum_rsi_short_min: float = 20.0
     # Minimum ATR as a fraction of price; below this the move can't clear costs.
-    momentum_min_atr_pct: float = 0.0015
+    # Bumped from 0.0015 (0.15%) to 0.004 (0.4%) — the old floor was BELOW the
+    # typical round-trip cost (2x taker ~0.1% + spread + slippage), so a
+    # "breakout" could fire inside the bid-ask and be instantly underwater.
+    momentum_min_atr_pct: float = 0.004
     # Breakout must clear the prior extreme by this fraction of ATR (noise filter).
+    # Treated as a FLOOR: the effective buffer is max(this * ATR, round_trip_cost)
+    # so a breakout can never fire inside the realistic fee+spread+slippage band.
     momentum_breakout_buffer_atr: float = 0.05
+    # Estimated round-trip cost (taker in + taker out + spread + slippage) as a
+    # fraction of price. The breakout buffer is floored at this so a "breakout"
+    # smaller than the cost of round-tripping never fires. Futures taker 5bps x2
+    # + spread 2bps + slippage 5bps ≈ 0.0022; spot base tier ~0.2% x2 + ... ≈ 0.005.
+    # Default futures; override via env for spot.
+    momentum_round_trip_cost_pct: float = 0.0022
     momentum_allow_short: bool = True
 
     # --- Financing / funding carry on held positions ---
@@ -235,8 +254,17 @@ class Settings(BaseSettings):
     # the stop-loss distance is wide but the trade size is large.
     max_risk_per_trade_pct: float = 0.02
     # Maximum total portfolio exposure as a fraction of equity. Prevents over-allocation
-    # when max_open_positions is set too high.
+    # when max_open_positions is set too high. This is the GROSS notional cap
+    # (sum of |entry_price * quantity| across open positions, longs + shorts both
+    # add) — bounds total market exposure regardless of direction.
     max_total_exposure_pct: float = 0.30
+    # Maximum NET portfolio exposure as a fraction of equity (longs minus
+    # shorts, signed). A long and a short on the same asset partially offset, so
+    # the gross cap can over-bind a market-neutral book while leaving a one-way
+    # 30%-long book unchecked on the net side. The net cap bounds the
+    # directional bias: 0.30 == up to 30% net long (or short). 0 disables
+    # (legacy gross-only).
+    max_net_exposure_pct: float = 0.30
 
     # Equity used when the exchange balance cannot be fetched (no keys / offline).
     fallback_equity: float = 10000.0

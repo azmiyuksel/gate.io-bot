@@ -249,7 +249,11 @@ class TradingEngine:
         the risk manager rejects the entry or the scaled quantity is <= 0.
         """
         decision = self.risk.approve_entry(
-            equity, signal.entry_price, signal.atr_value, side=getattr(signal, "direction", "long")
+            equity,
+            signal.entry_price,
+            signal.atr_value,
+            side=getattr(signal, "direction", "long"),
+            expectancy_type=getattr(signal, "expectancy_type", "reversion"),
         )
         if not decision.allowed:
             self._log("risk", f"{symbol}: {decision.reason}")
@@ -278,8 +282,18 @@ class TradingEngine:
 
     def _check_correlation_filter(self, symbol: str) -> bool:
         """Correlation-aware portfolio guard: block a new entry that is too
-        correlated with an already-open position, so several "diversified" trades
-        don't become one concentrated directional bet."""
+        correlated with already-open positions, so several "diversified" trades
+        don't become one concentrated directional bet.
+
+        Two checks:
+          1. Pairwise: the candidate's max correlation with ANY open position
+             must stay below `max_position_correlation`.
+          2. Aggregate: the MEAN pairwise correlation across the candidate +
+             all open positions must stay below `max_portfolio_correlation`.
+             The pairwise cap alone lets 8 positions at 0.64 corr each pass —
+             effectively one 8x directional bet. The aggregate cap catches
+             that concentration.
+        """
         if not get_settings().correlation_filter_enabled:
             return True
         open_syms = [p.symbol for p in self.positions.open_positions() if p.symbol != symbol]
@@ -288,15 +302,38 @@ class TradingEngine:
         corr = CorrelationEngine(self.db).calculate_correlation(
             [symbol, *open_syms], get_settings().market_data_interval
         )
-        mx = max_correlation(corr.get("matrix", {}), symbol, open_syms)
+        matrix = corr.get("matrix", {})
+        # 1. Pairwise cap.
+        mx = max_correlation(matrix, symbol, open_syms)
         if mx > float(get_settings().max_position_correlation):
             self._log(
                 "correlation_filter",
-                f"{symbol}: skipped, correlation {mx:.2f} with open positions "
+                f"{symbol}: skipped, pairwise correlation {mx:.2f} with an open position "
                 f"> {get_settings().max_position_correlation}",
             )
             self.db.commit()
             return False
+        # 2. Aggregate portfolio correlation cap.
+        agg_cap = float(getattr(get_settings(), "max_portfolio_correlation", 0) or 0)
+        if agg_cap > 0 and len(open_syms) >= 2:
+            all_syms = [symbol, *open_syms]
+            pair_corrs = []
+            for i in range(len(all_syms)):
+                for j in range(i + 1, len(all_syms)):
+                    row = matrix.get(all_syms[i], {})
+                    val = row.get(all_syms[j])
+                    if val is not None:
+                        pair_corrs.append(float(val))
+            if pair_corrs:
+                agg = sum(pair_corrs) / len(pair_corrs)
+                if agg > agg_cap:
+                    self._log(
+                        "correlation_filter",
+                        f"{symbol}: skipped, aggregate portfolio correlation {agg:.2f} "
+                        f"> {agg_cap:.2f} ({len(open_syms)} open positions too concentrated)",
+                    )
+                    self.db.commit()
+                    return False
         return True
 
     async def _check_mtf_filter(self, symbol: str, signal) -> bool:
@@ -580,13 +617,17 @@ class TradingEngine:
 
                 # Direction-aware exits: a SHORT's protective stop sits ABOVE entry
                 # (rising price is the loss) and its target BELOW entry, mirrored.
+                # A take_profit of 0 means the TP is disabled (trend-following
+                # strategies let winners run via trailing + breakeven) — skip the
+                # TP check so the position is never exited at price>=0.
                 is_short = position.side == OrderSide.sell
+                tp_active = position.take_profit is not None and position.take_profit > 0
                 if is_short:
                     stop_hit = price >= position.stop_loss
-                    tp_hit = price <= position.take_profit
+                    tp_hit = tp_active and price <= position.take_profit
                 else:
                     stop_hit = price <= position.stop_loss
-                    tp_hit = price >= position.take_profit
+                    tp_hit = tp_active and price >= position.take_profit
                 # Intrabar gap protection: between 15-minute polls the price can wick
                 # through a level and recover. Catch that via the candle's low/high —
                 # but only for candles that fully postdate entry, so a pre-entry wick
@@ -601,12 +642,12 @@ class TradingEngine:
                     if is_short:
                         if bar_high >= position.stop_loss:
                             stop_hit = True
-                        if bar_low <= position.take_profit:
+                        if tp_active and bar_low <= position.take_profit:
                             tp_hit = True
                     else:
                         if bar_low <= position.stop_loss:
                             stop_hit = True
-                        if bar_high >= position.take_profit:
+                        if tp_active and bar_high >= position.take_profit:
                             tp_hit = True
 
                 # Evaluate the stop before the take-profit — protect capital first.
