@@ -230,6 +230,19 @@ class Settings(BaseSettings):
     funding_signal_enabled: bool = True
     funding_signal_threshold_pct: float = 0.0005
     funding_signal_risk_mult: float = 0.5
+    # --- Order book imbalance (microstructure entry gate) ---
+    # A breakout with order-book imbalance in the entry direction has better
+    # follow-through (resting depth absorbs the entry). Imbalance against the
+    # entry is a headwind (the breakout hits a wall). Uses a REST snapshot of
+    # the best N bids/asks; at a 15-min cadence this is sufficient and far
+    # simpler than a WS subscription. Imbalance = (bid_depth - ask_depth) /
+    # (bid_depth + ask_depth), in [-1, 1]. When adverse imbalance > threshold,
+    # the entry risk is halved (de-risk); favorable imbalance does NOT boost
+    # size (asymmetric — protect capital first). 0 disables.
+    orderbook_imbalance_enabled: bool = True
+    orderbook_imbalance_threshold: float = 0.3
+    orderbook_imbalance_risk_mult: float = 0.5
+    orderbook_depth: int = 20
 
     # --- Paper-trading entry threshold overrides ---
     # Paper runs DELIBERATELY looser than live so the simulation generates enough

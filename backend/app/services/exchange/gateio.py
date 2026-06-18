@@ -586,3 +586,22 @@ class GateIOClient:
             return data if isinstance(data, dict) else (data[0] if data else None)
         except Exception:
             return None
+
+    async def get_order_book(self, symbol: str, depth: int = 20) -> dict | None:
+        """Fetch the spot order book snapshot (best N bids/asks).
+
+        Returns ``{"bids": [[price, amount], ...], "asks": [[price, amount], ...]}``
+        or None on failure. Used by the order-book-imbalance entry gate: a
+        breakout with bid-side imbalance (more buy depth) has better follow-
+        through; ask-side imbalance against a long is a headwind. Resting
+        snapshot (not WS) — sufficient at a 15-min cadence and far simpler than
+        a WS subscription.
+        """
+        try:
+            data = await self.request(
+                "GET", "/spot/order_book",
+                params={"currency_pair": symbol, "limit": int(depth)},
+            )
+            return data
+        except Exception:
+            return None

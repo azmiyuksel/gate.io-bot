@@ -153,8 +153,12 @@ class TradingEngine:
         # funding does NOT boost size (asymmetric — protect capital first).
         funding_mult = await self._check_funding_signal(symbol, signal)
 
+        # Order-book imbalance (microstructure): a breakout against a wall of
+        # opposing depth has worse follow-through — de-risk.
+        ob_mult = await self._check_orderbook_imbalance(symbol, signal)
+
         result = self._approve_risk_and_size(
-            symbol, equity, signal, risk_mult, health_mult, data_risk_mult, funding_mult
+            symbol, equity, signal, risk_mult, health_mult, data_risk_mult, funding_mult * ob_mult
         )
         if result is None:
             return
@@ -435,6 +439,56 @@ class TradingEngine:
             "funding_signal",
             f"{symbol}: {'short' if is_short else 'long'} de-risked by funding "
             f"rate {rate:.6f} (adverse > threshold {threshold:.6f}) -> size x{mult}",
+        )
+        self.db.commit()
+        return mult
+
+    async def _check_orderbook_imbalance(self, symbol: str, signal) -> Decimal:
+        """Order-book imbalance risk multiplier (microstructure entry gate).
+
+        Computes imbalance = (bid_depth - ask_depth) / (bid_depth + ask_depth)
+        over the best N levels. A LONG with ask-side imbalance (more sell
+        depth) hits a wall of resting sellers — worse follow-through — so the
+        size is de-risked. A SHORT with bid-side imbalance is the mirror.
+        Favorable imbalance does NOT boost size (asymmetric).
+
+        Returns the multiplier (1.0 = no adjustment, risk_mult = de-risked).
+        A disabled signal, fetch failure, or empty book returns 1.0 (advisory).
+        """
+        _settings = get_settings()
+        if not getattr(_settings, "orderbook_imbalance_enabled", False):
+            return Decimal("1")
+        threshold = float(_settings.orderbook_imbalance_threshold)
+        if threshold <= 0:
+            return Decimal("1")
+        try:
+            book = await self.client.get_order_book(symbol, depth=int(_settings.orderbook_depth))
+        except Exception:
+            return Decimal("1")
+        if not book:
+            return Decimal("1")
+        bids = book.get("bids") or []
+        asks = book.get("asks") or []
+        if not bids or not asks:
+            return Decimal("1")
+        # Sum the base amounts at each level. Gate.io order book: [price, amount].
+        bid_depth = sum(float(level[1]) for level in bids if len(level) >= 2)
+        ask_depth = sum(float(level[1]) for level in asks if len(level) >= 2)
+        total = bid_depth + ask_depth
+        if total <= 0:
+            return Decimal("1")
+        imbalance = (bid_depth - ask_depth) / total  # [-1, 1]
+        is_short = (getattr(signal, "direction", "long") or "long") == "short"
+        # Adverse for a long: ask-heavy book (imbalance < -threshold).
+        # Adverse for a short: bid-heavy book (imbalance > threshold).
+        adverse = (imbalance < -threshold) if not is_short else (imbalance > threshold)
+        if not adverse:
+            return Decimal("1")
+        mult = Decimal(str(_settings.orderbook_imbalance_risk_mult))
+        self._log(
+            "orderbook_imbalance",
+            f"{symbol}: {'short' if is_short else 'long'} de-risked by order-book "
+            f"imbalance {imbalance:.3f} (adverse > threshold {threshold:.3f}) -> size x{mult}",
         )
         self.db.commit()
         return mult

@@ -746,3 +746,150 @@ async def test_funding_signal_no_op_on_spot(db_session, monkeypatch):
     mult = await engine._check_funding_signal("BTC_USDT", sig)
     assert mult == Decimal("1")
     client.get_futures_funding_rate.assert_not_called()
+
+
+# --- Order book imbalance (microstructure entry gate) ---
+
+
+async def test_get_order_book_returns_bids_asks(monkeypatch):
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        return {
+            "bids": [["100.0", "1.5"], ["99.9", "2.0"]],
+            "asks": [["100.1", "0.5"], ["100.2", "1.0"]],
+        }
+
+    monkeypatch.setattr(c, "request", fake_request)
+    book = await c.get_order_book("BTC_USDT", depth=20)
+    assert book is not None
+    assert len(book["bids"]) == 2
+    assert len(book["asks"]) == 2
+
+
+async def test_get_order_book_returns_none_on_failure(monkeypatch):
+    c = GateIOClient()
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(c, "request", fake_request)
+    assert await c.get_order_book("BTC_USDT") is None
+
+
+async def test_orderbook_imbalance_de_risks_long_against_ask_wall(db_session, monkeypatch):
+    """A LONG entry when ask depth >> bid depth (sell wall) is de-risked — the
+    breakout hits resting sellers and has worse follow-through."""
+    from unittest.mock import AsyncMock
+
+    from app.core.config import get_settings
+    from app.models.entities import StrategySettings
+    from app.services.strategy.signals import Signal
+    from app.services.trading_engine import TradingEngine
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "orderbook_imbalance_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "orderbook_imbalance_threshold", 0.3, raising=False)
+    monkeypatch.setattr(settings, "orderbook_imbalance_risk_mult", 0.5, raising=False)
+
+    row = db_session.query(StrategySettings).first() or StrategySettings()
+    if row.id is None:
+        db_session.add(row)
+    row.is_enabled = True
+    db_session.commit()
+
+    # Ask-heavy: bid_depth=3.5, ask_depth=10.5 -> imbalance = -0.5 < -0.3.
+    client = AsyncMock()
+    client.get_order_book = AsyncMock(return_value={
+        "bids": [["100", "1.5"], ["99", "2.0"]],
+        "asks": [["101", "5.0"], ["102", "5.5"]],
+    })
+    engine = TradingEngine(db_session, client)
+    engine.notifier = AsyncMock()
+    sig = Signal(True, "long", "long_breakout", Decimal("100"), Decimal("2"))
+    mult = await engine._check_orderbook_imbalance("BTC_USDT", sig)
+    assert mult == Decimal("0.5")
+
+
+async def test_orderbook_imbalance_de_risks_short_against_bid_wall(db_session, monkeypatch):
+    """A SHORT entry when bid depth >> ask depth (buy wall) is de-risked."""
+    from unittest.mock import AsyncMock
+
+    from app.core.config import get_settings
+    from app.models.entities import StrategySettings
+    from app.services.strategy.signals import Signal
+    from app.services.trading_engine import TradingEngine
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "orderbook_imbalance_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "orderbook_imbalance_threshold", 0.3, raising=False)
+    monkeypatch.setattr(settings, "orderbook_imbalance_risk_mult", 0.5, raising=False)
+
+    row = db_session.query(StrategySettings).first() or StrategySettings()
+    if row.id is None:
+        db_session.add(row)
+    row.is_enabled = True
+    db_session.commit()
+
+    # Bid-heavy: bid_depth=10.5, ask_depth=3.5 -> imbalance = +0.5 > 0.3 (adverse for short).
+    client = AsyncMock()
+    client.get_order_book = AsyncMock(return_value={
+        "bids": [["100", "5.0"], ["99", "5.5"]],
+        "asks": [["101", "1.5"], ["102", "2.0"]],
+    })
+    engine = TradingEngine(db_session, client)
+    engine.notifier = AsyncMock()
+    sig = Signal(True, "short", "short_breakout", Decimal("100"), Decimal("2"))
+    mult = await engine._check_orderbook_imbalance("BTC_USDT", sig)
+    assert mult == Decimal("0.5")
+
+
+async def test_orderbook_imbalance_no_boost_for_favorable_long(db_session, monkeypatch):
+    """Bid-heavy book is favorable for a long (buy support) — but the signal is
+    asymmetric: it does NOT boost size (protect capital first)."""
+    from unittest.mock import AsyncMock
+
+    from app.core.config import get_settings
+    from app.models.entities import StrategySettings
+    from app.services.strategy.signals import Signal
+    from app.services.trading_engine import TradingEngine
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "orderbook_imbalance_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "orderbook_imbalance_threshold", 0.3, raising=False)
+
+    row = db_session.query(StrategySettings).first() or StrategySettings()
+    if row.id is None:
+        db_session.add(row)
+    row.is_enabled = True
+    db_session.commit()
+
+    # Bid-heavy (favorable for long): imbalance = +0.5 > 0.3 but NOT adverse for long.
+    client = AsyncMock()
+    client.get_order_book = AsyncMock(return_value={
+        "bids": [["100", "5.0"], ["99", "5.5"]],
+        "asks": [["101", "1.5"], ["102", "2.0"]],
+    })
+    engine = TradingEngine(db_session, client)
+    engine.notifier = AsyncMock()
+    sig = Signal(True, "long", "long_breakout", Decimal("100"), Decimal("2"))
+    mult = await engine._check_orderbook_imbalance("BTC_USDT", sig)
+    assert mult == Decimal("1")  # no boost
+
+
+async def test_orderbook_imbalance_disabled_returns_one(db_session, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.core.config import get_settings
+    from app.services.strategy.signals import Signal
+    from app.services.trading_engine import TradingEngine
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "orderbook_imbalance_enabled", False, raising=False)
+
+    client = AsyncMock()
+    engine = TradingEngine(db_session, client)
+    sig = Signal(True, "long", "long_breakout", Decimal("100"), Decimal("2"))
+    mult = await engine._check_orderbook_imbalance("BTC_USDT", sig)
+    assert mult == Decimal("1")
+    client.get_order_book.assert_not_called()
