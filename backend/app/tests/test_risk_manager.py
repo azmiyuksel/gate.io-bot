@@ -240,3 +240,112 @@ def test_net_exposure_guard_allows_market_neutral(db_session, monkeypatch):
         Decimal("10000"), Decimal("100"), Decimal("2"), side="short"
     )
     assert decision.allowed is True
+
+
+def test_kelly_sizing_returns_none_without_track_record(db_session, monkeypatch):
+    """No track record -> _kelly_scale returns None -> deterministic sizing."""
+    from app.core.config import get_settings
+    from app.services.risk.manager import RiskManager
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "kelly_sizing_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "kelly_min_trades", 30, raising=False)
+    rm = RiskManager(db_session)
+    # No trades in the DB -> below min_trades -> None.
+    assert rm._kelly_scale("long") is None
+
+
+def test_kelly_sizing_scales_with_demonstrated_edge(db_session, monkeypatch):
+    """With a strong track record (high win-rate + good payoff), ¼-Kelly scales
+    size up (capped at 1.0). With a weak/no edge, it floors at 0.25."""
+    from datetime import UTC, datetime
+
+    from app.core.config import get_settings
+    from app.models.entities import Trade
+    from app.models.enums import OrderSide
+    from app.services.risk.manager import RiskManager
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "kelly_sizing_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "kelly_min_trades", 10, raising=False)
+    monkeypatch.setattr(settings, "kelly_fraction", 0.25, raising=False)
+
+    # 8 winning trades (pnl +50) and 2 losing trades (pnl -10) -> W=0.8, R=5.
+    # Kelly f* = 0.8 - 0.2/5 = 0.76; quarter-Kelly = 0.19 -> floored at 0.25.
+    for i in range(8):
+        db_session.add(Trade(
+            strategy_name="momentum_breakout_v1", symbol="BTC_USDT",
+            side=OrderSide.buy, price=Decimal("100"), quantity=Decimal("1"),
+            fee=Decimal("0"), realized_pnl=Decimal("50"),
+            traded_at=datetime(2024, 1, 1 + i, tzinfo=UTC),
+        ))
+    for i in range(2):
+        db_session.add(Trade(
+            strategy_name="momentum_breakout_v1", symbol="BTC_USDT",
+            side=OrderSide.buy, price=Decimal("100"), quantity=Decimal("1"),
+            fee=Decimal("0"), realized_pnl=Decimal("-10"),
+            traded_at=datetime(2024, 2, 1 + i, tzinfo=UTC),
+        ))
+    db_session.commit()
+
+    rm = RiskManager(db_session)
+    scale = rm._kelly_scale("long")
+    assert scale is not None
+    # 0.76 * 0.25 = 0.19 -> floored at 0.25.
+    assert scale == Decimal("0.25")
+
+    # A balanced book (5 wins +50, 5 losses -50) -> W=0.5, R=1 -> f*=0 -> floor 0.25.
+    db_session.query(Trade).delete()
+    for i in range(5):
+        db_session.add(Trade(
+            strategy_name="momentum_breakout_v1", symbol="BTC_USDT",
+            side=OrderSide.buy, price=Decimal("100"), quantity=Decimal("1"),
+            fee=Decimal("0"), realized_pnl=Decimal("50"),
+            traded_at=datetime(2024, 1, 1 + i, tzinfo=UTC),
+        ))
+    for i in range(5):
+        db_session.add(Trade(
+            strategy_name="momentum_breakout_v1", symbol="BTC_USDT",
+            side=OrderSide.buy, price=Decimal("100"), quantity=Decimal("1"),
+            fee=Decimal("0"), realized_pnl=Decimal("-50"),
+            traded_at=datetime(2024, 2, 1 + i, tzinfo=UTC),
+        ))
+    db_session.commit()
+    scale = rm._kelly_scale("long")
+    assert scale == Decimal("0.25")  # no edge -> floor
+
+
+def test_kelly_sizing_capped_at_one(db_session, monkeypatch):
+    """A very strong edge must not more than double the size (cap 1.0)."""
+    from datetime import UTC, datetime
+
+    from app.core.config import get_settings
+    from app.models.entities import Trade
+    from app.models.enums import OrderSide
+    from app.services.risk.manager import RiskManager
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "kelly_sizing_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "kelly_min_trades", 5, raising=False)
+    monkeypatch.setattr(settings, "kelly_fraction", 1.0, raising=False)  # full Kelly for the cap test
+
+    # 5 wins +100, 1 loss -10 -> W=5/6, R=10 -> f* = 0.833 - 0.167/10 ≈ 0.816.
+    # Full Kelly = 0.816, capped at 1.0.
+    for i in range(5):
+        db_session.add(Trade(
+            strategy_name="momentum_breakout_v1", symbol="BTC_USDT",
+            side=OrderSide.buy, price=Decimal("100"), quantity=Decimal("1"),
+            fee=Decimal("0"), realized_pnl=Decimal("100"),
+            traded_at=datetime(2024, 1, 1 + i, tzinfo=UTC),
+        ))
+    db_session.add(Trade(
+        strategy_name="momentum_breakout_v1", symbol="BTC_USDT",
+        side=OrderSide.buy, price=Decimal("100"), quantity=Decimal("1"),
+        fee=Decimal("0"), realized_pnl=Decimal("-10"),
+        traded_at=datetime(2024, 2, 1, tzinfo=UTC),
+    ))
+    db_session.commit()
+    rm = RiskManager(db_session)
+    scale = rm._kelly_scale("long")
+    assert scale is not None
+    assert scale <= Decimal("1.0")

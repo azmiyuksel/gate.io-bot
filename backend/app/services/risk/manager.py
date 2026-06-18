@@ -191,6 +191,15 @@ class RiskManager:
             )
             quantity = quantity * mult
 
+        # Optional fractional Kelly sizing: scale by edge quality once a track
+        # record exists. ¼-Kelly grows size with a demonstrated win-rate/payoff
+        # edge and shrinks under noise, capped to [0.25, 1.0] so it never zeros
+        # out a cold-start or a thin edge. Off by default (deterministic sizing).
+        if getattr(app_settings, "kelly_sizing_enabled", False):
+            kelly_scale = self._kelly_scale(side)
+            if kelly_scale is not None and kelly_scale != Decimal("1"):
+                quantity = quantity * kelly_scale
+
         # --- PER-TRADE MAXIMUM DOLLAR LOSS GUARD ---
         # Prevent a single catastrophic fill (e.g., flash crash) from exceeding
         # a hard dollar limit regardless of daily/weekly limits.
@@ -204,3 +213,55 @@ class RiskManager:
             )
 
         return RiskDecision(True, "approved", quantity, stop_loss, take_profit)
+
+    def _kelly_scale(self, side: str) -> Decimal | None:
+        """Fractional Kelly scaling factor for the current strategy track record.
+
+        Computes the Kelly fraction f* = W - (1-W)/R from the realized win-rate
+        W and average win/loss ratio R, then scales by `kelly_fraction` (¼ by
+        default — full Kelly has too much variance/drawdown for live capital).
+        Capped to [0.25, 1.0]: a cold-start or thin edge never zeros out sizing
+        (floor 0.25), and a strong edge never more than doubles it (cap 1.0).
+
+        Returns None when there is no track record yet (kelly_min_trades not
+        met) — the caller keeps the deterministic fixed-fractional size.
+        """
+        settings = get_settings()
+        min_trades = int(getattr(settings, "kelly_min_trades", 30) or 30)
+        from app.repositories.trading import TradeRepository
+
+        trades = TradeRepository(self.db).all_recent(limit=500)
+        # Filter to the side being sized (long/short edges can differ).
+        target_side = "buy" if side != "short" else "sell"
+        side_trades = []
+        for t in trades:
+            # t.side may be an OrderSide enum or a raw string depending on the
+            # driver (SQLite returns strings); normalize both.
+            t_side = t.side.value if hasattr(t.side, "value") else str(t.side)
+            if t_side == target_side:
+                side_trades.append(t)
+        if len(side_trades) < min_trades:
+            return None
+        wins = [float(t.realized_pnl) for t in side_trades if float(t.realized_pnl) > 0]
+        losses = [float(t.realized_pnl) for t in side_trades if float(t.realized_pnl) < 0]
+        if not wins or not losses:
+            return None
+        win_rate = len(wins) / len(side_trades)
+        avg_win = sum(wins) / len(wins)
+        avg_loss = abs(sum(losses) / len(losses))
+        if avg_loss <= 0:
+            return None
+        payoff_ratio = avg_win / avg_loss  # R
+        kelly_f = win_rate - (1 - win_rate) / max(payoff_ratio, 0.01)
+        if kelly_f <= 0:
+            # No demonstrated edge — keep the floor (0.25) so sizing is not
+            # zeroed out; the fixed-fractional risk budget still bounds loss.
+            return Decimal("0.25")
+        fraction = Decimal(str(getattr(settings, "kelly_fraction", 0.25) or 0.25))
+        scale = Decimal(str(kelly_f)) * fraction
+        # Clamp to [0.25, 1.0].
+        if scale < Decimal("0.25"):
+            return Decimal("0.25")
+        if scale > Decimal("1.0"):
+            return Decimal("1.0")
+        return scale

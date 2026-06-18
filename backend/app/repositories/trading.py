@@ -108,6 +108,16 @@ class TradeRepository(Repository[Trade]):
     def weekly_pnl(self) -> Decimal:
         return self.pnl_since(week_start_utc())
 
+    def all_recent(self, limit: int = 500) -> list[Trade]:
+        """Most recent trades (newest first), up to `limit`. Used by the Kelly
+        sizing estimator to compute the realized win-rate/payoff ratio."""
+        return list(
+            self.db.query(Trade)
+            .order_by(Trade.traded_at.desc())
+            .limit(int(limit))
+            .all()
+        )
+
 
 class AccountSnapshotRepository(Repository[AccountSnapshot]):
     def __init__(self, db: Session) -> None:

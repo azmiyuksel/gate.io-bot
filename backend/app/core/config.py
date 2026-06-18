@@ -288,6 +288,17 @@ class Settings(BaseSettings):
     # directional bias: 0.30 == up to 30% net long (or short). 0 disables
     # (legacy gross-only).
     max_net_exposure_pct: float = 0.30
+    # Fractional Kelly position sizing (opt-in). When enabled and a track record
+    # exists, size is scaled by ¼-Kelly (Kelly fraction / 4) — edge-quality-aware
+    # sizing that grows with a demonstrated win-rate/payoff edge and shrinks
+    # under noise. ¼ (not full) Kelly cuts the variance and drawdown of full
+    # Kelly at ~94% of the growth rate — the standard practical choice. Capped to
+    # [0.25, 1.0] so it never zeros out a cold-start or a thin edge. Off by
+    # default: cold-start sizing stays deterministic (pure fixed-fractional risk).
+    kelly_sizing_enabled: bool = False
+    kelly_fraction: float = 0.25  # 0.25 = quarter-Kelly
+    # Minimum trades before Kelly is applied (need a track record to estimate edge).
+    kelly_min_trades: int = 30
 
     # Equity used when the exchange balance cannot be fetched (no keys / offline).
     fallback_equity: float = 10000.0
