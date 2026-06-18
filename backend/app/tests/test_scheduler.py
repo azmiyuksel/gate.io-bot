@@ -163,8 +163,11 @@ async def test_run_cycle_trips_circuit_breaker(_settings):
         from app.workers.scheduler import run_cycle
         await run_cycle()
 
-        # Open positions must still be managed even while tripped...
-        mock_engine_inst.manage_open_positions.assert_awaited_once()
+        # Position management now runs on a SEPARATE fast cadence
+        # (monitor_positions), not inside run_cycle — so manage_open_positions
+        # is NOT called from run_cycle anymore. The circuit breaker still trips
+        # and no new entries are opened.
+        mock_engine_inst.manage_open_positions.assert_not_called()
         # ...but no new entries may be opened.
         mock_engine_inst.scan_symbol.assert_not_called()
 

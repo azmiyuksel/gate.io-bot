@@ -351,6 +351,13 @@ class Settings(BaseSettings):
     # How often the paper-trading engine re-evaluates entries on real candles.
     # 15s on 5m candles ensures a fresh bar is picked up within a fraction of a bar.
     paper_eval_interval_seconds: int = 15
+    # Position monitoring cadence (seconds). Stop-loss/take-profit/trailing/
+    # liquidation checks run on this interval, SEPARATE from the 15-min entry
+    # cycle, so a fast adverse move is caught before the next entry scan. The
+    # exchange-side stop (A1) protects even between polls; this tightens the
+    # local monitoring layer and drives trailing/breakeven amendments faster.
+    # 60s is a balance between responsiveness and API rate limits.
+    position_monitor_interval_seconds: int = 60
     # Paper order type: "market" (default) or "limit" (maker, lower fees)
     paper_order_type: str = "market"
     # Multi-timeframe confirmation: when enabled, entries require the higher

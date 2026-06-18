@@ -108,6 +108,35 @@ async def _quote_depegged(client: GateIOClient, settings) -> bool:
     return is_depegged(price, settings.quote_depeg_threshold_pct)
 
 
+async def monitor_positions() -> None:
+    """Fast position-management loop, separate from the 15-min entry cycle.
+
+    Checks stop-loss/take-profit/trailing/breakeven/liquidation on every open
+    position at position_monitor_interval_seconds (default 60s) cadence, so a
+    fast adverse move is caught before the next entry scan. The exchange-side
+    stop (A1) protects even between polls; this tightens the local monitoring
+    layer and drives trailing/breakeven amendments faster. Idempotent — safe to
+    run alongside run_cycle (which no longer calls manage_open_positions).
+    """
+    db = SessionLocal()
+    client = GateIOClient()
+    try:
+        engine = TradingEngine(db, client)
+        await engine.manage_open_positions()
+        # Best-effort heartbeat so the watchdog sees the monitor as alive too.
+        try:
+            record_heartbeat(db, "position_monitor")
+        except Exception:
+            pass
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).error("monitor_positions failed: %s", exc)
+    finally:
+        await client.close()
+        db.close()
+
+
 async def run_cycle() -> None:
     settings = get_settings()
     db = SessionLocal()
@@ -123,15 +152,16 @@ async def run_cycle() -> None:
         snapshot = await account.refresh()
         equity = snapshot.total_equity
 
-        # 3. Always manage open positions FIRST so stops/take-profits/trailing are
-        # honoured even when the circuit breaker is tripped. Positions are most
-        # vulnerable in a deep drawdown — exactly when the breaker fires — so they
-        # must never be abandoned by an early return below.
+        # 3. Position management now runs on its OWN faster cadence
+        # (monitor_positions, every position_monitor_interval_seconds) so a
+        # fast adverse move is caught before the next 15-min entry scan. The
+        # exchange-side stop (A1) protects even between polls; this tightens
+        # the local monitoring layer. We no longer call manage_open_positions
+        # here to avoid double work and rate-limit waste.
         engine = TradingEngine(db, client)
-        await engine.manage_open_positions()
 
         # 4. Global kill-switch: trip on breached limits and halt NEW ENTRIES if
-        # tripped (open positions were already managed above).
+        # tripped (open positions are managed by the monitor_positions job).
         breaker = CircuitBreaker(db)
         drawdown = account.drawdown_pct()
         if breaker.check_and_trip(equity, drawdown):
@@ -474,6 +504,11 @@ async def main() -> None:
 
     scheduler = AsyncIOScheduler()
     scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
+    # Position management runs on a FASTER cadence than entries so a fast
+    # adverse move is caught before the next 15-min scan. The exchange-side
+    # stop (A1) protects even between polls; this tightens the local layer.
+    pos_interval = max(int(get_settings().position_monitor_interval_seconds), 15)
+    scheduler.add_job(monitor_positions, "interval", seconds=pos_interval, max_instances=1)
     scheduler.add_job(run_cycle, "interval", minutes=15, max_instances=1)
     scheduler.add_job(ingest_market_data, "interval", minutes=15, max_instances=1)
     scheduler.add_job(monitor_portfolio_risk, "interval", minutes=15, max_instances=1)
