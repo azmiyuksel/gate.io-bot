@@ -347,7 +347,38 @@ pytest                # testler
 - **Yapısal loglar:** her süreç JSON log üretir, istek bazında `correlation_id`
 - **Denetim izi:** `GET /api/v1/dashboard/audit` (admin) — hassas işlemler kullanıcıya atfedilir
 - **İşlem ekonomisi:** `GET /api/v1/dashboard/economics` — işlem başına beklenen değer,
-  başabaş win-rate, gerçekleşen edge ve **al-tut'a (BTC) göre alfa**
+  başabaş win-rate, gerçekleşen edge, **al-tut'a (BTC) göre alfa** ve **strateji
+  bazında kırılım** (`by_strategy`) + `?strategy=<ad>` filtresi (rejim
+  yönlendirme açıkken hangi stratejinin edge ürettiğini görmek için)
+
+## Kâr özellikleri (opt-in) ve paper'da deneme
+
+Aşağıdaki özellikler **varsayılan kapalıdır** (canlı davranışı izinsiz değiştirmemek
+için). Önce **paper'da** açıp `economics` ile al-tut'a karşı alfayı izleyin, edge
+pozitifse canlıya alın.
+
+| Bayrak | Ne yapar |
+|--------|----------|
+| `REGIME_ROUTING_ENABLED` | Rejime göre strateji seçer (trend→momentum, range→mean-reversion) |
+| `FUNDING_CARRY_ENABLED` | Funding toplayan yönde boyutu artırır (futures, cap'li) |
+| `SCALE_OUT_ENABLED` | +R'de kısmi kâr alır, stop'u breakeven'a çeker, kalanı koşturur |
+| `MAKER_PEG_ENABLED` | Adaptive maker limitini order-book'a peg'ler (daha iyi doluş) |
+| `PORTFOLIO_VOL_TARGET_ENABLED` | Tüm kitabı istikrarlı realize-vol bütçesine ölçekler |
+| `SESSION_FILTER_ENABLED` | Düşük-likidite UTC saatlerinde/hafta sonu yeni giriş açmaz |
+
+**Önerilen deneme sırası** (en yüksek beklenen-değer etkisi): önce
+`REGIME_ROUTING_ENABLED` ve `SCALE_OUT_ENABLED`. Paper, bu özellikleri canlıyla
+aynı kod yolundan aynalar (`PAPER_MIRROR_LIVE=true`).
+
+```bash
+# .env — paper'da deneme
+SCALE_OUT_ENABLED=true
+REGIME_ROUTING_ENABLED=true
+# sonra: docker compose --profile paper up -d --force-recreate paper-worker
+# izleme: GET /api/v1/dashboard/economics  -> by_strategy[*].has_edge ve benchmark.outperforms
+```
+
+Tüm bayrakların ayrıntılı açıklaması için `.env.example`'a bakın.
 
 ## Dahili modüller (kısa)
 

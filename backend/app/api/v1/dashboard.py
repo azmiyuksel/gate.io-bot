@@ -87,13 +87,26 @@ def audit_log(db: DbSession, limit: int = 100) -> list[dict]:
 
 
 @router.get("/economics")
-def economics(db: DbSession) -> dict:
+def economics(db: DbSession, strategy: str | None = None) -> dict:
     """Trade-economics edge report + buy-and-hold (BTC) benchmark.
 
     Answers: is expected value per trade positive, does the realized win rate
     clear break-even, and does the strategy beat simply holding the asset?
+
+    ``strategy`` (optional) filters the edge/benchmark/hurdle to a single
+    strategy — useful once regime routing trades more than one strategy, so you
+    can tell WHICH one is producing the edge. ``by_strategy`` always returns the
+    per-strategy edge breakdown over all trades regardless of the filter.
     """
-    trades = db.query(Trade).order_by(Trade.traded_at.asc()).all()
+    all_trades = db.query(Trade).order_by(Trade.traded_at.asc()).all()
+    # Per-strategy edge breakdown (so a routed, multi-strategy book can be judged
+    # strategy-by-strategy instead of as one blended number).
+    by_strategy_pnls: dict[str, list[float]] = {}
+    for t in all_trades:
+        by_strategy_pnls.setdefault(t.strategy_name or "unknown", []).append(float(t.realized_pnl))
+    by_strategy = {name: trade_economics(p) for name, p in by_strategy_pnls.items()}
+
+    trades = [t for t in all_trades if t.strategy_name == strategy] if strategy else all_trades
     pnls = [float(t.realized_pnl) for t in trades]
     edge = trade_economics(pnls)
 
@@ -128,7 +141,13 @@ def economics(db: DbSession) -> dict:
     # Opportunity cost: did the strategy beat what idle capital could have earned?
     period_days = (trades[-1].traded_at - trades[0].traded_at).days if trades else 0
     hurdle = hurdle_comparison(strategy_return, settings.annual_risk_free_rate, period_days)
-    return {"edge": edge, "benchmark": benchmark, "hurdle": hurdle}
+    return {
+        "edge": edge,
+        "benchmark": benchmark,
+        "hurdle": hurdle,
+        "strategy_filter": strategy,
+        "by_strategy": by_strategy,
+    }
 
 
 @router.patch("/strategy", dependencies=[Depends(require_admin)])
