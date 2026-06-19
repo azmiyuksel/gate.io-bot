@@ -293,7 +293,7 @@ class PaperTradingEngine:
         # 5. Order-book imbalance (de-risk when adverse depth wall).
         try:
             if getattr(settings, "orderbook_imbalance_enabled", False) and self._client:
-                book = await self._client.get_order_book(symbol, depth=int(settings.orderbook_depth))
+                book = await self._client.get_order_book(symbol, depth=int(settings.orderbook_depth), market=settings.trading_market.lower())
                 if book:
                     bids = book.get("bids") or []
                     asks = book.get("asks") or []
@@ -327,14 +327,16 @@ class PaperTradingEngine:
                                   {"symbol": symbol, "reason": "correlation_blocked"})
                         return False, risk_mult
                     # Aggregate correlation cap (mirrors live's max_portfolio_correlation).
+                    # Only positive correlations count toward concentration risk;
+                    # negative correlations are diversifying and should not block.
                     matrix = corr.get("matrix", {})
                     pair_corrs = []
                     for i, s1 in enumerate([symbol, *open_syms]):
                         for j, s2 in enumerate([symbol, *open_syms]):
                             if i < j:
                                 val = matrix.get(s1, {}).get(s2) or matrix.get(s2, {}).get(s1)
-                                if val is not None:
-                                    pair_corrs.append(abs(float(val)))
+                                if val is not None and float(val) > 0:
+                                    pair_corrs.append(float(val))
                     if pair_corrs:
                         avg_corr = sum(pair_corrs) / len(pair_corrs)
                         if avg_corr > float(getattr(settings, "max_portfolio_correlation", 0.55)):

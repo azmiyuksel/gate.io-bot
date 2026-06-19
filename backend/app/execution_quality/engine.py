@@ -296,13 +296,22 @@ class ExecutionQualityEngine:
             return False, "insufficient_data"
 
         order_ids = [o.id for o in orders]
-        latency_records = self.db.query(LatencyLog).filter(LatencyLog.execution_order_id.in_(order_ids)).all()
+        latency_records = (
+            self.db.query(LatencyLog)
+            .filter(LatencyLog.execution_order_id.in_(order_ids))
+            .order_by(LatencyLog.created_at.desc())
+            .all()
+        )
         delays = [rec.total_execution_delay_ms for rec in latency_records]
         
         # 1. Latency Spike check
-        mean_delay = np.mean(delays)
-        std_delay = np.std(delays)
-        if std_delay > 0:
+        if not delays:
+            mean_delay = 0
+            std_delay = 0
+        else:
+            mean_delay = np.mean(delays)
+            std_delay = np.std(delays)
+        if std_delay > 0 and delays:
             latest_delay = delays[0] if delays else 0
             z_lat = (latest_delay - mean_delay) / std_delay
             if z_lat > eq_settings.eq_latency_zscore_threshold:

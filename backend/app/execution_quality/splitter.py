@@ -76,8 +76,12 @@ async def execute_split(
         try:
             resp = await submit_child(qty)
             responses.append(resp)
-        except Exception:
-            # A failed child is logged by the caller; continue with the rest so
-            # a transient error on child 2/3 does not leave the entry half-done.
+        except Exception as exc:
+            # Log the failure; continue with the remaining children so a
+            # transient error on child 2/3 does not leave the entry half-done.
+            import logging
+            logging.getLogger(__name__).warning(
+                "split child %d/%d failed (%s): %s", i + 1, len(decision.child_quantities), qty, exc,
+            )
             responses.append(None)
     return responses

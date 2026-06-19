@@ -68,7 +68,7 @@ class GateIOClient:
 
     # Transient transport failures and HTTP 429/5xx are retried; other 4xx
     # (auth, bad request, not found) fail fast since retrying cannot help.
-    _RETRYABLE_NETWORK = (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError)
+    _RETRYABLE_NETWORK = (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError)
 
     async def request(
         self, method: str, path: str, *, params: dict | None = None, json_body: dict | None = None
@@ -203,9 +203,12 @@ class GateIOClient:
             info, ts = cached
             if time.monotonic() - ts < self._pair_cache_ttl:
                 return info
-        info = await self.request("GET", f"/spot/currency_pairs/{symbol}") or {}
-        self._pair_cache[symbol] = (info, time.monotonic())
-        return info
+        info = await self.request("GET", f"/spot/currency_pairs/{symbol}")
+        if info:
+            self._pair_cache[symbol] = (info, time.monotonic())
+            return info
+        # API failure: return stale cache if available, else empty dict.
+        return cached[0] if cached else {}
 
     @staticmethod
     def _round_down(value: Decimal, precision: int) -> Decimal:
@@ -250,14 +253,18 @@ class GateIOClient:
         return await self.request("POST", "/spot/orders", json_body=body)
 
     async def place_limit_buy(self, symbol: str, quote_amount: Decimal, price: Decimal) -> dict:
-        """Limit BUY (maker). `quote_amount` is the USDT to spend, rounded to the
-        pair's price precision and checked against min_quote_amount."""
+        """Limit BUY (maker). `quote_amount` is the USDT to spend; converted to
+        base currency internally (Gate.io limit orders expect ``amount`` in base),
+        rounded to ``amount_precision`` and checked against ``min_base_amount``."""
+        if price <= 0:
+            raise OrderBelowMinimum(f"{symbol} limit buy price must be positive")
         info = await self.currency_pair_info(symbol)
-        amount = self._round_down(quote_amount, int(info.get("precision", 8) or 8))
-        min_quote = Decimal(str(info.get("min_quote_amount", "0") or "0"))
-        if amount <= 0 or amount < min_quote:
+        base_amount = quote_amount / price
+        amount = self._round_down(base_amount, int(info.get("amount_precision", 8) or 8))
+        min_base = Decimal(str(info.get("min_base_amount", "0") or "0"))
+        if amount <= 0 or amount < min_base:
             raise OrderBelowMinimum(
-                f"{symbol} limit buy quote {amount} below minimum {min_quote}"
+                f"{symbol} limit buy base {amount} below minimum {min_base}"
             )
         return await self._submit_spot_limit(symbol, "buy", amount, price)
 
@@ -335,9 +342,11 @@ class GateIOClient:
             info, ts = cached
             if time.monotonic() - ts < self._pair_cache_ttl:
                 return info
-        info = await self.request("GET", f"/futures/{self._settle}/contracts/{contract}") or {}
-        self._pair_cache[key] = (info, time.monotonic())
-        return info
+        info = await self.request("GET", f"/futures/{self._settle}/contracts/{contract}")
+        if info:
+            self._pair_cache[key] = (info, time.monotonic())
+            return info
+        return cached[0] if cached else {}
 
     async def futures_last_price(self, contract: str) -> Decimal | None:
         data = await self.request(
@@ -587,21 +596,24 @@ class GateIOClient:
         except Exception:
             return None
 
-    async def get_order_book(self, symbol: str, depth: int = 20) -> dict | None:
-        """Fetch the spot order book snapshot (best N bids/asks).
+    async def get_order_book(self, symbol: str, depth: int = 20, market: str = "spot") -> dict | None:
+        """Fetch the order book snapshot (best N bids/asks).
 
         Returns ``{"bids": [[price, amount], ...], "asks": [[price, amount], ...]}``
-        or None on failure. Used by the order-book-imbalance entry gate: a
-        breakout with bid-side imbalance (more buy depth) has better follow-
-        through; ask-side imbalance against a long is a headwind. Resting
-        snapshot (not WS) — sufficient at a 15-min cadence and far simpler than
-        a WS subscription.
+        or None on failure.  Supports both spot and futures (futures uses the
+        ``/futures/{settle}/order_book`` endpoint with ``contract`` param).
         """
         try:
-            data = await self.request(
-                "GET", "/spot/order_book",
-                params={"currency_pair": symbol, "limit": int(depth)},
-            )
+            if market == "futures":
+                data = await self.request(
+                    "GET", f"/futures/{self._settle}/order_book",
+                    params={"contract": symbol, "limit": int(depth)},
+                )
+            else:
+                data = await self.request(
+                    "GET", "/spot/order_book",
+                    params={"currency_pair": symbol, "limit": int(depth)},
+                )
             return data
         except Exception:
             return None

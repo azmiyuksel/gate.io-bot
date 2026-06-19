@@ -97,10 +97,11 @@ def test_risk_based_sizing_targets_fixed_risk(db_session, monkeypatch):
 
     # Notional mode ignores stop distance: a fixed 5-unit notional with a wide
     # stop (risk/unit=60) implies a 300 loss, breaching the 200 per-trade cap.
+    # The guard now CLAMPS the quantity instead of rejecting.
     monkeypatch.setattr(settings, "risk_based_sizing_enabled", False, raising=False)
     notional = RiskManager(db_session).approve_entry(equity, entry, atr)
-    assert not notional.allowed
-    assert notional.reason.startswith("excessive_risk_per_trade")
+    assert notional.allowed
+    assert notional.quantity == Decimal("200") / Decimal("60")
 
     # Risk-based mode sizes DOWN so loss-to-stop == 2% of equity (200/60) and trades.
     monkeypatch.setattr(settings, "risk_based_sizing_enabled", True, raising=False)

@@ -268,6 +268,7 @@ class TradingEngine:
             side=getattr(signal, "direction", "long"),
             expectancy_type=getattr(signal, "expectancy_type", "reversion"),
             symbol=symbol,
+            strategy_name=getattr(signal, "strategy", "") or "",
         )
         if not decision.allowed:
             self._log("risk", f"{symbol}: {decision.reason}")
@@ -473,7 +474,7 @@ class TradingEngine:
         if threshold <= 0:
             return Decimal("1")
         try:
-            book = await self.client.get_order_book(symbol, depth=int(_settings.orderbook_depth))
+            book = await self.client.get_order_book(symbol, depth=int(_settings.orderbook_depth), market=_settings.trading_market.lower())
         except Exception:
             return Decimal("1")
         if not book:
@@ -672,8 +673,9 @@ class TradingEngine:
         # Poll for fill. Poll every ~3s up to the timeout.
         import asyncio
 
-        deadline = asyncio.get_event_loop().time() + timeout
-        while asyncio.get_event_loop().time() < deadline:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
             await asyncio.sleep(3)
             try:
                 if market == "futures":
@@ -704,13 +706,19 @@ class TradingEngine:
         except Exception:
             status = {}
         # Determine how much of the limit was filled before the cancel.
-        # Futures uses "size"/"left" fields (no "filled_total"); spot uses
-        # "filled_total" in quote units.  Using the wrong field causes the
-        # full quantity to be resubmitted as market → double position.
+        # Futures "size"/"left" are in CONTRACTS (not base units); spot uses
+        # "filled_total" in quote units.  Using the wrong field or unit causes
+        # the full quantity to be resubmitted as market → double position.
         if market == "futures":
-            size = Decimal(str(status.get("size") or quantity))
-            left = Decimal(str(status.get("left") or size))
-            filled_base = size - left if left < size else Decimal("0")
+            try:
+                info = await self.client.futures_contract_info(symbol)
+                mult = Decimal(str(info.get("quanto_multiplier", "0") or "0"))
+            except Exception:
+                mult = Decimal("0")
+            size = Decimal(str(status.get("size") or 0))
+            left = Decimal(str(status.get("left") or 0))
+            filled_contracts = size - left if left < size and size > 0 else Decimal("0")
+            filled_base = filled_contracts * mult if mult > 0 else Decimal("0")
         else:
             filled_total = Decimal(str(status.get("filled_total") or 0))
             if filled_total > 0 and signal.entry_price > 0:
@@ -848,11 +856,12 @@ class TradingEngine:
             return
 
         # All order children failed (split all-fail or market rejection) — the
-        # exchange has NO open position.  Persisting a phantom Position with
-        # exchange_order_id="None" would leave reconciliation chasing a ghost
-        # order that does not exist on the exchange, and manage_open_positions
-        # would apply trailing/stop logic to a position that was never opened.
-        if response.get("id") is None:
+        # exchange has NO open position.  Persisting a Phantom Position with
+        # exchange_order_id="None" or "" would leave reconciliation chasing a
+        # ghost order that does not exist on the exchange, and
+        # manage_open_positions would apply trailing/stop logic to a position
+        # that was never opened.
+        if not response.get("id"):
             self._log(
                 "entry_all_failed",
                 f"{symbol}: all order children failed, no position opened",
@@ -1073,7 +1082,9 @@ class TradingEngine:
                     )
                     import asyncio
                     await asyncio.sleep(1)
-        # All retries exhausted — position is still open; alert and let reconciliation recover.
+        # All retries exhausted — position is still open; re-place the exchange
+        # stop to restore protection (the original was cancelled before the close
+        # attempts).  Alert and let reconciliation recover the actual state.
         self._log(
             "close_failed",
             f"{position.symbol}: FAILED to close after {_retry} attempts ({reason}): {last_exc}",
@@ -1083,6 +1094,16 @@ class TradingEngine:
             f"\U0001f534 CRITICAL: {position.symbol} FAILED to close ({reason}) after {_retry} attempts! "
             f"Manual intervention may be required. Last error: {last_exc}"
         )
+        # Best-effort: re-place the exchange stop so the position is not left
+        # completely unprotected until the next reconciliation cycle.
+        try:
+            await self._place_exchange_stop(position)
+        except Exception:
+            self._log(
+                "stop_replaced_failed",
+                f"{position.symbol}: failed to re-place exchange stop after close failure",
+                LogLevel.error,
+            )
         raise last_exc  # type: ignore[misc]
 
     async def _close_position_inner(

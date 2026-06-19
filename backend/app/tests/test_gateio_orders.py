@@ -1,5 +1,5 @@
 """Tests for Gate.io order semantics: buy(quote)/sell(base), precision, minimums."""
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 
 import pytest
 
@@ -491,7 +491,7 @@ async def test_place_limit_buy_posts_passive_maker(monkeypatch):
     sent = {}
 
     async def fake_pair(symbol):
-        return {"precision": 2, "min_quote_amount": "5"}
+        return {"amount_precision": 8, "min_base_amount": "0.0001"}
 
     async def fake_request(method, path, *, params=None, json_body=None):
         sent["body"] = json_body
@@ -500,11 +500,15 @@ async def test_place_limit_buy_posts_passive_maker(monkeypatch):
 
     monkeypatch.setattr(c, "currency_pair_info", fake_pair)
     monkeypatch.setattr(c, "request", fake_request)
+    # quote_amount=100.12, price=49000 → base = 100.12/49000, rounded DOWN to 8 decimals
     await c.place_limit_buy("BTC_USDT", Decimal("100.12"), Decimal("49000"))
     assert sent["body"]["type"] == "limit"
     assert sent["body"]["side"] == "buy"
     assert sent["body"]["price"] == "49000"
-    assert Decimal(str(sent["body"]["amount"])) == Decimal("100.12")
+    expected_base = (Decimal("100.12") / Decimal("49000")).quantize(
+        Decimal("0.00000001"), rounding=ROUND_DOWN
+    )
+    assert Decimal(str(sent["body"]["amount"])) == expected_base
     assert sent["body"]["post_only"] is True
     assert sent["body"]["time_in_force"] == "gtc"
 
@@ -533,9 +537,10 @@ async def test_place_limit_buy_below_min_raises(monkeypatch):
     c = GateIOClient()
 
     async def fake_pair(symbol):
-        return {"precision": 2, "min_quote_amount": "5"}
+        return {"amount_precision": 8, "min_base_amount": "0.01"}
 
     monkeypatch.setattr(c, "currency_pair_info", fake_pair)
+    # quote_amount=4, price=49000 → base = 4/49000 ≈ 0.0000816 < min_base_amount 0.01
     with pytest.raises(OrderBelowMinimum):
         await c.place_limit_buy("BTC_USDT", Decimal("4"), Decimal("49000"))
 

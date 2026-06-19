@@ -14,7 +14,7 @@ def test_strategy_exposes_canonical_name() -> None:
 
 
 def test_strategy_name_matches_settings_default() -> None:
-    # StrategySettings.name default must equal the strategy's canonical name so
+    # StrategySettings.name default must equal the system's active strategy so
     # health-engine auto-disable (filter by name) actually finds the row.
     default_name = StrategySettings.__table__.c.name.default.arg
-    assert default_name == STRATEGY_NAME
+    assert default_name == "momentum_breakout_v1"

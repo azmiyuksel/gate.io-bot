@@ -67,7 +67,7 @@ def get_strategy_execution_status(strategy_name: str, db: DbSession) -> dict:
 @router.get("/slippage/logs", response_model=List[ExecutionSlippageOut])
 def get_slippage_logs(
     db: DbSession,
-    strategy_name: str = Query("capital_preservation_v1", description="Strategy Name"),
+    strategy_name: str = Query("momentum_breakout_v1", description="Strategy Name"),
     limit: int = Query(100, ge=1, le=500)
 ) -> List[SlippageLog]:
     return (
@@ -83,7 +83,7 @@ def get_slippage_logs(
 @router.get("/latency/logs", response_model=List[ExecutionLatencyOut])
 def get_latency_logs(
     db: DbSession,
-    strategy_name: str = Query("capital_preservation_v1", description="Strategy Name"),
+    strategy_name: str = Query("momentum_breakout_v1", description="Strategy Name"),
     limit: int = Query(100, ge=1, le=500)
 ) -> List[LatencyLog]:
     return (
@@ -99,7 +99,7 @@ def get_latency_logs(
 @router.get("/report/logs", response_model=ExecutionReportOut)
 def get_or_generate_report(
     db: DbSession,
-    strategy_name: str = Query("capital_preservation_v1", description="Strategy Name"),
+    strategy_name: str = Query("momentum_breakout_v1", description="Strategy Name"),
     days: int = Query(30, ge=1, le=365)
 ) -> ExecutionReport:
     engine = ExecutionQualityEngine(db)

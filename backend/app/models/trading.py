@@ -73,7 +73,7 @@ class Trade(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
-    strategy_name: Mapped[str] = mapped_column(String(128), default="capital_preservation_v1", index=True)
+    strategy_name: Mapped[str] = mapped_column(String(128), default="momentum_breakout_v1", index=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     side: Mapped[OrderSide] = mapped_column(String(16))
     price: Mapped[Decimal] = mapped_column(Numeric(24, 10))
@@ -109,7 +109,7 @@ class StrategySettings(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(64), unique=True, default="capital_preservation_v1")
+    name: Mapped[str] = mapped_column(String(64), unique=True, default="momentum_breakout_v1")
     # Safe default: a new strategy is DISABLED until explicitly enabled (matches the
     # capital-preservation activation gate; live entries also require BOT_ENABLED).
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -227,9 +227,10 @@ class PaperBroker:
 
         try:
             from app.execution_quality.engine import ExecutionQualityEngine
+            from app.core.config import get_settings
             eq_engine = ExecutionQualityEngine(self.db)
             exec_order = eq_engine.record_order(
-                strategy_name="capital_preservation_v1",
+                strategy_name=get_settings().strategy_name,
                 symbol=position.symbol,
                 side=close_side.value if isinstance(close_side, OrderSide) else close_side,
                 expected_price=exit_price,

@@ -81,6 +81,7 @@ class RiskManager:
         side: str = "long",
         expectancy_type: str = "reversion",
         symbol: str = "",
+        strategy_name: str = "",
     ) -> RiskDecision:
         # Master env kill-switch: live entries require BOT_ENABLED=true as well
         # as the strategy's own enable flag (defense-in-depth alongside scheduler).
@@ -220,21 +221,19 @@ class RiskManager:
         # edge and shrinks under noise, capped to [0.25, 1.0] so it never zeros
         # out a cold-start or a thin edge. Off by default (deterministic sizing).
         if getattr(app_settings, "kelly_sizing_enabled", False):
-            kelly_scale = self._kelly_scale(side)
+            kelly_scale = self._kelly_scale(side, strategy_name=strategy_name)
             if kelly_scale is not None and kelly_scale != Decimal("1"):
                 quantity = quantity * kelly_scale
 
         # --- PER-TRADE MAXIMUM DOLLAR LOSS GUARD ---
-        # Prevent a single catastrophic fill (e.g., flash crash) from exceeding
-        # a hard dollar limit regardless of daily/weekly limits.
+        # Run AFTER all scaling adjustments (vol target, Kelly) so the final
+        # quantity is clamped, not the pre-adjustment estimate.  Previous
+        # placement before scaling let multiplied quantities exceed the risk cap.
         max_loss_per_trade_pct = Decimal(str(get_settings().max_risk_per_trade_pct))
         max_loss_dollar = equity * max_loss_per_trade_pct
         max_loss_from_trade = risk_per_unit * quantity
         if max_loss_from_trade > max_loss_dollar:
-            return RiskDecision(
-                False,
-                f"excessive_risk_per_trade: loss {max_loss_from_trade:.2f} > limit {max_loss_dollar:.2f}",
-            )
+            quantity = max_loss_dollar / risk_per_unit if risk_per_unit > 0 else quantity
 
         return RiskDecision(True, "approved", quantity, stop_loss, take_profit)
 
@@ -269,11 +268,11 @@ class RiskManager:
             # equivalent — the beta guard degrades to the plain net guard).
             return {}
 
-    def _kelly_scale(self, side: str) -> Decimal | None:
+    def _kelly_scale(self, side: str, strategy_name: str = "") -> Decimal | None:
         """Fractional Kelly scaling factor for the current strategy track record.
 
         Computes the Kelly fraction f* = W - (1-W)/R from the realized win-rate
-        W and average win/loss ratio R, then scales by `kelly_fraction` (¼ by
+        W and average win/loss ratio R, then scales by `kelly_fraction` (1/4 by
         default — full Kelly has too much variance/drawdown for live capital).
         Capped to [0.25, 1.0]: a cold-start or thin edge never zeros out sizing
         (floor 0.25), and a strong edge never more than doubles it (cap 1.0).
@@ -286,6 +285,11 @@ class RiskManager:
         from app.repositories.trading import TradeRepository
 
         trades = TradeRepository(self.db).all_recent(limit=500)
+        # Filter by strategy so edge estimate is not diluted by other strategies'
+        # performance.  A momentum strategy's sizing should not be reduced by a
+        # reversion strategy's losses.
+        if strategy_name:
+            trades = [t for t in trades if getattr(t, "strategy_name", None) == strategy_name]
         # Filter to the side being sized (long/short edges can differ).
         target_side = "buy" if side != "short" else "sell"
         side_trades = []
