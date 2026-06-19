@@ -54,6 +54,40 @@ def vol_target_multiplier(
     return max(min_mult, min(raw, max_mult))
 
 
+def portfolio_vol_target_multiplier(
+    equities: list[Decimal],
+    target_pct: Decimal,
+    min_mult: Decimal,
+    max_mult: Decimal,
+    min_observations: int = 5,
+) -> Decimal:
+    """Portfolio-level vol-targeting multiplier from an equity-curve series.
+
+    Estimates the realized per-period volatility (stddev of equity returns) over
+    the series and returns target/realized, clamped to [min_mult, max_mult]: when
+    the book is RUNNING HOTTER than target, new-entry size is cut; when calmer,
+    it is increased. Unlike per-trade vol targeting (which scales by a single
+    asset's ATR), this scales the WHOLE book to a steady portfolio risk budget.
+
+    Returns 1.0 (no adjustment) until there are enough observations or when the
+    realized vol is ~0 (flat/cold-start — avoid a divide-by-zero blow-up)."""
+    if target_pct <= 0 or len(equities) < max(min_observations + 1, 2):
+        return Decimal("1")
+    returns: list[Decimal] = []
+    for prev, cur in zip(equities[:-1], equities[1:]):
+        if prev > 0:
+            returns.append(cur / prev - Decimal("1"))
+    if len(returns) < min_observations:
+        return Decimal("1")
+    mean = sum(returns) / Decimal(len(returns))
+    variance = sum((r - mean) ** 2 for r in returns) / Decimal(len(returns))
+    realized = variance.sqrt()
+    if realized <= 0:
+        return Decimal("1")
+    raw = target_pct / realized
+    return max(min_mult, min(raw, max_mult))
+
+
 class RiskManager:
     def __init__(self, db: Session) -> None:
         self.db = db

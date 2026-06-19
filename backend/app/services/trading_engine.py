@@ -14,6 +14,7 @@ from app.models.entities import Order, Position, SystemLog, Trade
 from app.models.enums import LogLevel, OrderSide, OrderStatus, PositionStatus
 from app.portfolio.correlation import CorrelationEngine, max_correlation
 from app.repositories.trading import (
+    AccountSnapshotRepository,
     OrderRepository,
     PositionRepository,
     StrategySettingsRepository,
@@ -21,7 +22,11 @@ from app.repositories.trading import (
 from app.services.exchange.gateio import GateIOClient, OrderBelowMinimum
 from app.services.notifications.telegram import TelegramNotifier
 from app.services.risk.circuit_breaker import CircuitBreaker
-from app.services.risk.manager import RiskManager, drawdown_risk_multiplier
+from app.services.risk.manager import (
+    RiskManager,
+    drawdown_risk_multiplier,
+    portfolio_vol_target_multiplier,
+)
 from app.services.strategy.factory import build_strategy
 from app.strategy_health.anomaly_detector import StrategyAnomalyDetector
 from app.strategy_health.engine import StrategyHealthEngine
@@ -176,8 +181,14 @@ class TradingEngine:
         # opposing depth has worse follow-through — de-risk.
         ob_mult = await self._check_orderbook_imbalance(symbol, signal)
 
+        # Portfolio-level vol targeting: scale the WHOLE book toward a steady
+        # realized-vol budget (hotter book -> smaller new entries, calmer ->
+        # larger). May be >1; the post-scaling exposure clamp bounds total risk.
+        pf_vol_mult = self._portfolio_vol_mult()
+
         result = self._approve_risk_and_size(
-            symbol, equity, signal, risk_mult, health_mult, data_risk_mult, funding_mult * ob_mult
+            symbol, equity, signal, risk_mult, health_mult, data_risk_mult,
+            funding_mult * ob_mult * pf_vol_mult,
         )
         if result is None:
             return
@@ -331,6 +342,34 @@ class TradingEngine:
         health_engine = StrategyHealthEngine(self.db, anomaly_detector=self._health_anomaly_detector)
         health_status = health_engine.update_health(strategy_name) or {}
         return health_status
+
+    def _portfolio_vol_mult(self) -> Decimal:
+        """Portfolio-level vol-targeting multiplier (1.0 when disabled).
+
+        Scales new-entry size so the equity curve targets a steady realized
+        volatility. Best-effort: any failure returns 1.0 (never blocks an entry)."""
+        s = get_settings()
+        if not getattr(s, "portfolio_vol_target_enabled", False):
+            return Decimal("1")
+        try:
+            equities = AccountSnapshotRepository(self.db).recent_equities(
+                int(s.portfolio_vol_lookback)
+            )
+            mult = portfolio_vol_target_multiplier(
+                equities,
+                Decimal(str(s.portfolio_vol_target_pct)),
+                Decimal(str(s.portfolio_vol_min_multiplier)),
+                Decimal(str(s.portfolio_vol_max_multiplier)),
+            )
+            if mult != Decimal("1"):
+                self._log(
+                    "portfolio_vol_target",
+                    f"portfolio vol-target scaling new entries x{mult:.3f} "
+                    f"(lookback={len(equities)} snapshots)",
+                )
+            return mult
+        except Exception:
+            return Decimal("1")
 
     def _approve_risk_and_size(
         self, symbol: str, equity: Decimal, signal, risk_mult: Decimal,

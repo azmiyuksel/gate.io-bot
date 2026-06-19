@@ -123,6 +123,18 @@ class Settings(BaseSettings):
     vol_target_atr_pct: float = 0.02          # target ATR as a fraction of price
     vol_target_min_multiplier: float = 0.25
     vol_target_max_multiplier: float = 1.5
+    # --- Portfolio-level vol targeting (opt-in) ---
+    # Per-trade vol targeting (above) scales by a single asset's ATR. This scales
+    # the WHOLE book to a steady portfolio risk budget: estimate the realized
+    # per-period volatility of the equity curve and scale new-entry size by
+    # target/realized (clamped). Hotter book -> smaller new entries; calmer book
+    # -> larger. The post-scaling gross-exposure clamp still caps total risk.
+    portfolio_vol_target_enabled: bool = False
+    # Target per-period (per equity snapshot) volatility of the equity curve.
+    portfolio_vol_target_pct: float = 0.02
+    portfolio_vol_lookback: int = 20
+    portfolio_vol_min_multiplier: float = 0.5
+    portfolio_vol_max_multiplier: float = 1.5
 
     # --- Live strategy entry thresholds (tunable per market) ---
     strategy_rsi_threshold: float = 35.0

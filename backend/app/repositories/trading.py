@@ -150,6 +150,19 @@ class AccountSnapshotRepository(Repository[AccountSnapshot]):
     def __init__(self, db: Session) -> None:
         super().__init__(db, AccountSnapshot)
 
+    def recent_equities(self, limit: int = 20) -> list[Decimal]:
+        """The last ``limit`` total-equity snapshots in CHRONOLOGICAL order.
+
+        Used to estimate realized portfolio volatility for portfolio-level vol
+        targeting. Returns [] when no snapshots exist."""
+        rows = (
+            self.db.query(AccountSnapshot)
+            .order_by(AccountSnapshot.created_at.desc())
+            .limit(max(int(limit), 0))
+            .all()
+        )
+        return [Decimal(str(r.total_equity)) for r in reversed(rows)]
+
     def equity_at_period_start(self, since: datetime) -> Decimal | None:
         """Equity carried into the period: the latest snapshot strictly before
         `since`, falling back to the earliest snapshot within the period. Returns
