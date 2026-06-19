@@ -407,6 +407,18 @@ class Settings(BaseSettings):
     strategy_mtf_enabled: bool = True
     strategy_mtf_interval: str = "4h"
 
+    # --- Session / time-of-day filter (opt-in) ---
+    # Crypto has strong intraday/weekly seasonality: liquidity thins out in
+    # certain UTC hours and over the weekend, so the same market order pays more
+    # slippage and breakouts fail more often. When enabled, NEW entries are
+    # skipped in the configured low-liquidity windows (open positions are still
+    # managed). `session_blocked_hours_utc` is a comma list of UTC hours to skip
+    # (e.g. "0,1,2,3,4,5"); `session_block_weekend` skips Sat/Sun (UTC). Off by
+    # default (trade around the clock).
+    session_filter_enabled: bool = False
+    session_blocked_hours_utc: str = ""
+    session_block_weekend: bool = False
+
     # --- Market Data Quality ---
     # Single-candle move beyond this fraction is flagged as a spike (0.01-0.10 typical).
     mdq_spike_threshold_pct: float = 0.10
@@ -592,6 +604,23 @@ class Settings(BaseSettings):
             if sym and sym not in seen:
                 seen.add(sym)
                 out.append(sym)
+        return out
+
+    @property
+    def session_blocked_hours_set(self) -> set[int]:
+        """UTC hours (0-23) in which new entries are skipped. Ignores malformed
+        or out-of-range entries so a typo cannot crash the trading loop."""
+        out: set[int] = set()
+        for part in self.session_blocked_hours_utc.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                hour = int(part)
+            except ValueError:
+                continue
+            if 0 <= hour <= 23:
+                out.add(hour)
         return out
 
     @property

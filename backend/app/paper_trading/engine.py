@@ -121,6 +121,21 @@ class PaperTradingEngine:
     async def _evaluate_symbol_entry(self, symbol: str, settings) -> None:
         from app.paper_trading.mirror import resolve_paper_exec
 
+        # Session / time-of-day filter (mirrors live): skip new entries in
+        # low-liquidity UTC windows so paper rejects the same setups live would.
+        if getattr(settings, "session_filter_enabled", False):
+            from datetime import UTC, datetime
+
+            from app.services.strategy.session import entry_allowed
+
+            allowed, reason = entry_allowed(
+                datetime.now(UTC), settings.session_blocked_hours_set, settings.session_block_weekend
+            )
+            if not allowed:
+                self._log("entry_skipped", f"{symbol}: {reason}",
+                          {"symbol": symbol, "reason": "session_filter"})
+                return
+
         exec_ = resolve_paper_exec(self.db, settings)
         # Mirror live: trade the live timeframe so signal frequency/quality match.
         paper_interval = exec_.interval

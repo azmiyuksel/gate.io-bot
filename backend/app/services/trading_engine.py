@@ -104,6 +104,12 @@ class TradingEngine:
         if not self._check_circuit_breaker(symbol):
             return
 
+        # Session / time-of-day filter: skip new entries in low-liquidity UTC
+        # windows (open positions are still managed). Checked early to avoid
+        # spending API calls on a scan that cannot trade.
+        if not self._session_allows_entry(symbol):
+            return
+
         # Per-symbol guard: never stack a second position on a pair we already
         # hold (mirrors paper's `already_in_position`). Without this a sustained
         # breakout re-fires every cycle and concentrates several entries on one
@@ -215,6 +221,21 @@ class TradingEngine:
             self.db.commit()
             return False
         return True
+
+    def _session_allows_entry(self, symbol: str) -> bool:
+        """Session / time-of-day filter (True when entries are allowed)."""
+        s = get_settings()
+        if not getattr(s, "session_filter_enabled", False):
+            return True
+        from app.services.strategy.session import entry_allowed
+
+        allowed, reason = entry_allowed(
+            datetime.now(UTC), s.session_blocked_hours_set, s.session_block_weekend
+        )
+        if not allowed:
+            self._log("session_filter", f"{symbol}: entry skipped, {reason}")
+            self.db.commit()
+        return allowed
 
     async def _fetch_and_validate_candles(self, symbol: str):
         """Fetch candles and run through the market-data quality pipeline.
