@@ -121,9 +121,13 @@ class StrategySettings(Base):
     # Safe default: a new strategy is DISABLED until explicitly enabled (matches the
     # capital-preservation activation gate; live entries also require BOT_ENABLED).
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    max_capital_per_trade_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.05"))
+    # Notional cap per trade. Raised 0.05 -> 0.08 (still <= the 0.20 hard ceiling)
+    # so each entry can take a bit more size — a more aggressive default book.
+    max_capital_per_trade_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.08"))
     daily_max_loss_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.05"))
-    weekly_max_loss_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.15"))
+    # Weekly loss budget raised 0.15 -> 0.18 to match the looser per-trade risk
+    # and exposure, giving the strategy more room before the weekly halt.
+    weekly_max_loss_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.18"))
     max_open_positions: Mapped[int] = mapped_column(default=8)
     min_reward_risk: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("1.5"))
     atr_multiplier: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("2.0"))

@@ -91,7 +91,9 @@ class Settings(BaseSettings):
     # to ZERO near the max drawdown — which halts recovery (no new trades can
     # dig out). 0.2 keeps a 20%-sized entry alive near the limit so recovery is
     # still possible while risk is heavily reduced.
-    drawdown_derisk_floor: float = 0.2
+    # Raised 0.2 -> 0.35: de-risk less aggressively in drawdown so the book keeps
+    # meaningful size to trade its way back out (more risk-tolerant recovery).
+    drawdown_derisk_floor: float = 0.35
 
     # --- Stablecoin (quote) depeg monitoring ---
     # Pair used to proxy the quote stablecoin's peg (drift from 1.0).
@@ -111,12 +113,15 @@ class Settings(BaseSettings):
     # Pairwise correlation cap (candidate vs EACH open position). Lowered from
     # 0.85 (which let 8 positions at 0.84 corr each pass — effectively one 8x
     # directional bet) to 0.65 so a "diversified" book is actually diversified.
-    max_position_correlation: float = 0.65
+    # Loosened 0.65 -> 0.75: allow a somewhat more concentrated (correlated) book
+    # to chase momentum across related names — accepts more directional risk.
+    max_position_correlation: float = 0.75
     # Aggregate portfolio correlation cap: the MEAN pairwise correlation of the
     # candidate + all open positions must stay below this. Three positions each
     # at 0.64 pairwise corr pass the pairwise cap but form one concentrated
     # bet — the aggregate cap catches that. 0 disables (legacy pairwise-only).
-    max_portfolio_correlation: float = 0.55
+    # Loosened 0.55 -> 0.65 to match the looser pairwise cap (more risk tolerance).
+    max_portfolio_correlation: float = 0.65
 
     # --- Volatility targeting (opt-in): scale size inversely to volatility ---
     vol_targeting_enabled: bool = False
@@ -158,12 +163,14 @@ class Settings(BaseSettings):
     # --- Paper-trading position sizing (ATR/risk-based, leverage-aware) ---
     # Size each paper trade so the loss-to-stop equals this fraction of equity
     # (true fixed-fractional risk), scaled by ATR, capped at a leverage notional
-    # limit. 0.5% risk/trade is the frequent-trading default (many small bets).
-    paper_position_risk_pct: float = 0.005
+    # limit. Raised 0.5% -> 0.75% risk/trade for a bit more risk per paper bet
+    # (only used when paper runs standalone; with paper_mirror_live=true paper
+    # adopts the live max_risk_per_trade_pct instead).
+    paper_position_risk_pct: float = 0.0075
     paper_atr_stop_multiplier: float = 2.0
     # Reward:risk for the fixed take-profit (trailing handles the rest of the run).
     paper_tp_rr: float = 1.5
-    paper_max_capital_per_trade_pct: float = 0.10
+    paper_max_capital_per_trade_pct: float = 0.14
     # Fallback notional fraction when ATR is unavailable (conservative).
     paper_fallback_capital_pct: float = 0.02
 
@@ -322,25 +329,31 @@ class Settings(BaseSettings):
     # Maximum absolute dollar loss per trade as a fraction of equity. This provides
     # a hard cap on any single trade's risk, protecting against flash crashes where
     # the stop-loss distance is wide but the trade size is large.
-    max_risk_per_trade_pct: float = 0.02
+    # Raised 0.02 -> 0.03: take a bit more risk per trade (each fixed-fractional
+    # bet sizes to 3% loss-to-stop). The circuit breaker + drawdown de-risk below
+    # remain the backstop.
+    max_risk_per_trade_pct: float = 0.03
     # Maximum total portfolio exposure as a fraction of equity. Prevents over-allocation
     # when max_open_positions is set too high. This is the GROSS notional cap
     # (sum of |entry_price * quantity| across open positions, longs + shorts both
     # add) — bounds total market exposure regardless of direction.
-    max_total_exposure_pct: float = 0.30
+    # Raised 0.30 -> 0.45: deploy more capital across the book (more positions /
+    # bigger notional) while the per-trade risk cap still bounds each bet.
+    max_total_exposure_pct: float = 0.45
     # Maximum NET portfolio exposure as a fraction of equity (longs minus
     # shorts, signed). A long and a short on the same asset partially offset, so
     # the gross cap can over-bind a market-neutral book while leaving a one-way
     # 30%-long book unchecked on the net side. The net cap bounds the
-    # directional bias: 0.30 == up to 30% net long (or short). 0 disables
-    # (legacy gross-only).
-    max_net_exposure_pct: float = 0.30
+    # directional bias: 0.40 == up to 40% net long (or short). 0 disables
+    # (legacy gross-only). Raised 0.30 -> 0.40 for a bit more directional room.
+    max_net_exposure_pct: float = 0.40
     # Beta-weighted net exposure cap: like max_net_exposure_pct but each
     # position's notional is weighted by its beta to BTC (the crypto market
     # factor). A 30%-net-long book in high-beta alts (SOL beta ~1.5) is more
     # directional than 30% in BTC — the beta-weighted cap catches that. Uses
     # the correlation engine's covariance to estimate beta. 0 disables.
-    max_beta_weighted_exposure_pct: float = 0.30
+    # Raised 0.30 -> 0.40 to track the looser net-exposure budget above.
+    max_beta_weighted_exposure_pct: float = 0.40
     beta_benchmark_symbol: str = "BTC_USDT"
     # Fractional Kelly position sizing (opt-in). When enabled and a track record
     # exists, size is scaled by ¼-Kelly (Kelly fraction / 4) — edge-quality-aware
@@ -357,7 +370,9 @@ class Settings(BaseSettings):
     # Equity used when the exchange balance cannot be fetched (no keys / offline).
     fallback_equity: float = 10000.0
     # Max account drawdown from peak equity before the circuit breaker trips.
-    max_account_drawdown_pct: float = 0.15
+    # Raised 0.15 -> 0.18: give the more aggressive sizing a bit more room before
+    # the hard stop fires (the graded drawdown de-risk still shrinks size first).
+    max_account_drawdown_pct: float = 0.18
     # Max age (seconds) of an equity snapshot before it is considered stale and
     # unsafe to size new positions against. Trading runs every 15m, so allow ~2 cycles.
     max_equity_staleness_seconds: int = 1800
