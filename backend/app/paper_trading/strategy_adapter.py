@@ -26,31 +26,34 @@ logger = logging.getLogger(__name__)
 _KNOWN_PAPER_STRATEGIES = (MOMENTUM_NAME, CAPITAL_PRESERVATION_NAME)
 
 
-def _build_strategy(settings):
-    """Instantiate the configured paper strategy.
+def _build_strategy_by_name(name, settings):
+    """Instantiate a paper strategy BY NAME (used for regime routing too).
 
-    Default is the frequent momentum/breakout strategy (long+short). The
-    capital-preservation strategy is kept selectable for A/B comparison and runs
-    with the deliberately looser paper thresholds it was tuned for.
-
-    Hard-fails on an unknown name, matching the live factory — a typo silently
-    running the wrong strategy is worse than a startup error (paper would trade
-    an unvalidated strategy under a mistyped name, diverging from live).
+    The capital-preservation strategy runs with the deliberately looser paper
+    thresholds it was tuned for. Hard-fails on an unknown name, matching the live
+    factory — a typo silently running the wrong strategy is worse than a startup
+    error (paper would trade an unvalidated strategy under a mistyped name,
+    diverging from live).
     """
-    if settings.paper_strategy == CAPITAL_PRESERVATION_NAME:
+    if name == CAPITAL_PRESERVATION_NAME:
         strat = CapitalPreservationStrategy()
         strat.trend_filter_enabled = settings.paper_trend_filter_enabled
         strat.rsi_threshold = Decimal(str(settings.paper_rsi_threshold))
         strat.ema20_distance_pct = Decimal(str(settings.paper_ema20_distance_pct))
         strat.trend_tolerance_pct = Decimal(str(settings.paper_trend_tolerance_pct))
         return strat
-    if settings.paper_strategy == MOMENTUM_NAME:
+    if name == MOMENTUM_NAME:
         return MomentumBreakoutStrategy()
     raise ValueError(
-        f"Unknown PAPER_STRATEGY '{settings.paper_strategy}'. "
+        f"Unknown PAPER_STRATEGY '{name}'. "
         f"Known strategies: {list(_KNOWN_PAPER_STRATEGIES)}. "
         f"Check .env for a typo."
     )
+
+
+def _build_strategy(settings):
+    """Instantiate the configured paper strategy (default momentum/breakout)."""
+    return _build_strategy_by_name(settings.paper_strategy, settings)
 
 
 class CapitalPreservationAdapter(BaseStrategy):
@@ -63,12 +66,29 @@ class CapitalPreservationAdapter(BaseStrategy):
     def __init__(self, candle_window: int = 60, min_candles: int = 210) -> None:
         settings = get_settings()
         self._strategy = _build_strategy(settings)
+        # Cache of underlying strategies by name for regime routing (built lazily).
+        self._strategy_cache: dict = {self._strategy.name: self._strategy}
         self._last_signal: TradingSignal | None = None
         self._current_data: MarketData | None = None
         self._last_reason: str = ""
         self._last_reason_code: str = ""
         self._candle_counts: dict[str, int] = {}
         self._last_atr: float | None = None
+
+    def route_for_regime(self, regime_type) -> str:
+        """Swap the active underlying strategy to the one routed for the given
+        market regime (momentum in trends/breakouts, mean-reversion in ranges).
+        Returns the active strategy name. Used only when REGIME_ROUTING_ENABLED."""
+        from app.services.strategy.router import route_strategy_name
+
+        settings = get_settings()
+        name = route_strategy_name(regime_type, settings.paper_strategy)
+        strat = self._strategy_cache.get(name)
+        if strat is None:
+            strat = _build_strategy_by_name(name, settings)
+            self._strategy_cache[name] = strat
+        self._strategy = strat
+        return name
 
     def on_market_data(self, data: MarketData) -> None:
         self._current_data = data

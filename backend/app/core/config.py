@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     # strategy so paper and live evaluate identical signals. Set to
     # "capital_preservation_v1" to run the low-frequency mean-reversion strategy live.
     live_strategy: str = "momentum_breakout_v1"
+    # Regime-aware strategy routing: instead of forcing `live_strategy` through
+    # every market regime (and getting blocked by the regime filter in the
+    # regimes it doesn't fit), pick the strategy best suited to the CURRENT
+    # regime per symbol — momentum in trends/breakouts, mean-reversion in ranges.
+    # Off by default: the deployment trades exactly `live_strategy`. Enable to let
+    # the bot trade BOTH edges as the market rotates. Applies to paper too.
+    regime_routing_enabled: bool = False
     # Go-live gate: require the live strategy to have PASSED a recent walk-forward
     # validation (on the live timeframe) before it may open new trades. Blocks new
     # entries (open positions are still managed) until a passing, fresh run exists.

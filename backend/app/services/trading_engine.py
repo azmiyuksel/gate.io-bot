@@ -81,6 +81,9 @@ class TradingEngine:
         self.client = client
         # Mirror paper: the live strategy is selected from config (default momentum).
         self.strategy = build_strategy(get_settings().live_strategy)
+        # Cache of strategy instances by name for regime routing (built lazily so
+        # a non-routing deployment never instantiates the alternate strategy).
+        self._strategy_cache: dict = {get_settings().live_strategy: self.strategy}
         self.risk = RiskManager(db)
         self.breaker = CircuitBreaker(db)
         self.positions = PositionRepository(db)
@@ -110,7 +113,19 @@ class TradingEngine:
             return
         candles, data_risk_mult = result
 
-        signal = self._evaluate_strategy_signal(symbol, candles)
+        # Candle dicts for feature calculation / regime detection.
+        candles_list = self._candles_to_dicts(candles)
+
+        # Regime-aware strategy routing (opt-in): pick the strategy best suited
+        # to the CURRENT regime per symbol (momentum in trends/breakouts,
+        # mean-reversion in ranges) instead of forcing the configured strategy
+        # through every regime. update_regime runs once here so BOTH the router
+        # and the should_trade filter below read a fresh, same-timeframe record.
+        # When routing is off, the configured strategy is used and the regime is
+        # updated inside _check_regime_filter as before.
+        strategy, regime_pre_updated = self._resolve_strategy(symbol, candles_list)
+
+        signal = self._evaluate_strategy_signal(symbol, candles, strategy)
         if signal is None:
             return
 
@@ -135,24 +150,13 @@ class TradingEngine:
         if not await self._check_mtf_filter(symbol, signal):
             return
 
-        # Convert exchange candles to list of dicts for feature calculation
-        candles_list = [
-            {
-                "open": float(c["open"]),
-                "high": float(c["high"]),
-                "low": float(c["low"]),
-                "close": float(c["close"]),
-                "volume": float(c["volume"]),
-                "timestamp": c["timestamp"],
-            }
-            for c in candles
-        ]
-
-        allowed, _reason, risk_mult = self._check_regime_filter(symbol, candles_list)
+        allowed, _reason, risk_mult = self._check_regime_filter(
+            symbol, candles_list, strategy.name, already_updated=regime_pre_updated
+        )
         if not allowed:
             return
 
-        strategy_name = self.strategy.name
+        strategy_name = strategy.name
 
         health_status = self._check_strategy_health(strategy_name)
         health_state = health_status.get("state")
@@ -232,29 +236,91 @@ class TradingEngine:
         data_risk_mult = degraded_mult if data_status == DataTradeStatus.degraded else Decimal("1")
         return candles, data_risk_mult
 
-    def _evaluate_strategy_signal(self, symbol: str, candles: list):
+    @staticmethod
+    def _candles_to_dicts(candles: list) -> list[dict]:
+        """Normalize exchange candles to float dicts for features/regime."""
+        return [
+            {
+                "open": float(c["open"]),
+                "high": float(c["high"]),
+                "low": float(c["low"]),
+                "close": float(c["close"]),
+                "volume": float(c["volume"]),
+                "timestamp": c["timestamp"],
+            }
+            for c in candles
+        ]
+
+    def _get_strategy(self, name: str):
+        """Return a (cached) strategy instance by name via the shared factory."""
+        strat = self._strategy_cache.get(name)
+        if strat is None:
+            strat = build_strategy(name)
+            self._strategy_cache[name] = strat
+        return strat
+
+    def _resolve_strategy(self, symbol: str, candles_list: list):
+        """Pick the strategy for this scan, honoring regime routing.
+
+        Returns (strategy, regime_pre_updated). When routing is enabled the
+        market regime is updated here (so the router and the downstream
+        should_trade filter read the same fresh, same-timeframe record) and the
+        strategy best suited to that regime is returned. When disabled the
+        configured strategy is returned and the regime is left for
+        _check_regime_filter to update.
+        """
+        _settings = get_settings()
+        if not getattr(_settings, "regime_routing_enabled", False):
+            return self.strategy, False
+        from app.services.strategy.router import route_strategy_name
+
+        regime_record = MarketRegimeEngine(self.db).update_regime(
+            symbol, _settings.market_data_interval, candles_list
+        )
+        routed_name = route_strategy_name(regime_record.regime_type, _settings.live_strategy)
+        strategy = self._get_strategy(routed_name)
+        if routed_name != self.strategy.name:
+            self._log(
+                "regime_routing",
+                f"{symbol}: regime {regime_record.regime_type.value} -> routed to {routed_name}",
+            )
+            self.db.commit()
+        return strategy, True
+
+    def _evaluate_strategy_signal(self, symbol: str, candles: list, strategy=None):
         """Run the strategy against the candle feed.
 
         Returns the signal object when a valid buy signal is present; returns None
         (after logging and committing) otherwise.
         """
-        signal = self.strategy.evaluate(candles)
+        strategy = strategy or self.strategy
+        signal = strategy.evaluate(candles)
         if not signal.should_enter or signal.entry_price is None or signal.atr_value is None:
             self._log("strategy", f"{symbol}: {signal.reason}")
             self.db.commit()
             return None
         return signal
 
-    def _check_regime_filter(self, symbol: str, candles_list: list):
+    def _check_regime_filter(
+        self, symbol: str, candles_list: list, strategy_name: str | None = None,
+        already_updated: bool = False,
+    ):
         """Update market regime and check whether the strategy is allowed to trade.
 
         Returns (allowed: bool, reason: str, risk_mult: Decimal).  Logs and
-        commits when trading is blocked by the regime filter.
+        commits when trading is blocked by the regime filter. The regime is read
+        at the SAME timeframe it is written (market_data_interval) — reading the
+        old hardcoded "1h" default while writing the configured interval made the
+        filter always see a default "sideways" regime, silently blocking every
+        breakout/trend strategy.  When ``already_updated`` is set the regime was
+        refreshed by the router this scan, so we only run the should_trade check.
         """
+        interval = get_settings().market_data_interval
         regime_engine = MarketRegimeEngine(self.db)
-        regime_engine.update_regime(symbol, get_settings().market_data_interval, candles_list)
-        strategy_name = self.strategy.name
-        allowed, reason, risk_mult = regime_engine.should_trade(strategy_name, symbol)
+        if not already_updated:
+            regime_engine.update_regime(symbol, interval, candles_list)
+        strategy_name = strategy_name or self.strategy.name
+        allowed, reason, risk_mult = regime_engine.should_trade(strategy_name, symbol, interval)
         if not allowed:
             self._log("regime_filter", f"{symbol} trade blocked by regime: {reason}")
             self.db.commit()

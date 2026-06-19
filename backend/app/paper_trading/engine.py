@@ -148,6 +148,28 @@ class PaperTradingEngine:
                 {"symbol": symbol, "reason": "no_candles"},
             )
             return
+        # Regime-aware routing (opt-in, mirrors live): pick the strategy best
+        # suited to the current regime BEFORE evaluating. update_regime runs once
+        # here so the should_trade filter in _live_entry_gate reads the same fresh
+        # record (passed via regime_pre_updated).
+        regime_pre_updated = False
+        if getattr(settings, "regime_routing_enabled", False) and hasattr(self.strategy, "route_for_regime"):
+            try:
+                from app.market_regime.engine import MarketRegimeEngine
+
+                rl = [
+                    {"open": float(c["open"]), "high": float(c["high"]), "low": float(c["low"]),
+                     "close": float(c["close"]), "volume": float(c["volume"]), "timestamp": c["timestamp"]}
+                    for c in candles
+                ]
+                rec = MarketRegimeEngine(self.db).update_regime(symbol, settings.market_data_interval, rl)
+                routed = self.strategy.route_for_regime(rec.regime_type)
+                regime_pre_updated = True
+                self._log("regime_routing", f"{symbol}: regime {rec.regime_type.value} -> {routed}",
+                          {"symbol": symbol, "reason": "regime_routing"})
+            except Exception:
+                pass
+
         signal = self.strategy.evaluate_real_candles(symbol, candles)
         if signal is None:
             # Message keeps the readable reason (with RSI); payload carries the
@@ -196,7 +218,9 @@ class PaperTradingEngine:
         # standalone paper stays lightweight.
         risk_mult = Decimal("1")
         if exec_.mirror:
-            allowed, risk_mult = await self._live_entry_gate(symbol, candles, signal, settings)
+            allowed, risk_mult = await self._live_entry_gate(
+                symbol, candles, signal, settings, regime_pre_updated=regime_pre_updated
+            )
             if not allowed:
                 return
 
@@ -235,7 +259,7 @@ class PaperTradingEngine:
         )
         await self.execute_signal(signal, data, risk_mult)
 
-    async def _live_entry_gate(self, symbol, candles, signal, settings) -> tuple[bool, Decimal]:
+    async def _live_entry_gate(self, symbol, candles, signal, settings, regime_pre_updated: bool = False) -> tuple[bool, Decimal]:
         """Mirror the live engine's scan_symbol entry filters so paper rejects /
         de-risks entries the same way live would. Returns (allowed, risk_mult).
 
@@ -271,8 +295,13 @@ class PaperTradingEngine:
                 for c in candles
             ]
             regime = MarketRegimeEngine(self.db)
-            regime.update_regime(symbol, interval, candles_list)
-            allowed, reason, rmult = regime.should_trade(strategy_name, symbol)
+            # Read the regime at the SAME timeframe it is written. The old call
+            # let should_trade default to "1h" while update_regime wrote the
+            # configured interval, so the filter always saw a default "sideways"
+            # regime and silently blocked every breakout/trend strategy.
+            if not regime_pre_updated:
+                regime.update_regime(symbol, interval, candles_list)
+            allowed, reason, rmult = regime.should_trade(strategy_name, symbol, interval)
             if not allowed:
                 self._log("entry_skipped", f"{symbol}: regime_blocked ({reason})",
                           {"symbol": symbol, "reason": "regime_blocked"})
