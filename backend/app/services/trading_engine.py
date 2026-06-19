@@ -1122,7 +1122,18 @@ class TradingEngine:
                 position.symbol, position.quantity, close_direction, reduce_only=True
             )
             exit_price = Decimal(str(response.get("avg_deal_price") or response.get("fill_price") or position.entry_price))
-            filled_qty = position.quantity
+            # Derive filled base quantity from actual fill response (not position.quantity)
+            # so partial fills are accounted for correctly.
+            try:
+                info = await self.client.futures_contract_info(position.symbol)
+                mult = Decimal(str(info.get("quanto_multiplier", "0") or "0"))
+            except Exception:
+                mult = Decimal("0")
+            raw_filled = response.get("size") or response.get("filled_qty")
+            if raw_filled is not None and mult > 0:
+                filled_qty = Decimal(str(raw_filled)) * mult
+            else:
+                filled_qty = position.quantity
         else:
             response = await self.client.place_market_sell(position.symbol, position.quantity)
             exit_price = Decimal(str(response.get("avg_deal_price") or position.entry_price))

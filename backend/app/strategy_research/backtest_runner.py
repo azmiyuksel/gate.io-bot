@@ -273,7 +273,13 @@ class ResearchBacktestRunner:
         # bias and made the p-value optimistic.
         total_trades = int(metrics.get("total_trades", 0))
         n_trials = int(self.settings.research_population) * max(int(wf_windows), 1)
-        dsr_pvalue = self._deflated_sharpe_ratio(sharpe, n_trials=n_trials, var_sharpe=None)
+        # var_sharpe = 1/N where N is the actual trade count (not the config
+        # research_min_trades). Using the actual count gives the correct standard
+        # error for the DSR — fewer trades = more uncertainty = higher p-value.
+        dsr_pvalue = self._deflated_sharpe_ratio(
+            sharpe, n_trials=n_trials,
+            var_sharpe=(1.0 / total_trades) if total_trades > 0 else None,
+        )
 
         track_days = self._min_track_days(data)
 

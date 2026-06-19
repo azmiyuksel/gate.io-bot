@@ -2,11 +2,17 @@ export type Position = {
   id: number;
   symbol: string;
   status: string;
+  side: string;
   entry_price: string;
   quantity: string;
   stop_loss: string;
   take_profit: string;
+  trailing_stop: string | null;
+  breakeven_stop: boolean;
   realized_pnl: string;
+  exchange_stop_order_id: string | null;
+  stop_placed_at: string | null;
+  opened_at: string | null;
 };
 
 export type Trade = {

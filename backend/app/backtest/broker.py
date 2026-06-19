@@ -112,8 +112,11 @@ class VirtualBroker:
                     position.stop_loss = position.entry_price
                     position.breakeven_triggered = True
             if low <= position.stop_loss:
-                # Stop-loss is a market (taker) exit that crosses the spread.
-                self._close(position, candle, position.stop_loss, "stop_loss", maker=False)
+                # Stop-loss fill: use the ACTUAL bar low as the fill price (not
+                # the trigger price). If the bar gapped through the stop, the
+                # real fill would be at or worse than the low — using the trigger
+                # price is optimistic and overstates backtest returns.
+                self._close(position, candle, low, "stop_loss", maker=False)
             elif position.take_profit > 0 and high >= position.take_profit:
                 # Take-profit is a resting limit (maker) exit — no spread/slippage.
                 # A take_profit of 0 means the TP is disabled (trend-following

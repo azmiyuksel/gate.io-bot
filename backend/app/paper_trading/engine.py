@@ -201,6 +201,28 @@ class PaperTradingEngine:
                 return
 
         latest = candles[-1]
+
+        # 7. Slippage guard: check if live price has moved adversely since the
+        # signal was generated (mirrors live's _check_slippage_guard).
+        try:
+            entry_max_slippage = getattr(settings, "entry_max_slippage_pct", 0)
+            if entry_max_slippage > 0 and self._client:
+                live_price_str = await self._client.last_price(symbol)
+                if live_price_str:
+                    live_price = Decimal(str(live_price_str))
+                    entry_price = Decimal(str(latest["close"]))
+                    is_short = signal.side.value == "sell"
+                    if is_short:
+                        adverse = (entry_price - live_price) / entry_price if entry_price else Decimal("0")
+                    else:
+                        adverse = (live_price - entry_price) / entry_price if entry_price else Decimal("0")
+                    if adverse > Decimal(str(entry_max_slippage)):
+                        self._log("entry_skipped", f"{symbol}: slippage_guard ({adverse:.4%} > {entry_max_slippage:.4%})",
+                                  {"symbol": symbol, "reason": "slippage_guard"})
+                        return
+        except Exception:
+            pass
+
         # Build a MarketData snapshot from the latest REAL candle (proper OHLC),
         # so execution simulation and risk checks see correct bar values.
         data = MarketData(
@@ -414,6 +436,21 @@ class PaperTradingEngine:
         # regime/health/data-quality gates (matches the live engine).
         if risk_mult != Decimal("1"):
             quantity = quantity * risk_mult
+
+        # Drawdown derisk: linearly scale down as account drawdown approaches
+        # max_drawdown (mirrors live's drawdown_risk_multiplier in _approve_risk_and_size).
+        if getattr(config, "drawdown_derisk_enabled", False):
+            try:
+                from app.services.risk.manager import drawdown_risk_multiplier
+                dd_pct = self.portfolio.drawdown_pct()
+                dd_mult = drawdown_risk_multiplier(
+                    dd_pct,
+                    config.max_account_drawdown_pct,
+                    config.drawdown_derisk_floor,
+                )
+                quantity = quantity * Decimal(str(dd_mult))
+            except Exception:
+                pass
 
         if quantity <= 0:
             return

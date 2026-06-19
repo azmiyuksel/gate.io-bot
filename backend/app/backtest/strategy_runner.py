@@ -4,6 +4,27 @@ import numpy as np
 import pandas as pd
 
 
+def _ema_sma_seed(series: pd.Series, period: int) -> pd.Series:
+    """EMA with SMA seed — matches the live ``indicators.ema()`` formula.
+
+    Pandas ``ewm(span=N, adjust=False)`` seeds from the first raw value, but
+    the live engine seeds with the SMA of the first ``period`` values.  This
+    function produces the same result so backtest EMA values match live exactly.
+    """
+    result = pd.Series(np.nan, index=series.index, dtype="float64")
+    if len(series) < period:
+        return result
+    sma_seed = series.iloc[:period].mean()
+    result.iloc[period - 1] = sma_seed
+    alpha = 2.0 / (period + 1)
+    prev = sma_seed
+    for i in range(period, len(series)):
+        val = (series.iloc[i] - prev) * alpha + prev
+        result.iloc[i] = val
+        prev = val
+    return result
+
+
 class BaseStrategy(ABC):
     def on_candle(self, candle: pd.Series) -> None:
         pass
@@ -33,10 +54,10 @@ class MacdStrategy(BaseStrategy):
 
     def prepare(self, data: pd.DataFrame) -> pd.DataFrame:
         frame = data.copy()
-        ema_fast = frame["close"].ewm(span=self.macd_fast, adjust=False).mean()
-        ema_slow = frame["close"].ewm(span=self.macd_slow, adjust=False).mean()
+        ema_fast = _ema_sma_seed(frame["close"], self.macd_fast)
+        ema_slow = _ema_sma_seed(frame["close"], self.macd_slow)
         frame["macd"] = ema_fast - ema_slow
-        frame["macd_signal_line"] = frame["macd"].ewm(span=self.macd_signal, adjust=False).mean()
+        frame["macd_signal_line"] = _ema_sma_seed(frame["macd"], self.macd_signal)
         frame["macd_histogram"] = frame["macd"] - frame["macd_signal_line"]
         tr = pd.concat(
             [
@@ -187,8 +208,8 @@ class EmaRsiAtrStrategy(BaseStrategy):
 
     def prepare(self, data: pd.DataFrame) -> pd.DataFrame:
         frame = data.copy()
-        frame["ema_trend"] = frame["close"].ewm(span=self.ema_trend, adjust=False).mean()
-        frame["ema_entry"] = frame["close"].ewm(span=self.ema_entry, adjust=False).mean()
+        frame["ema_trend"] = _ema_sma_seed(frame["close"], self.ema_trend)
+        frame["ema_entry"] = _ema_sma_seed(frame["close"], self.ema_entry)
         delta = frame["close"].diff()
         # Wilder smoothing (EWM alpha=1/period) — matches the live indicators.rsi().
         gain = delta.clip(lower=0).ewm(alpha=1 / self.rsi_period, adjust=False).mean()
@@ -289,9 +310,9 @@ class MomentumBreakoutBacktestStrategy(BaseStrategy):
 
     def prepare(self, data: pd.DataFrame) -> pd.DataFrame:
         frame = data.copy()
-        frame["ema_fast"] = frame["close"].ewm(span=self.ema_fast, adjust=False).mean()
-        frame["ema_slow"] = frame["close"].ewm(span=self.ema_slow, adjust=False).mean()
-        frame["ema_trend"] = frame["close"].ewm(span=self.ema_trend, adjust=False).mean()
+        frame["ema_fast"] = _ema_sma_seed(frame["close"], self.ema_fast)
+        frame["ema_slow"] = _ema_sma_seed(frame["close"], self.ema_slow)
+        frame["ema_trend"] = _ema_sma_seed(frame["close"], self.ema_trend)
         # RSI(14) — Wilder smoothing (EWM alpha=1/14) matching live indicators.rsi()
         delta = frame["close"].diff()
         gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
@@ -388,9 +409,59 @@ class CapitalPreservationBacktestStrategy(EmaRsiAtrStrategy):
     """Backtest adapter for the live ``capital_preservation_v1`` strategy.
 
     Subclasses EmaRsiAtrStrategy (same EMA200 trend + RSI oversold + EMA20
-    distance gate) but exposes the canonical strategy name so walk-forward runs
-    tagged ``capital_preservation_v1`` validate the actual live strategy rather
-    than a generically-named stand-in.
+    distance gate) but adds the live strategy's additional filters:
+    - 24h range filter (block when excessive volatility)
+    - Volume expansion filter (block on low volume)
+    - Trend tolerance (allow price slightly below EMA200 for LONG)
     """
 
     name: str = "capital_preservation_v1"
+
+    def __init__(self, parameters: dict | None = None) -> None:
+        super().__init__(parameters)
+        params = parameters or {}
+        self.max_24h_range_pct = float(params.get("max_24h_range_pct", 0.10))
+        self.daily_range_candles = int(params.get("daily_range_candles", 12))
+        self.min_volume_ratio = float(params.get("min_volume_ratio", 0.6))
+        self.trend_tolerance_pct = float(params.get("trend_tolerance_pct", 0.0))
+
+    def prepare(self, data: pd.DataFrame) -> pd.DataFrame:
+        frame = super().prepare(data)
+        # 24h range: max-min of last N closes / current price
+        n = min(self.daily_range_candles, len(frame))
+        frame["range_high"] = frame["close"].rolling(n).max()
+        frame["range_low"] = frame["close"].rolling(n).min()
+        frame["range_pct"] = (frame["range_high"] - frame["range_low"]) / frame["close"]
+        # Volume ratio: current volume / 20-bar mean volume
+        frame["vol_mean_20"] = frame["volume"].rolling(20).mean()
+        frame["vol_ratio"] = frame["volume"] / frame["vol_mean_20"].replace(0, np.nan)
+        return frame.dropna()
+
+    def should_buy(self) -> bool:
+        if self.current is None:
+            return False
+        price = float(self.current["close"])
+        ema_trend = float(self.current["ema_trend"])
+        rsi = float(self.current.get("rsi", 50))
+        # Trend tolerance: allow price slightly below EMA200 (like live)
+        long_trend_ok = price > ema_trend * (1 - self.trend_tolerance_pct)
+        if not long_trend_ok:
+            return False
+        if rsi >= self.rsi_threshold:
+            return False
+        # EMA20 distance gate (inherited from EmaRsiAtrStrategy)
+        ema_entry = float(self.current.get("ema_entry", 0))
+        if ema_entry <= 0:
+            return False
+        distance = abs(price - ema_entry) / ema_entry
+        if distance > self.ema_entry_distance_pct:
+            return False
+        # 24h range filter
+        range_pct = float(self.current.get("range_pct", 0) or 0)
+        if range_pct > self.max_24h_range_pct:
+            return False
+        # Volume filter
+        vol_ratio = float(self.current.get("vol_ratio", 0) or 0)
+        if vol_ratio < self.min_volume_ratio:
+            return False
+        return True
