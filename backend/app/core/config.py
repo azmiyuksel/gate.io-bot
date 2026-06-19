@@ -329,31 +329,32 @@ class Settings(BaseSettings):
     # Maximum absolute dollar loss per trade as a fraction of equity. This provides
     # a hard cap on any single trade's risk, protecting against flash crashes where
     # the stop-loss distance is wide but the trade size is large.
-    # Raised 0.02 -> 0.03: take a bit more risk per trade (each fixed-fractional
-    # bet sizes to 3% loss-to-stop). The circuit breaker + drawdown de-risk below
-    # remain the backstop.
-    max_risk_per_trade_pct: float = 0.03
+    # Raised 0.02 -> 0.03 -> 0.04: take more risk per trade (each fixed-fractional
+    # bet now sizes to 4% loss-to-stop). The circuit breaker + drawdown de-risk
+    # below remain the backstop.
+    max_risk_per_trade_pct: float = 0.04
     # Maximum total portfolio exposure as a fraction of equity. Prevents over-allocation
     # when max_open_positions is set too high. This is the GROSS notional cap
     # (sum of |entry_price * quantity| across open positions, longs + shorts both
     # add) — bounds total market exposure regardless of direction.
-    # Raised 0.30 -> 0.45: deploy more capital across the book (more positions /
-    # bigger notional) while the per-trade risk cap still bounds each bet.
-    max_total_exposure_pct: float = 0.45
+    # Raised 0.30 -> 0.45 -> 0.55: deploy more capital across the book (more
+    # positions / bigger notional) while the per-trade risk cap still bounds
+    # each bet.
+    max_total_exposure_pct: float = 0.55
     # Maximum NET portfolio exposure as a fraction of equity (longs minus
     # shorts, signed). A long and a short on the same asset partially offset, so
     # the gross cap can over-bind a market-neutral book while leaving a one-way
     # 30%-long book unchecked on the net side. The net cap bounds the
-    # directional bias: 0.40 == up to 40% net long (or short). 0 disables
-    # (legacy gross-only). Raised 0.30 -> 0.40 for a bit more directional room.
-    max_net_exposure_pct: float = 0.40
+    # directional bias: 0.45 == up to 45% net long (or short). 0 disables
+    # (legacy gross-only). Raised 0.30 -> 0.40 -> 0.45 for more directional room.
+    max_net_exposure_pct: float = 0.45
     # Beta-weighted net exposure cap: like max_net_exposure_pct but each
     # position's notional is weighted by its beta to BTC (the crypto market
     # factor). A 30%-net-long book in high-beta alts (SOL beta ~1.5) is more
     # directional than 30% in BTC — the beta-weighted cap catches that. Uses
     # the correlation engine's covariance to estimate beta. 0 disables.
-    # Raised 0.30 -> 0.40 to track the looser net-exposure budget above.
-    max_beta_weighted_exposure_pct: float = 0.40
+    # Raised 0.30 -> 0.40 -> 0.45 to track the looser net-exposure budget above.
+    max_beta_weighted_exposure_pct: float = 0.45
     beta_benchmark_symbol: str = "BTC_USDT"
     # Fractional Kelly position sizing (opt-in). When enabled and a track record
     # exists, size is scaled by ¼-Kelly (Kelly fraction / 4) — edge-quality-aware
@@ -370,9 +371,10 @@ class Settings(BaseSettings):
     # Equity used when the exchange balance cannot be fetched (no keys / offline).
     fallback_equity: float = 10000.0
     # Max account drawdown from peak equity before the circuit breaker trips.
-    # Raised 0.15 -> 0.18: give the more aggressive sizing a bit more room before
-    # the hard stop fires (the graded drawdown de-risk still shrinks size first).
-    max_account_drawdown_pct: float = 0.18
+    # Raised 0.15 -> 0.18 -> 0.20: give the more aggressive sizing more room
+    # before the hard stop fires (the graded drawdown de-risk still shrinks size
+    # first).
+    max_account_drawdown_pct: float = 0.20
     # Max age (seconds) of an equity snapshot before it is considered stale and
     # unsafe to size new positions against. Trading runs every 15m, so allow ~2 cycles.
     max_equity_staleness_seconds: int = 1800

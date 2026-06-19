@@ -128,7 +128,9 @@ class StrategySettings(Base):
     # Weekly loss budget raised 0.15 -> 0.18 to match the looser per-trade risk
     # and exposure, giving the strategy more room before the weekly halt.
     weekly_max_loss_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.18"))
-    max_open_positions: Mapped[int] = mapped_column(default=8)
+    # Raised 8 -> 10: allow a wider book so more of the raised gross-exposure
+    # budget can actually be deployed across uncorrelated names.
+    max_open_positions: Mapped[int] = mapped_column(default=10)
     min_reward_risk: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("1.5"))
     atr_multiplier: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("2.0"))
     trailing_stop_pct: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=Decimal("0.015"))
