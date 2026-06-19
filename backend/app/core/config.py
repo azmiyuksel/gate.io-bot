@@ -239,6 +239,19 @@ class Settings(BaseSettings):
     funding_signal_enabled: bool = True
     funding_signal_threshold_pct: float = 0.0005
     funding_signal_risk_mult: float = 0.5
+    # --- Funding carry as ALPHA (opt-in) ---
+    # The de-risk above is asymmetric (only shrinks adverse entries). Carry adds
+    # the symmetric upside: when funding strongly FAVORS the entry direction
+    # (long while funding is very negative -> shorts pay you; short while funding
+    # is very positive -> longs pay you), the position COLLECTS funding every
+    # interval. That recurring cash flow is a real edge, so size up — within a
+    # cap, and the post-scaling gross-exposure clamp still bounds total risk.
+    # A favorable funding only boosts; an adverse one is still de-risked above.
+    funding_carry_enabled: bool = False
+    # Favorable funding beyond this fraction (per interval) starts boosting size.
+    funding_carry_threshold_pct: float = 0.0005
+    # Maximum size boost from a strongly favorable funding rate (>=1.0).
+    funding_carry_max_mult: float = 1.25
     # --- Order book imbalance (microstructure entry gate) ---
     # A breakout with order-book imbalance in the entry direction has better
     # follow-through (resting depth absorbs the entry). Imbalance against the

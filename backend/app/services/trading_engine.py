@@ -376,6 +376,25 @@ class TradingEngine:
             )
             self.db.commit()
             return None
+
+        # Post-scaling gross-exposure clamp. The risk manager clamps its OWN
+        # quantity to the exposure cap, but the multipliers above are applied
+        # here, AFTER it returns — and funding carry can scale UP (>1). Re-clamp
+        # the final notional to the remaining gross-exposure headroom so a boost
+        # can never breach max_total_exposure_pct.
+        entry = signal.entry_price
+        if entry and entry > 0:
+            existing = self.positions.open_notional()
+            headroom = equity * Decimal(str(_s.max_total_exposure_pct)) - existing
+            if headroom > 0 and final_quantity * entry > headroom:
+                clamped = headroom / entry
+                self._log(
+                    "exposure_clamp",
+                    f"{symbol}: final size clamped to gross-exposure headroom "
+                    f"({final_quantity:.6f} -> {clamped:.6f})",
+                )
+                final_quantity = clamped
+
         return final_quantity, decision.stop_loss, decision.take_profit
 
     def _check_correlation_filter(self, symbol: str) -> bool:
@@ -516,7 +535,11 @@ class TradingEngine:
         # short suffers when funding is negative (pays longs).
         adverse = (rate > threshold) if not is_short else (rate < -threshold)
         if not adverse:
-            return Decimal("1")
+            # FAVORABLE funding: the position would COLLECT carry each interval
+            # (long while funding<0, short while funding>0). Optionally size UP to
+            # harvest that recurring cash flow (capped; the post-scaling gross
+            # exposure clamp still bounds total risk).
+            return self._funding_carry_mult(symbol, rate, is_short)
         # Clamp the de-risk multiplier to (0, 1] so a misconfigured value > 1.0
         # cannot INVERT the de-risking (doubling size on an adverse signal — the
         # opposite of capital preservation). A value <= 0 is treated as 1 (no-op).
@@ -532,6 +555,40 @@ class TradingEngine:
             "funding_signal",
             f"{symbol}: {'short' if is_short else 'long'} de-risked by funding "
             f"rate {rate:.6f} (adverse > threshold {threshold:.6f}) -> size x{mult}",
+        )
+        self.db.commit()
+        return mult
+
+    def _funding_carry_mult(self, symbol: str, rate: Decimal, is_short: bool) -> Decimal:
+        """Size-UP multiplier when funding strongly FAVORS the entry (carry alpha).
+
+        A long collects funding when the rate is negative (shorts pay longs); a
+        short collects when the rate is positive. When the favorable rate exceeds
+        ``funding_carry_threshold_pct`` the size is boosted linearly toward
+        ``funding_carry_max_mult`` (reaching the cap at ~2x the threshold). Opt-in
+        (off by default); returns 1.0 when disabled or below threshold. The
+        boost is bounded to [1.0, max_mult] and the downstream gross-exposure
+        clamp still caps total book risk."""
+        _settings = get_settings()
+        if not getattr(_settings, "funding_carry_enabled", False):
+            return Decimal("1")
+        threshold = Decimal(str(getattr(_settings, "funding_carry_threshold_pct", 0) or 0))
+        if threshold <= 0:
+            return Decimal("1")
+        # Favorable magnitude: how far past the threshold the carry runs.
+        favorable = (-rate) if not is_short else rate  # positive when collecting
+        if favorable <= threshold:
+            return Decimal("1")
+        max_mult = Decimal(str(getattr(_settings, "funding_carry_max_mult", 1) or 1))
+        if max_mult <= 1:
+            return Decimal("1")
+        # Linear ramp: at `threshold` -> 1.0, at `2*threshold` -> max_mult.
+        ramp = (favorable - threshold) / threshold
+        mult = Decimal("1") + (max_mult - Decimal("1")) * min(ramp, Decimal("1"))
+        self._log(
+            "funding_carry",
+            f"{symbol}: {'short' if is_short else 'long'} sized UP for funding carry "
+            f"(rate {rate:.6f} favorable > threshold {threshold:.6f}) -> size x{mult:.3f}",
         )
         self.db.commit()
         return mult
