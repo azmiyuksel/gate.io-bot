@@ -28,6 +28,18 @@ DIAG_EVENTS = ("entry_skipped", "risk_check")
 async def main() -> None:
     configure_logging()
     settings = get_settings()
+    # Ensure the schema exists before the work loop queries it. On Railway each
+    # service starts independently, so the worker can boot BEFORE the API has run
+    # migrations on a fresh DB — without this, every query below fails until the
+    # API happens to migrate. init_db is idempotent (alembic upgrade head), so it
+    # is safe to run from the worker too; a transient failure (e.g. the API
+    # migrating concurrently) just falls through to the existing retry loop.
+    try:
+        from app.db.init_db import init_db
+
+        init_db()
+    except Exception as exc:
+        logger.warning("Paper worker: init_db failed at startup (will retry via loop): %s", exc)
     retry_delay = 1
     while True:
         db = SessionLocal()

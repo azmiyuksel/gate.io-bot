@@ -1,5 +1,18 @@
-# Railway.app monorepo configuration
-# Deploy with: railway up
+# Railway.app monorepo service MAP — reference only.
+#
+# IMPORTANT: Railway does NOT read multiple [services.*] blocks from a single
+# root railway.toml. Config-as-code is PER SERVICE: in the Railway dashboard
+# create one service per component, set its Root Directory, and point its config
+# path at the railway.toml inside that directory. This file documents the
+# intended topology; the AUTHORITATIVE configs are:
+#
+#   backend service   -> Root Directory: backend   config: railway.toml
+#   paper-worker      -> Root Directory: backend   config: railway.worker.toml
+#   frontend service  -> Root Directory: frontend  config: railway.toml
+#
+# Provision a Postgres and a Redis plugin and share DATABASE_URL / REDIS_URL with
+# the backend + workers. Set ENVIRONMENT=production, SECRET_KEY and FERNET_KEY on
+# the backend (and the same on the workers).
 
 # ── Backend API server ──────────────────────────────────────
 [services.backend]

@@ -17,7 +17,18 @@ def init_db() -> None:
 
     inspector = inspect(engine)
     if not inspector.has_table("alembic_version"):
-        command.stamp(alembic_cfg, "head")
+        # No alembic tracking yet — distinguish two cases instead of always
+        # stamping (stamp only writes the version row, it does NOT create tables):
+        #   * FRESH/EMPTY DB (e.g. a brand-new Railway Postgres): no domain tables
+        #     exist, so RUN the migrations to actually create the schema. Stamping
+        #     here would leave the DB empty AND the cleanup below would crash on
+        #     `DELETE FROM paper_logs` (missing table).
+        #   * LEGACY DB created via create_all before alembic was adopted: the
+        #     tables already exist; stamp head to adopt them without re-creating.
+        if inspector.has_table("users"):
+            command.stamp(alembic_cfg, "head")
+        else:
+            command.upgrade(alembic_cfg, "head")
         _cleanup_paper_data()
         _mark_cleanup_done()
     else:

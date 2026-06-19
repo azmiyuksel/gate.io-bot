@@ -28,6 +28,13 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# Next standalone's server.js binds to process.env.HOSTNAME, which defaults to
+# "localhost" — that only listens on the loopback interface, so Railway's health
+# check and inbound traffic (from outside the container) can never reach it and
+# the deploy fails the healthcheck in a loop. Bind to all interfaces. PORT is a
+# default; Railway overrides it with the injected $PORT at runtime.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
 
 RUN apk add --no-cache curl
 

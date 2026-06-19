@@ -488,6 +488,19 @@ async def _record_initial_heartbeat() -> None:
 async def main() -> None:
     configure_logging()
     settings = get_settings()
+    # Ensure the schema exists before reconciliation/queries run. On Railway each
+    # service boots independently, so the scheduler can start before the API has
+    # migrated a fresh DB. init_db is idempotent (alembic upgrade head); a failure
+    # is logged but non-fatal (the API will also migrate, and per-cycle work has
+    # its own error handling).
+    try:
+        from app.db.init_db import init_db
+
+        init_db()
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning("scheduler: init_db failed at startup", exc_info=True)
     await startup_recovery()
     await _record_initial_heartbeat()
     await TelegramNotifier().send(
