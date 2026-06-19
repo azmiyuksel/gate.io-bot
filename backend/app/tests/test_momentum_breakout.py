@@ -26,8 +26,9 @@ def _base_series(n: int, start: float, step: float) -> list[dict]:
 def test_long_breakout_fires():
     candles = _base_series(60, 100.0, 0.004)
     window_high = max(c["high"] for c in candles[-21:-1])
-    # Breakout bar: clears the prior 20-bar high with a volume spike.
-    bar = window_high * 1.003
+    # Breakout bar: clears the prior 20-bar high by ~1% (comfortably above the
+    # round-trip cost floor, which now tracks the real fee tier) on a volume spike.
+    bar = window_high * 1.01
     candles.append(_candle(bar, high=bar * 1.001, low=bar * 0.999, volume=5000.0))
 
     sig = MomentumBreakoutStrategy().evaluate(candles)
@@ -41,7 +42,8 @@ def test_short_breakout_fires():
     # Mild downtrend, then a breakdown bar on volume.
     candles = _base_series(60, 100.0, -0.004)
     window_low = min(c["low"] for c in candles[-21:-1])
-    bar = window_low * 0.997
+    # ~1% breakdown — comfortably below the round-trip cost floor.
+    bar = window_low * 0.99
     candles.append(_candle(bar, high=bar * 1.001, low=bar * 0.999, volume=5000.0))
 
     sig = MomentumBreakoutStrategy().evaluate(candles)
@@ -78,7 +80,8 @@ def test_short_disabled_when_allow_short_false():
     strat.allow_short = False
     candles = _base_series(60, 100.0, -0.004)
     window_low = min(c["low"] for c in candles[-21:-1])
-    bar = window_low * 0.997
+    # A real ~1% breakdown that WOULD fire if shorts were allowed.
+    bar = window_low * 0.99
     candles.append(_candle(bar, high=bar * 1.001, low=bar * 0.999, volume=5000.0))
     sig = strat.evaluate(candles)
     assert sig.should_enter is False

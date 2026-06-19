@@ -225,6 +225,17 @@ class RiskManager:
             if kelly_scale is not None and kelly_scale != Decimal("1"):
                 quantity = quantity * kelly_scale
 
+        # --- POST-SCALING GROSS EXPOSURE CLAMP ---
+        # The gross/net exposure guards above were checked against the
+        # PRE-scaling notional (equity * max_capital_per_trade_pct). Volatility
+        # targeting can scale the quantity UP (vol_target_max_multiplier > 1, e.g.
+        # 1.5x in calm markets), so the actual notional can breach the gross
+        # exposure cap that was validated. Re-clamp the scaled notional to the
+        # remaining gross-exposure headroom so the cap holds after scaling.
+        exposure_headroom = equity * max_total_exposure_pct - existing_exposure
+        if exposure_headroom > 0 and quantity * entry > exposure_headroom:
+            quantity = exposure_headroom / entry
+
         # --- PER-TRADE MAXIMUM DOLLAR LOSS GUARD ---
         # Run AFTER all scaling adjustments (vol target, Kelly) so the final
         # quantity is clamped, not the pre-adjustment estimate.  Previous
@@ -312,9 +323,16 @@ class RiskManager:
             return None
         payoff_ratio = avg_win / avg_loss  # R
         kelly_f = win_rate - (1 - win_rate) / max(payoff_ratio, 0.01)
-        if kelly_f <= 0:
-            # No demonstrated edge — keep the floor (0.25) so sizing is not
-            # zeroed out; the fixed-fractional risk budget still bounds loss.
+        if kelly_f < 0:
+            # NEGATIVE edge (demonstrated losing track record): de-risk harder
+            # than the no-edge floor. We don't go to zero so the strategy can
+            # still sample a few trades and recover its estimate, but a proven
+            # loser should not keep trading at the same size as a flat one. The
+            # fixed-fractional risk budget still bounds the per-trade loss.
+            return Decimal("0.1")
+        if kelly_f == 0:
+            # No demonstrated edge (flat) — keep the floor (0.25) so sizing is
+            # not zeroed out; the fixed-fractional risk budget still bounds loss.
             return Decimal("0.25")
         fraction = Decimal(str(getattr(settings, "kelly_fraction", 0.25) or 0.25))
         scale = Decimal(str(kelly_f)) * fraction

@@ -51,7 +51,19 @@ class MomentumBreakoutStrategy:
         # so the breakout buffer is floored at this fraction of price. Without
         # it, a "breakout" can fire inside the bid-ask and bleed fees on every
         # such signal — a silent edge leak for a frequent-trading strategy.
-        self.round_trip_cost_pct = Decimal(str(s.momentum_round_trip_cost_pct))
+        #
+        # The configured constant is a floor, but a hardcoded constant silently
+        # understates cost when the actual fee tier is higher (e.g. spot base
+        # tier 0.2% vs the futures 0.05% the default 0.0022 was tuned for). Take
+        # the MAX of the configured constant and the cost implied by the ACTUAL
+        # configured fees (2x taker, crossing the spread twice) so the floor
+        # tracks what we really pay per market/tier and marginal breakouts that
+        # cannot clear cost are filtered out.
+        is_futures = s.trading_market.lower() == "futures"
+        taker = Decimal(str(s.paper_taker_fee if is_futures else s.paper_spot_taker_fee))
+        spread = Decimal(str(s.eq_default_spread))
+        implied_cost = taker * Decimal("2") + spread * Decimal("2")
+        self.round_trip_cost_pct = max(Decimal(str(s.momentum_round_trip_cost_pct)), implied_cost)
         # Symmetric strategy: shorts are always allowed (futures). Kept as a flag so
         # a long-only (spot) deployment can disable shorts without code changes.
         self.allow_short = bool(s.momentum_allow_short)

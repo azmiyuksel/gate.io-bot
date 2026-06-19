@@ -158,9 +158,11 @@ class Settings(BaseSettings):
     paper_maker_fee: float = 0.0002
     # Gate.io SPOT taker/maker fees, used when paper mirrors a SPOT live account.
     # Set these to YOUR Gate.io spot fee tier (base tier is ~0.2%; ~0.1% with a GT
-    # deduction) so paper drag matches what you actually pay live.
-    paper_spot_taker_fee: float = 0.001
-    paper_spot_maker_fee: float = 0.001
+    # deduction) so paper drag matches what you actually pay live. Default is the
+    # CONSERVATIVE base tier (0.2%): assuming the cheaper GT-discounted tier makes
+    # paper look more profitable than live — the wrong way to be wrong.
+    paper_spot_taker_fee: float = 0.002
+    paper_spot_maker_fee: float = 0.002
     # Mirror live: when true (default), paper adopts the LIVE account's economics —
     # same timeframe (market_data_interval), market/direction/leverage (spot=>1x,
     # long-only; futures=>futures_leverage, long+short), spot-vs-futures fees,
@@ -351,6 +353,14 @@ class Settings(BaseSettings):
     # How often the paper-trading engine re-evaluates entries on real candles.
     # 15s on 5m candles ensures a fresh bar is picked up within a fraction of a bar.
     paper_eval_interval_seconds: int = 15
+    # How often the LIVE scheduler scans for new entries (and ingests candles).
+    # This should track the trading timeframe: a momentum/breakout strategy on a
+    # 5m timeframe needs a 5-minute scan to act on the breakout bar — scanning
+    # every 15m on a faster strategy lags a full bar and systematically misses
+    # the move (the paper engine already runs faster, so paper != live without
+    # this). Default 15 matches the legacy 15m capital-preservation cadence; lower
+    # it (e.g. 5) when running a faster live strategy. Bounded below at 1 minute.
+    live_entry_interval_minutes: int = 15
     # Position monitoring cadence (seconds). Stop-loss/take-profit/trailing/
     # liquidation checks run on this interval, SEPARATE from the 15-min entry
     # cycle, so a fast adverse move is caught before the next entry scan. The

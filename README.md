@@ -27,13 +27,29 @@ start.bat   # Windows'ta menü açılır, [1] Paper veya [2] Live seçin
   opsiyonel Fernet ile API anahtarı şifreleme
 - **Bildirim:** Telegram (açılış/kapanış/stop-loss/günlük rapor)
 
-## Strateji (V1)
+## Stratejiler
+
+Sistem iki strateji içerir; hangisinin canlı/paper'da çalışacağı `LIVE_STRATEGY`
+ve `PAPER_STRATEGY` ile seçilir.
+
+### `momentum_breakout_v1` — **varsayılan** (canlı + paper)
+
+Sık işlem yapan, simetrik (long + short) momentum/breakout stratejisi. Hızlı
+zaman çerçevesi için tasarlandı (paper 5m). EMA trend + Donchian kırılımı +
+hacim genişlemesi ile girer, ATR stop + trailing ile çıkar (sabit take-profit
+yok — kazananların koşmasına izin verir). Kırılım buffer'ı, gerçek fee/spread
+maliyetinin altında tetiklenmeyecek şekilde tabanlanır.
+
+> ⚙️ Bu strateji hızlı timeframe içindir. Canlıda timeframe ile uyumlu taramak
+> için `LIVE_ENTRY_INTERVAL_MINUTES` değerini düşürün (ör. 5) — varsayılan 15.
+
+### `capital_preservation_v1` — düşük riskli alternatif
 
 - **Trend filtresi:** Sadece 200 EMA üzerinde long giriş
 - **Giriş:** RSI(14) < 35, fiyat 20 EMA'ya yakın, aşırı 24s volatilite yok
 - **Pozisyon boyutu:** İşlem başına sermayenin en fazla %1'i (notional)
 - **Risk limitleri:** Günlük %2, haftalık %5 maks zarar, en fazla 3 açık pozisyon
-- **Çıkış:** ATR stop-loss, en az 1:2 ödül/risk take-profit, trailing stop, manuel kapatma
+- **Çıkış:** ATR stop-loss, en az 1:1.5 ödül/risk take-profit, trailing stop, manuel kapatma
 
 Stratejiye ek canlı güvenlik katmanları: gerçek bakiye/equity takibi, emir mutabakatı
 (reconciliation), global devre kesici (circuit breaker), piyasa-veri kalite kapısı,

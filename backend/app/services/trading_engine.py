@@ -114,6 +114,21 @@ class TradingEngine:
         if signal is None:
             return
 
+        # Spot cannot hold shorts. Skip a short signal HERE — before running the
+        # MTF / regime / health / risk / correlation / slippage pipeline — rather
+        # than at order-submission time. Running the full pipeline only to drop
+        # the order at the end wastes API calls and pollutes the regime/health
+        # records keyed off these scans. (Set TRADING_MARKET=futures to short.)
+        if (getattr(signal, "direction", "long") or "long") == "short" \
+                and get_settings().trading_market.lower() != "futures":
+            self._log(
+                "short_skipped",
+                f"{symbol}: short signal skipped early (spot market; "
+                f"set TRADING_MARKET=futures to trade shorts)",
+            )
+            self.db.commit()
+            return
+
         # Higher-timeframe trend confirmation (mirrors paper). Live previously
         # ignored strategy_mtf_enabled entirely, so live took entries paper would
         # reject — another paper/live divergence now closed.
@@ -559,6 +574,16 @@ class TradingEngine:
         mode = (_settings.entry_order_type or "market").lower()
         if mode not in ("market", "limit", "adaptive"):
             mode = "market"
+        # Trend/breakout entries must take the fill IMMEDIATELY: a passive maker
+        # limit posted at the signal (breakout) price only fills if price comes
+        # BACK to it — i.e. it fills the FAILED breakouts and misses the ones
+        # that keep running. That is adverse selection that inverts a momentum
+        # edge. So for trend-expectancy signals force a market (taker) entry and
+        # skip the TCA limit-forcing below. Mean-reversion entries (fade) are the
+        # opposite — a passive limit IS correct there — so they keep the
+        # configured mode and the TCA feedback loop.
+        if (getattr(signal, "expectancy_type", "reversion") or "reversion") == "trend":
+            return "market"
         # TCA feedback: high recent slippage -> force a maker limit next time.
         feedback_pct = float(getattr(_settings, "tca_slippage_feedback_pct", 0) or 0)
         if feedback_pct > 0 and mode == "market":

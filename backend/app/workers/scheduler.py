@@ -509,8 +509,12 @@ async def main() -> None:
     # stop (A1) protects even between polls; this tightens the local layer.
     pos_interval = max(int(get_settings().position_monitor_interval_seconds), 15)
     scheduler.add_job(monitor_positions, "interval", seconds=pos_interval, max_instances=1)
-    scheduler.add_job(run_cycle, "interval", minutes=15, max_instances=1)
-    scheduler.add_job(ingest_market_data, "interval", minutes=15, max_instances=1)
+    # Entry scan + candle ingestion cadence tracks the trading timeframe so a
+    # faster strategy (e.g. 5m momentum) is not lagged a full bar by a fixed 15m
+    # scan. Bounded below at 1 minute to respect rate limits.
+    entry_interval = max(int(get_settings().live_entry_interval_minutes), 1)
+    scheduler.add_job(run_cycle, "interval", minutes=entry_interval, max_instances=1)
+    scheduler.add_job(ingest_market_data, "interval", minutes=entry_interval, max_instances=1)
     scheduler.add_job(monitor_portfolio_risk, "interval", minutes=15, max_instances=1)
     scheduler.add_job(run_research_loop, "interval", hours=6, max_instances=1)
     scheduler.add_job(run_learning_cycle, "cron", hour=3, minute=0, max_instances=1)
