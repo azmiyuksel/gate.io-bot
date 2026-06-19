@@ -791,25 +791,69 @@ class TradingEngine:
         responses = await execute_split(submit_child, split)
         return self._aggregate_split_responses(responses, signal)
 
+    async def _maker_peg_price(self, symbol: str, signal) -> Decimal:
+        """Order-book-pegged maker limit price (bounded by the signal price).
+
+        Joins the best bid (long) / best ask (short), optionally
+        ``maker_peg_offset_pct`` toward the spread to jump the queue, but never
+        crosses the spread (stays a maker) and never chases past the signal price
+        (preserves the reversion entry). Falls back to the signal price when
+        disabled, on a fetch failure, or when the book is unusable."""
+        s = get_settings()
+        if not getattr(s, "maker_peg_enabled", False):
+            return signal.entry_price
+        try:
+            book = await self.client.get_order_book(symbol, depth=5, market=s.trading_market.lower())
+        except Exception:
+            return signal.entry_price
+        if not book:
+            return signal.entry_price
+        bids = book.get("bids") or []
+        asks = book.get("asks") or []
+        if not bids or not asks:
+            return signal.entry_price
+        try:
+            best_bid = Decimal(str(bids[0][0]))
+            best_ask = Decimal(str(asks[0][0]))
+        except Exception:
+            return signal.entry_price
+        if best_bid <= 0 or best_ask <= 0 or best_bid >= best_ask:
+            return signal.entry_price
+        offset = Decimal(str(getattr(s, "maker_peg_offset_pct", 0) or 0))
+        is_short = (getattr(signal, "direction", "long") or "long") == "short"
+        if is_short:
+            peg = max(best_ask * (Decimal("1") - offset), signal.entry_price)
+            # Must stay strictly above the best bid to remain a maker.
+            if peg <= best_bid:
+                return signal.entry_price
+        else:
+            peg = min(best_bid * (Decimal("1") + offset), signal.entry_price)
+            # Must stay strictly below the best ask to remain a maker.
+            if peg >= best_ask:
+                return signal.entry_price
+        return peg
+
     async def _adaptive_limit_entry(self, symbol: str, signal, quantity: Decimal, submit_market) -> dict:
         """Try a passive maker limit; on timeout fall back to a market order.
 
-        Posts a limit at the signal price, polls its status for
-        `entry_limit_timeout_seconds`, and if it has not filled by then cancels
-        it and submits a market order. Returns the (possibly partial) limit fill
-        if it filled, or the market fill response on fallback.
+        Posts a maker limit (order-book-pegged when MAKER_PEG_ENABLED, else at the
+        signal price), polls its status for `entry_limit_timeout_seconds`, and if
+        it has not filled by then cancels it and submits a market order. Returns
+        the (possibly partial) limit fill if it filled, or the market fill
+        response on fallback.
         """
         _settings = get_settings()
         timeout = int(_settings.entry_limit_timeout_seconds)
         market = _settings.trading_market.lower()
+        limit_price = await self._maker_peg_price(symbol, signal)
         try:
             if market == "futures":
                 limit_resp = await self.client.place_futures_limit_order(
-                    symbol, quantity, signal.direction, signal.entry_price
+                    symbol, quantity, signal.direction, limit_price
                 )
             else:
                 limit_resp = await self.client.place_limit_buy(
-                    symbol, quantity * signal.entry_price, signal.entry_price
+                    symbol, quantity * limit_price, limit_price
                 )
         except OrderBelowMinimum:
             # A limit below min falls back to market (which may also be below min,
@@ -869,8 +913,8 @@ class TradingEngine:
             filled_base = filled_contracts * mult if mult > 0 else Decimal("0")
         else:
             filled_total = Decimal(str(status.get("filled_total") or 0))
-            if filled_total > 0 and signal.entry_price > 0:
-                filled_base = filled_total / signal.entry_price
+            if filled_total > 0 and limit_price > 0:
+                filled_base = filled_total / limit_price
             else:
                 filled_base = Decimal("0")
         remainder = quantity - filled_base if filled_base > 0 else quantity

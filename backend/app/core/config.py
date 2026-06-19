@@ -525,6 +525,19 @@ class Settings(BaseSettings):
     # Limit offset: post the passive limit this fraction BELOW the signal close
     # (long) / ABOVE (short) so it rests as a maker order. 0 = at the signal price.
     entry_limit_offset_pct: float = 0.0
+    # --- Order-book pegged maker entry (adaptive mode, opt-in) ---
+    # Instead of posting the adaptive maker limit at the (possibly away) signal
+    # close, peg it to the live order book — join the best bid (long) / best ask
+    # (short), optionally `maker_peg_offset_pct` toward the spread to jump the
+    # queue while STILL resting as a maker. Bounded by the signal price (never
+    # chase past it — preserves the mean-reversion entry quality) and kept inside
+    # the spread (never crosses → never a taker). Improves maker fill rate (more
+    # rebate, less slippage) without the multi-order partial-fill risk of
+    # mid-flight repricing. Applies to ADAPTIVE entries (the reversion path;
+    # trend entries take market per the breakout adverse-selection fix). Off by
+    # default — adaptive posts at the signal price as before.
+    maker_peg_enabled: bool = False
+    maker_peg_offset_pct: float = 0.0
     # Order splitting: when the entry notional exceeds this fraction of equity,
     # split into N TWAP child orders to reduce market impact on less-liquid
     # altcoins (WIF/BONK/PEPE etc). 0 disables splitting.
