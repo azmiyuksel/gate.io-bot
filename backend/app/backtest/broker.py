@@ -114,8 +114,11 @@ class VirtualBroker:
             if low <= position.stop_loss:
                 # Stop-loss is a market (taker) exit that crosses the spread.
                 self._close(position, candle, position.stop_loss, "stop_loss", maker=False)
-            elif high >= position.take_profit:
+            elif position.take_profit > 0 and high >= position.take_profit:
                 # Take-profit is a resting limit (maker) exit — no spread/slippage.
+                # A take_profit of 0 means the TP is disabled (trend-following
+                # strategies let winners run via trailing + breakeven) — skip the
+                # check so the position is never exited at price>=0.
                 self._close(position, candle, position.take_profit, "take_profit", maker=True)
 
     def _close(

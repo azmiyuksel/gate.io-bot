@@ -147,7 +147,19 @@ class ResearchBacktestRunner:
             oos_sharpes.append(oos_s)
 
         if not is_sharpes or not oos_sharpes:
-            return 0.0, [], False
+            # No folds produced usable OOS data (typically because the purge gap
+            # consumed the entire fold). Returning (0.0, [], False) would signal
+            # "no overfit detected" without any CV actually happening — a false
+            # negative. Flag overfit=True so the promotion gate is conservative
+            # when there is insufficient data to rule overfit out.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "k-fold CV produced no usable OOS folds (n=%d, purge=%d, fold_size=%d) "
+                "— insufficient data for overfit detection; flagging conservatively",
+                n, purge, fold_size,
+            )
+            return 0.0, [], True
 
         mean_is = float(np.mean(is_sharpes)) if is_sharpes else 0.0
         mean_oos = float(np.mean(oos_sharpes)) if oos_sharpes else 0.0
@@ -253,9 +265,15 @@ class ResearchBacktestRunner:
             is_sharpe > 0 and oos_sharpe < 0
         )
 
-        # Deflated Sharpe Ratio.
+        # Deflated Sharpe Ratio. n_trials reflects the selection bias: the
+        # research loop evaluates research_population genomes per generation,
+        # each through wf_windows walk-forward windows. Using the actual trial
+        # count (not just research_population) gives the correct expected-max
+        # Sharpe under the null — the old default (12) understated selection
+        # bias and made the p-value optimistic.
         total_trades = int(metrics.get("total_trades", 0))
-        dsr_pvalue = self._deflated_sharpe_ratio(sharpe, n_trials=None, var_sharpe=None)
+        n_trials = int(self.settings.research_population) * max(int(wf_windows), 1)
+        dsr_pvalue = self._deflated_sharpe_ratio(sharpe, n_trials=n_trials, var_sharpe=None)
 
         track_days = self._min_track_days(data)
 

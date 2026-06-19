@@ -12,10 +12,18 @@ from decimal import Decimal
 
 from app.core.config import get_settings
 from app.paper_trading.models import BaseStrategy, MarketData, PaperSide, TradingSignal
-from app.services.strategy.momentum_breakout import MomentumBreakoutStrategy
-from app.services.strategy.signals import CapitalPreservationStrategy
+from app.services.strategy.momentum_breakout import (
+    STRATEGY_NAME as MOMENTUM_NAME,
+    MomentumBreakoutStrategy,
+)
+from app.services.strategy.signals import (
+    STRATEGY_NAME as CAPITAL_PRESERVATION_NAME,
+    CapitalPreservationStrategy,
+)
 
 logger = logging.getLogger(__name__)
+
+_KNOWN_PAPER_STRATEGIES = (MOMENTUM_NAME, CAPITAL_PRESERVATION_NAME)
 
 
 def _build_strategy(settings):
@@ -24,15 +32,25 @@ def _build_strategy(settings):
     Default is the frequent momentum/breakout strategy (long+short). The
     capital-preservation strategy is kept selectable for A/B comparison and runs
     with the deliberately looser paper thresholds it was tuned for.
+
+    Hard-fails on an unknown name, matching the live factory — a typo silently
+    running the wrong strategy is worse than a startup error (paper would trade
+    an unvalidated strategy under a mistyped name, diverging from live).
     """
-    if settings.paper_strategy == "capital_preservation_v1":
+    if settings.paper_strategy == CAPITAL_PRESERVATION_NAME:
         strat = CapitalPreservationStrategy()
         strat.trend_filter_enabled = settings.paper_trend_filter_enabled
         strat.rsi_threshold = Decimal(str(settings.paper_rsi_threshold))
         strat.ema20_distance_pct = Decimal(str(settings.paper_ema20_distance_pct))
         strat.trend_tolerance_pct = Decimal(str(settings.paper_trend_tolerance_pct))
         return strat
-    return MomentumBreakoutStrategy()
+    if settings.paper_strategy == MOMENTUM_NAME:
+        return MomentumBreakoutStrategy()
+    raise ValueError(
+        f"Unknown PAPER_STRATEGY '{settings.paper_strategy}'. "
+        f"Known strategies: {list(_KNOWN_PAPER_STRATEGIES)}. "
+        f"Check .env for a typo."
+    )
 
 
 class CapitalPreservationAdapter(BaseStrategy):

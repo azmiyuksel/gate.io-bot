@@ -267,13 +267,20 @@ class MomentumBreakoutBacktestStrategy(BaseStrategy):
         self.donchian_lookback = int(params.get("donchian_lookback", 20))
         self.vol_spike_mult = float(params.get("vol_spike_mult", 1.3))
         self.rsi_long_max = float(params.get("rsi_long_max", 80.0))
-        self.min_atr_pct = float(params.get("min_atr_pct", 0.0015))
+        # Default 0.004 matches the live config (momentum_min_atr_pct). The old
+        # 0.0015 default was below the typical round-trip cost — the backtest
+        # fired breakouts live rejects.
+        self.min_atr_pct = float(params.get("min_atr_pct", 0.004))
         self.breakout_buffer_atr = float(params.get("breakout_buffer_atr", 0.05))
         self.atr_period = int(params.get("atr_period", 14))
         self.atr_multiplier = float(params.get("atr_multiplier", 2.0))
         self.reward_risk = float(params.get("reward_risk", 1.5))
         self.max_capital_per_trade_pct = float(params.get("max_capital_per_trade_pct", 0.05))
         self.max_risk_per_trade_pct = float(params.get("max_risk_per_trade_pct", 0.02))
+        # Cost floor for the breakout buffer — mirrors the live strategy so the
+        # backtest does not fire breakouts inside the fee+spread+slippage band
+        # that live rejects. Default matches momentum_round_trip_cost_pct.
+        self.round_trip_cost_pct = float(params.get("round_trip_cost_pct", 0.0022))
         self.current: pd.Series | None = None
 
     def prepare(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -331,9 +338,13 @@ class MomentumBreakoutBacktestStrategy(BaseStrategy):
         vol_ratio = float(c.get("vol_ratio", 0.0) or 0.0)
         if vol_ratio < self.vol_spike_mult:
             return False
-        # Donchian breakout with ATR buffer.
+        # Donchian breakout with ATR buffer, floored at the round-trip cost
+        # (matches the live strategy — a breakout inside the fee+spread+slippage
+        # band is instantly underwater and must not fire).
         window_high = float(c.get("donchian_high", 0.0) or 0.0)
-        buffer = atr_v * self.breakout_buffer_atr
+        atr_buffer = atr_v * self.breakout_buffer_atr
+        cost_buffer = price * self.round_trip_cost_pct
+        buffer = max(atr_buffer, cost_buffer)
         if price <= (window_high + buffer):
             return False
         # RSI not already exhausted.
@@ -362,7 +373,10 @@ class MomentumBreakoutBacktestStrategy(BaseStrategy):
             raise ValueError("Strategy has no active candle")
         risk = float(self.current["atr"]) * self.atr_multiplier
         stop_loss = entry - risk
-        take_profit = entry + (risk * self.reward_risk)
+        # Trend-following: no fixed take-profit (let winners run via trailing +
+        # breakeven, matching the live momentum strategy's expectancy_type="trend").
+        # A fixed R:R TP cuts the fat right tail that is the strategy's main edge.
+        take_profit = 0.0
         return stop_loss, take_profit
 
 

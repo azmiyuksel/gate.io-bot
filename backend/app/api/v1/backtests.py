@@ -184,6 +184,11 @@ def _config_from_run(run: BacktestRun) -> BacktestConfig:
         max_open_positions=int(params.get("max_open_positions", 3)),
         max_capital_per_trade_pct=float(params.get("max_capital_per_trade_pct", 0.01)),
         parameters=params,
+        # Bind the backtest to the strategy the user selected (run.strategy_name),
+        # not the BacktestConfig default "ema_rsi_atr". Without this, a backtest
+        # created with strategy_name="momentum_breakout_v1" silently validated
+        # ema_rsi_atr — the "validated != traded" gap.
+        strategy_class=run.strategy_name,
     )
 
 

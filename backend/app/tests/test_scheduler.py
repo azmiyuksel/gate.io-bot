@@ -126,8 +126,10 @@ async def test_run_cycle_skips_when_strategy_disabled(_settings):
 
 @pytest.mark.asyncio
 async def test_run_cycle_trips_circuit_breaker(_settings):
-    """When the circuit breaker is tripped, run_cycle must still MANAGE open
-    positions (stops/take-profits) but open NO new entries."""
+    """When the circuit breaker is tripped, run_cycle must open NO new
+    entries. Position management now runs on a SEPARATE fast cadence
+    (monitor_positions), so manage_open_positions is NOT called from
+    run_cycle anymore."""
     _settings.bot_enabled = True
 
     with patch("app.workers.scheduler.SessionLocal") as mock_session_cls, \

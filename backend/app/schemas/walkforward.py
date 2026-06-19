@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class WalkForwardStart(BaseModel):
-    strategy_name: str = "ema_rsi_atr_v1"
+    strategy_name: str = "momentum_breakout_v1"
     symbol: str
     timeframe: Literal["1m", "5m", "15m", "1h", "4h", "1d"] = "1h"
     mode: Literal["rolling", "expanding"] = "rolling"

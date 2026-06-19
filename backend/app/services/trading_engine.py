@@ -435,7 +435,17 @@ class TradingEngine:
         adverse = (rate > threshold) if not is_short else (rate < -threshold)
         if not adverse:
             return Decimal("1")
+        # Clamp the de-risk multiplier to (0, 1] so a misconfigured value > 1.0
+        # cannot INVERT the de-risking (doubling size on an adverse signal — the
+        # opposite of capital preservation). A value <= 0 is treated as 1 (no-op).
         mult = Decimal(str(_settings.funding_signal_risk_mult))
+        if mult <= 0 or mult > 1:
+            self._log(
+                "funding_signal",
+                f"{symbol}: funding_signal_risk_mult {mult} out of (0,1] — clamped to 1 (no-op)",
+                LogLevel.warning,
+            )
+            return Decimal("1")
         self._log(
             "funding_signal",
             f"{symbol}: {'short' if is_short else 'long'} de-risked by funding "
@@ -485,7 +495,15 @@ class TradingEngine:
         adverse = (imbalance < -threshold) if not is_short else (imbalance > threshold)
         if not adverse:
             return Decimal("1")
+        # Clamp to (0, 1] — same guard as the funding signal.
         mult = Decimal(str(_settings.orderbook_imbalance_risk_mult))
+        if mult <= 0 or mult > 1:
+            self._log(
+                "orderbook_imbalance",
+                f"{symbol}: orderbook_imbalance_risk_mult {mult} out of (0,1] — clamped to 1 (no-op)",
+                LogLevel.warning,
+            )
+            return Decimal("1")
         self._log(
             "orderbook_imbalance",
             f"{symbol}: {'short' if is_short else 'long'} de-risked by order-book "
@@ -546,7 +564,9 @@ class TradingEngine:
             try:
                 from app.execution_quality.engine import ExecutionQualityEngine
 
-                recent_slippage = ExecutionQualityEngine(self.db).recent_slippage_pct(signal.direction or "long")
+                # ExecutionOrder.side is stored as "buy"/"sell", not "long"/"short".
+                side_filter = "buy" if (getattr(signal, "direction", "long") or "long") != "short" else "sell"
+                recent_slippage = ExecutionQualityEngine(self.db).recent_slippage_pct(side_filter)
                 if recent_slippage is not None and recent_slippage > feedback_pct:
                     self._log(
                         "tca_feedback",
@@ -670,24 +690,38 @@ class TradingEngine:
                 # Fully filled as a maker — return the limit fill (no slippage).
                 return status
         # Timeout: cancel the limit and fall back to a market order for the
-        # unfilled remainder. Any partial fill on the limit is kept; the market
-        # order tops up the rest. For simplicity here we cancel and resubmit the
-        # full quantity as market (reconciliation will net the partial against
-        # the new market fill). A refined version would compute the unfilled
-        # remainder and only top that up.
+        # UNFILLED REMAINDER only (not the full quantity). The partial limit fill
+        # is an exchange position that reconciliation will pick up; resubmitting
+        # the full quantity as market would double the position and blow past the
+        # risk budget. Compute the filled portion from the order status.
         try:
             if market == "futures":
                 await self.client.cancel_futures_order(symbol, order_id)
+                status = await self.client.get_futures_order_status(symbol, order_id)
             else:
                 await self.client.cancel_spot_order(symbol, order_id)
+                status = await self.client.get_order_status(symbol, order_id)
         except Exception:
-            pass
+            status = {}
+        # Determine how much of the limit was filled before the cancel.
+        filled_total = Decimal(str(status.get("filled_total") or 0))
+        if filled_total > 0 and signal.entry_price > 0:
+            filled_base = filled_total / signal.entry_price
+            remainder = quantity - filled_base
+        else:
+            remainder = quantity
         self._log(
             "adaptive_limit_timeout",
-            f"{symbol}: maker limit timed out after {timeout}s, falling back to market",
+            f"{symbol}: maker limit timed out after {timeout}s "
+            f"(filled {quantity - remainder:.6f} of {quantity:.6f}), "
+            f"falling back to market for the remainder",
             LogLevel.warning,
         )
-        return await submit_market(quantity)
+        if remainder <= 0:
+            # The limit fully filled between the last poll and the cancel —
+            # return the final status as the fill response.
+            return status
+        return await submit_market(remainder)
 
     @staticmethod
     def _aggregate_split_responses(responses: list, signal) -> dict:
@@ -696,10 +730,11 @@ class TradingEngine:
         a volume-weighted average fill price across filled children."""
         filled = [r for r in responses if r and (r.get("avg_deal_price") or r.get("fill_price"))]
         if not filled:
-            # All children failed — return the first response (or a stub) so the
-            # caller's fill_price fallback to signal.entry kicks in and no
-            # position is persisted with a bogus price.
-            return responses[0] if responses else {"id": None}
+            # All children failed — return a stub so the caller's fill_price
+            # fallback to signal.entry_price kicks in and no position is
+            # persisted with a bogus price. Previously returned responses[0]
+            # which was None (all-fail) and crashed the caller's .get().
+            return {"id": None}
         total_quote = Decimal("0")
         total_base = Decimal("0")
         for r in filled:
