@@ -255,6 +255,25 @@ class ReconciliationEngine:
                 continue
             # If the exchange has no position or size 0, the local row is a ghost.
             if fut_pos is None:
+                # Gate.io returns None when flat (no position object exists).
+                # The old `continue` skipped this — the ghost was never caught
+                # and manage_open_positions kept trying to manage a dead row.
+                position.status = PositionStatus.closed
+                position.closed_at = datetime.now(UTC)
+                self.db.add(position)
+                log = ReconciliationLog(
+                    action=ReconcileAction.filled,
+                    detail=f"ghost position {position.symbol} — exchange reports no position (flat), local marked closed",
+                )
+                self.db.add(log)
+                logs.append(log)
+                self.db.add(
+                    SystemLog(
+                        level=LogLevel.warning,
+                        source="reconciliation",
+                        message=f"ghost position {position.symbol}: exchange reports no position (flat), local marked closed",
+                    )
+                )
                 continue
             size = fut_pos.get("size") or fut_pos.get("current_size") or 0
             if int(abs(_to_decimal(size))) == 0:

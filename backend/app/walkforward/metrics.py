@@ -9,8 +9,8 @@ def objective_score(metrics: dict) -> float:
 
     Drawdown is penalized as an ECONOMIC cost, not a raw 0-1 fraction: a 30%
     drawdown needs a 43% gain to recover, so it is scaled by a penalty factor
-    (5x) before subtraction. The previous `cagr - drawdown` mixed quantities on
-    different scales (CAGR can be 10x, drawdown a 0-1 fraction) and let a
+    (5x) plus a superlinear component (20x * d^2) so extreme drawdowns are
+    disproportionately more expensive. The previous linear-only penalty let a
     high-CAGR/high-DD strategy score well — under-penalizing the very risk a
     capital-preservation bot must avoid.
     """
@@ -21,10 +21,12 @@ def objective_score(metrics: dict) -> float:
     total_trades = float(metrics.get("total_trades", 0))
     # Penalize strategies with very few trades — they lack statistical significance.
     trade_penalty = max(0, (20 - total_trades)) * 0.1
-    # Drawdown economic penalty: ~5x the raw fraction so a 20% DD costs ~1.0
-    # (on the Sharpe/PF/CAGR scale) instead of 0.2. Recovery math: a DD of d
-    # requires a gain of d/(1-d) to break even, which steepens superlinearly.
-    drawdown_penalty = drawdown * 5.0
+    # Drawdown economic penalty: linear 5x + superlinear 20x*d^2 so that:
+    #  - 10% DD  costs  0.7  (linear dominant)
+    #  - 20% DD  costs  1.8  (superlinear kicks in)
+    #  - 30% DD  costs  3.3  (severe)
+    #  - 50% DD  costs  7.5  (near-disqualifying)
+    drawdown_penalty = drawdown * 5.0 + (drawdown ** 2) * 20.0
     return sharpe + profit_factor + cagr - drawdown_penalty - trade_penalty
 
 

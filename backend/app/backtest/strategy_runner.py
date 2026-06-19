@@ -110,8 +110,11 @@ class BollingerBandsStrategy(BaseStrategy):
         frame["bb_lower"] = frame["bb_mid"] - self.bb_std * bb_std
         frame["bb_width"] = (frame["bb_upper"] - frame["bb_lower"]) / frame["bb_mid"]
         delta = frame["close"].diff()
-        gain = delta.clip(lower=0).rolling(self.rsi_period).mean()
-        loss = (-delta.clip(upper=0)).rolling(self.rsi_period).mean()
+        # Wilder smoothing (EWM alpha=1/period) — matches the live indicators.rsi().
+        # The old SMA .rolling().mean() diverged from live RSI, causing
+        # backtested entry signals to disagree with live entry signals.
+        gain = delta.clip(lower=0).ewm(alpha=1 / self.rsi_period, adjust=False).mean()
+        loss = (-delta.clip(upper=0)).ewm(alpha=1 / self.rsi_period, adjust=False).mean()
         rs = gain / loss.replace(0, np.nan)
         frame["rsi"] = 100 - (100 / (1 + rs))
         tr = pd.concat(
@@ -187,8 +190,9 @@ class EmaRsiAtrStrategy(BaseStrategy):
         frame["ema_trend"] = frame["close"].ewm(span=self.ema_trend, adjust=False).mean()
         frame["ema_entry"] = frame["close"].ewm(span=self.ema_entry, adjust=False).mean()
         delta = frame["close"].diff()
-        gain = delta.clip(lower=0).rolling(self.rsi_period).mean()
-        loss = (-delta.clip(upper=0)).rolling(self.rsi_period).mean()
+        # Wilder smoothing (EWM alpha=1/period) — matches the live indicators.rsi().
+        gain = delta.clip(lower=0).ewm(alpha=1 / self.rsi_period, adjust=False).mean()
+        loss = (-delta.clip(upper=0)).ewm(alpha=1 / self.rsi_period, adjust=False).mean()
         rs = gain / loss.replace(0, pd.NA)
         frame["rsi"] = 100 - (100 / (1 + rs))
         tr = pd.concat(
@@ -288,10 +292,10 @@ class MomentumBreakoutBacktestStrategy(BaseStrategy):
         frame["ema_fast"] = frame["close"].ewm(span=self.ema_fast, adjust=False).mean()
         frame["ema_slow"] = frame["close"].ewm(span=self.ema_slow, adjust=False).mean()
         frame["ema_trend"] = frame["close"].ewm(span=self.ema_trend, adjust=False).mean()
-        # RSI(14)
+        # RSI(14) — Wilder smoothing (EWM alpha=1/14) matching live indicators.rsi()
         delta = frame["close"].diff()
-        gain = delta.clip(lower=0).rolling(14).mean()
-        loss = (-delta.clip(upper=0)).rolling(14).mean()
+        gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
+        loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
         rs = gain / loss.replace(0, pd.NA)
         frame["rsi"] = 100 - (100 / (1 + rs))
         # ATR

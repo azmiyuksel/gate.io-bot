@@ -704,12 +704,20 @@ class TradingEngine:
         except Exception:
             status = {}
         # Determine how much of the limit was filled before the cancel.
-        filled_total = Decimal(str(status.get("filled_total") or 0))
-        if filled_total > 0 and signal.entry_price > 0:
-            filled_base = filled_total / signal.entry_price
-            remainder = quantity - filled_base
+        # Futures uses "size"/"left" fields (no "filled_total"); spot uses
+        # "filled_total" in quote units.  Using the wrong field causes the
+        # full quantity to be resubmitted as market → double position.
+        if market == "futures":
+            size = Decimal(str(status.get("size") or quantity))
+            left = Decimal(str(status.get("left") or size))
+            filled_base = size - left if left < size else Decimal("0")
         else:
-            remainder = quantity
+            filled_total = Decimal(str(status.get("filled_total") or 0))
+            if filled_total > 0 and signal.entry_price > 0:
+                filled_base = filled_total / signal.entry_price
+            else:
+                filled_base = Decimal("0")
+        remainder = quantity - filled_base if filled_base > 0 else quantity
         self._log(
             "adaptive_limit_timeout",
             f"{symbol}: maker limit timed out after {timeout}s "
@@ -838,6 +846,23 @@ class TradingEngine:
         except OrderBelowMinimum as exc:
             self._log("order_min", f"{symbol}: {direction} entry skipped, {exc}")
             return
+
+        # All order children failed (split all-fail or market rejection) — the
+        # exchange has NO open position.  Persisting a phantom Position with
+        # exchange_order_id="None" would leave reconciliation chasing a ghost
+        # order that does not exist on the exchange, and manage_open_positions
+        # would apply trailing/stop logic to a position that was never opened.
+        if response.get("id") is None:
+            self._log(
+                "entry_all_failed",
+                f"{symbol}: all order children failed, no position opened",
+                LogLevel.error,
+            )
+            await self.notifier.send(
+                f"\u26a0\ufe0f {symbol}: entry order ALL FAILED — no position opened."
+            )
+            return
+
         ack_time = datetime.now(UTC)
 
         # Use the ACTUAL fill price for the entry, not the signal price.

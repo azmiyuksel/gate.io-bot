@@ -28,6 +28,13 @@ class PaperRiskSimulator:
         if equity <= 0:
             return False, "no_equity"
 
+        # Circuit breaker: mirror the live engine's consecutive-loss circuit
+        # breaker so paper pauses when its own track record shows a losing
+        # streak (same logic as TradingEngine._check_circuit_breaker).
+        if self._consecutive_losses() >= 5:
+            self.pause("circuit_breaker_consecutive_losses")
+            return False, "circuit_breaker"
+
         # Mirror live: enforce the live account's limits (max-positions/exposure/
         # drawdown/daily-loss) so paper pauses under the same conditions the live
         # circuit breaker would. Otherwise use the account's own columns.
@@ -136,3 +143,31 @@ class PaperRiskSimulator:
         peak = max(peak, equity)
         loss = max(peak - equity, Decimal("0"))
         return loss / peak
+
+    def _consecutive_losses(self) -> int:
+        """Count consecutive losing trades from the most recent closed positions.
+
+        Mirrors the live engine's circuit-breaker logic: if the last N closed
+        positions are all losses, the paper engine pauses (same threshold as
+        live — 5 consecutive losses trips the breaker).
+        """
+        from app.models.entities import PaperPosition
+
+        recent = (
+            self.db.query(PaperPosition)
+            .filter(
+                PaperPosition.account_id == self.account.id,
+                PaperPosition.is_open.is_(False),
+                PaperPosition.realized_pnl.isnot(None),
+            )
+            .order_by(PaperPosition.closed_at.desc())
+            .limit(5)
+            .all()
+        )
+        count = 0
+        for pos in recent:
+            if pos.realized_pnl is not None and Decimal(str(pos.realized_pnl)) < 0:
+                count += 1
+            else:
+                break
+        return count

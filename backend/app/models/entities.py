@@ -104,7 +104,7 @@ class BacktestRun(Base):
     __tablename__ = "backtest_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    strategy_name: Mapped[str] = mapped_column(String(128), default="ema_rsi_atr_v1")
+    strategy_name: Mapped[str] = mapped_column(String(128), default="momentum_breakout_v1")
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     timeframe: Mapped[str] = mapped_column(String(8), default="1h")
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -150,7 +150,7 @@ class WalkForwardRun(Base):
     __tablename__ = "walkforward_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    strategy_name: Mapped[str] = mapped_column(String(128), default="ema_rsi_atr_v1")
+    strategy_name: Mapped[str] = mapped_column(String(128), default="momentum_breakout_v1")
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     timeframe: Mapped[str] = mapped_column(String(8), default="1h")
     mode: Mapped[WalkForwardMode] = mapped_column(String(32), default=WalkForwardMode.rolling)

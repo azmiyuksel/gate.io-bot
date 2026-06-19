@@ -45,7 +45,7 @@ def _noisy_curve(n: int = 80) -> list[dict]:
 def _oscillating_uptrend(n: int = 420) -> pd.DataFrame:
     idx = pd.date_range("2024-01-01", periods=n, freq="h", tz="UTC")
     i = np.arange(n)
-    close = 100 + 0.05 * i + 3.0 * np.sin(2 * np.pi * i / 20)
+    close = 100 + 0.1 * i + 3.0 * np.sin(2 * np.pi * i / 15)
     openp = close - 0.05
     high = np.maximum(openp, close) + 0.5
     low = np.minimum(openp, close) - 0.5
@@ -97,7 +97,9 @@ def test_engine_result_includes_benchmark():
 def test_no_same_bar_lookahead():
     """An entry signalled on a bar's close must fill on the NEXT bar's open."""
     data = _oscillating_uptrend()
+    # Use rsi_threshold=45 so the test data reliably triggers under Wilder RSI.
     config = _config()
+    config.parameters["rsi_threshold"] = 45
 
     # Independently reconstruct the first signal bar using the same strategy.
     strategy = EmaRsiAtrStrategy(config.parameters)

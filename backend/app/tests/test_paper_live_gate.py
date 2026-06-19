@@ -81,48 +81,53 @@ def _patch_health(monkeypatch, state, mult):
     monkeypatch.setattr("app.strategy_health.engine.StrategyHealthEngine", _FakeHealth)
 
 
-def test_gate_blocks_on_invalid_data(db_session, monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_gate_blocks_on_invalid_data(db_session, monkeypatch) -> None:
     eng = _engine(db_session)
     _patch_mdq(monkeypatch, DataTradeStatus.invalid)
-    allowed, _ = eng._live_entry_gate("BTC_USDT", _candles(), _signal(), _settings())
+    allowed, _ = await eng._live_entry_gate("BTC_USDT", _candles(), _signal(), _settings())
     assert allowed is False
 
 
-def test_gate_blocks_on_regime(db_session, monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_gate_blocks_on_regime(db_session, monkeypatch) -> None:
     eng = _engine(db_session)
     _patch_mdq(monkeypatch, DataTradeStatus.clean)
     _patch_regime(monkeypatch, allowed=False, mult=1)
-    allowed, _ = eng._live_entry_gate("BTC_USDT", _candles(), _signal(), _settings())
+    allowed, _ = await eng._live_entry_gate("BTC_USDT", _candles(), _signal(), _settings())
     assert allowed is False
 
 
-def test_gate_blocks_when_health_paused(db_session, monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_gate_blocks_when_health_paused(db_session, monkeypatch) -> None:
     eng = _engine(db_session)
     _patch_mdq(monkeypatch, DataTradeStatus.clean)
     _patch_regime(monkeypatch, allowed=True, mult=1)
     _patch_health(monkeypatch, state="PAUSED", mult=0)
-    allowed, _ = eng._live_entry_gate("BTC_USDT", _candles(), _signal(), _settings())
+    allowed, _ = await eng._live_entry_gate("BTC_USDT", _candles(), _signal(), _settings())
     assert allowed is False
 
 
-def test_gate_composes_risk_multiplier(db_session, monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_gate_composes_risk_multiplier(db_session, monkeypatch) -> None:
     eng = _engine(db_session)
     # DEGRADED data (x0.5) * regime (x0.8) * health (x0.5) = 0.2
     _patch_mdq(monkeypatch, DataTradeStatus.degraded)
     _patch_regime(monkeypatch, allowed=True, mult=0.8)
     _patch_health(monkeypatch, state="HEALTHY", mult=0.5)
-    allowed, mult = eng._live_entry_gate(
+    allowed, mult = await eng._live_entry_gate(
         "BTC_USDT", _candles(), _signal(), _settings(mdq_degraded_risk_multiplier=0.5)
     )
     assert allowed is True
     assert mult == pytest.approx(Decimal("0.2"))
 
 
-def test_gate_passes_clean(db_session, monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_gate_passes_clean(db_session, monkeypatch) -> None:
     eng = _engine(db_session)
     _patch_mdq(monkeypatch, DataTradeStatus.clean)
     _patch_regime(monkeypatch, allowed=True, mult=1)
     _patch_health(monkeypatch, state="HEALTHY", mult=1)
-    allowed, mult = eng._live_entry_gate("BTC_USDT", _candles(), _signal(), _settings())
+    allowed, mult = await eng._live_entry_gate("BTC_USDT", _candles(), _signal(), _settings())
     assert allowed is True
     assert mult == Decimal("1")

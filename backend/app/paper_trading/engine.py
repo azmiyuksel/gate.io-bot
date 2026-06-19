@@ -196,7 +196,7 @@ class PaperTradingEngine:
         # standalone paper stays lightweight.
         risk_mult = Decimal("1")
         if exec_.mirror:
-            allowed, risk_mult = self._live_entry_gate(symbol, candles, signal, settings)
+            allowed, risk_mult = await self._live_entry_gate(symbol, candles, signal, settings)
             if not allowed:
                 return
 
@@ -213,7 +213,7 @@ class PaperTradingEngine:
         )
         await self.execute_signal(signal, data, risk_mult)
 
-    def _live_entry_gate(self, symbol, candles, signal, settings) -> tuple[bool, Decimal]:
+    async def _live_entry_gate(self, symbol, candles, signal, settings) -> tuple[bool, Decimal]:
         """Mirror the live engine's scan_symbol entry filters so paper rejects /
         de-risks entries the same way live would. Returns (allowed, risk_mult).
 
@@ -272,7 +272,48 @@ class PaperTradingEngine:
         except Exception:
             pass
 
-        # 4. Correlation filter (block an entry too correlated with an open one).
+        # 4. Funding-rate signal (futures only, de-risk on adverse funding).
+        try:
+            if settings.trading_market.lower() == "futures" and getattr(settings, "funding_signal_enabled", False):
+                funding_data = await self._client.get_futures_funding_rate(symbol) if self._client else None
+                if funding_data:
+                    rate_raw = funding_data.get("r")
+                    if rate_raw not in (None, ""):
+                        rate = Decimal(str(rate_raw))
+                        threshold = Decimal(str(settings.funding_signal_threshold_pct))
+                        is_short = getattr(signal, "side", None) == "sell" or signal.side.value == "sell"
+                        adverse = (rate > threshold) if not is_short else (rate < -threshold)
+                        if adverse:
+                            mult = Decimal(str(settings.funding_signal_risk_mult))
+                            if 0 < mult <= 1:
+                                risk_mult *= mult
+        except Exception:
+            pass
+
+        # 5. Order-book imbalance (de-risk when adverse depth wall).
+        try:
+            if getattr(settings, "orderbook_imbalance_enabled", False) and self._client:
+                book = await self._client.get_order_book(symbol, depth=int(settings.orderbook_depth))
+                if book:
+                    bids = book.get("bids") or []
+                    asks = book.get("asks") or []
+                    if bids and asks:
+                        bid_depth = sum(float(level[1]) for level in bids if len(level) >= 2)
+                        ask_depth = sum(float(level[1]) for level in asks if len(level) >= 2)
+                        total = bid_depth + ask_depth
+                        if total > 0:
+                            imbalance = (bid_depth - ask_depth) / total
+                            threshold = float(settings.orderbook_imbalance_threshold)
+                            is_short = signal.side.value == "sell"
+                            adverse = (imbalance < -threshold) if not is_short else (imbalance > threshold)
+                            if adverse:
+                                mult = Decimal(str(settings.orderbook_imbalance_risk_mult))
+                                if 0 < mult <= 1:
+                                    risk_mult *= mult
+        except Exception:
+            pass
+
+        # 6. Correlation filter (pairwise + aggregate).
         if settings.correlation_filter_enabled:
             try:
                 from app.portfolio.correlation import CorrelationEngine, max_correlation
@@ -285,6 +326,21 @@ class PaperTradingEngine:
                         self._log("entry_skipped", f"{symbol}: correlation {mx:.2f}",
                                   {"symbol": symbol, "reason": "correlation_blocked"})
                         return False, risk_mult
+                    # Aggregate correlation cap (mirrors live's max_portfolio_correlation).
+                    matrix = corr.get("matrix", {})
+                    pair_corrs = []
+                    for i, s1 in enumerate([symbol, *open_syms]):
+                        for j, s2 in enumerate([symbol, *open_syms]):
+                            if i < j:
+                                val = matrix.get(s1, {}).get(s2) or matrix.get(s2, {}).get(s1)
+                                if val is not None:
+                                    pair_corrs.append(abs(float(val)))
+                    if pair_corrs:
+                        avg_corr = sum(pair_corrs) / len(pair_corrs)
+                        if avg_corr > float(getattr(settings, "max_portfolio_correlation", 0.55)):
+                            self._log("entry_skipped", f"{symbol}: avg_correlation {avg_corr:.2f}",
+                                      {"symbol": symbol, "reason": "portfolio_correlation_blocked"})
+                            return False, risk_mult
             except Exception:
                 pass
 
