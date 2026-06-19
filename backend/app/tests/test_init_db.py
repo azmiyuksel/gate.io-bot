@@ -20,7 +20,14 @@ def _run_with_tables(tables):
     command calls (stamp vs upgrade) without touching a real database."""
     import alembic.command as command  # ensure the submodule is importable to patch
 
+    # Fake engine reporting a non-postgres dialect so init_db skips the advisory
+    # lock (which would need a real DB connection) and runs the schema-sync logic
+    # directly. inspect() is patched, so the engine is otherwise unused.
+    fake_engine = MagicMock()
+    fake_engine.dialect.name = "sqlite"
+
     with patch("sqlalchemy.inspect", return_value=_FakeInspector(tables)), \
+         patch("app.db.session.engine", fake_engine), \
          patch.object(command, "stamp") as stamp, \
          patch.object(command, "upgrade") as upgrade, \
          patch("app.db.init_db._cleanup_paper_data"), \
@@ -51,3 +58,29 @@ def test_tracked_db_upgrades():
     cmd = _run_with_tables(tables={"alembic_version", "users"})
     cmd.upgrade.assert_called_once()
     cmd.stamp.assert_not_called()
+
+
+def test_postgres_serializes_with_advisory_lock():
+    """On postgres, init_db wraps the schema sync in a pg advisory lock so the
+    API + workers don't race concurrent `upgrade head` runs at boot."""
+    import alembic.command as command
+
+    fake_engine = MagicMock()
+    fake_engine.dialect.name = "postgresql"
+    conn = MagicMock()
+    fake_engine.connect.return_value.__enter__.return_value = conn
+
+    with patch("sqlalchemy.inspect", return_value=_FakeInspector({"alembic_version"})), \
+         patch("app.db.session.engine", fake_engine), \
+         patch.object(command, "upgrade"), \
+         patch.object(command, "stamp"), \
+         patch("app.db.init_db._cleanup_paper_data"), \
+         patch("app.db.init_db._mark_cleanup_done"), \
+         patch("app.db.init_db._cleanup_if_needed"):
+        from app.db.init_db import init_db
+
+        init_db()
+
+    calls = [str(c.args[0]) for c in conn.exec_driver_sql.call_args_list]
+    assert any("pg_advisory_lock" in c for c in calls)
+    assert any("pg_advisory_unlock" in c for c in calls)

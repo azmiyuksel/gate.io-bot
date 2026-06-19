@@ -4,14 +4,40 @@ from app.models import ApiKey, Order, Position, StrategySettings, SystemLog, Tra
 _ = (ApiKey, Order, Position, StrategySettings, SystemLog, Trade, WorkerHeartbeat, User, RefreshToken, AuditLog, Portfolio, PortfolioAsset, Allocation, RebalanceEvent, PortfolioMetric, RiskSnapshot, MarketRegimeRecord, RegimeTransition, RegimeFeatures, RegimeConfidence, RegimePerformance, StrategyBaseline, StrategyHealthLog, StrategyDriftScore, StrategyAlert, StrategyStateHistory, AccountSnapshot, ReconciliationLog, CircuitBreakerEvent, ExecutionOrder, ExecutionFill, ExecutionMetric, SlippageLog, LatencyLog, ExecutionReport, MarketDataRaw, MarketDataClean, MarketDataAnomaly, MarketDataHealthLog, DataQualityReport, ResearchStrategy, StrategyVersion, ResearchExperiment, HypothesisTest, FeatureRecord, ABTestResult, LearningCycle, KnowledgeEntry, DiscoveredFeature, StrategyRanking, PromotionRequest, LearningReport, PaperAccount, PaperEquityCurve, PaperLog, PaperOrder, PaperPosition, PaperTrade)
 
 
+# Arbitrary, stable key for the Postgres advisory lock that serializes schema
+# migrations across the API + worker services (Railway boots them concurrently).
+_MIGRATION_LOCK_KEY = 871042
+
+
 def init_db() -> None:
     from alembic import command
     from alembic.config import Config
-    from sqlalchemy import inspect
 
     settings = get_settings()
     alembic_cfg = Config("alembic.ini")
     alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
+
+    from app.db.session import engine
+
+    # Serialize migrations cluster-wide: Railway starts the API + paper-worker +
+    # scheduler concurrently, and each runs `upgrade head` at boot. With a pending
+    # migration, two concurrent runs race and one fails ("column already exists").
+    # A Postgres advisory lock makes the first runner migrate while the others
+    # block, then see head and no-op. SQLite (local/tests) has no advisory locks
+    # and no concurrency, so it runs unguarded.
+    if engine.dialect.name == "postgresql":
+        with engine.connect() as conn:
+            conn.exec_driver_sql(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_KEY})")
+            try:
+                _run_schema_sync(alembic_cfg, command)
+            finally:
+                conn.exec_driver_sql(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_KEY})")
+    else:
+        _run_schema_sync(alembic_cfg, command)
+
+
+def _run_schema_sync(alembic_cfg, command) -> None:
+    from sqlalchemy import inspect
 
     from app.db.session import engine
 
