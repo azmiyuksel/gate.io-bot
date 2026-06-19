@@ -195,6 +195,14 @@ class ReconciliationEngine:
     async def reconcile_open_orders(self) -> list[ReconciliationLog]:
         logs = [await self.reconcile_order(order) for order in self.open_orders()]
         self.db.commit()
+        # Also reconcile positions against the exchange (futures only) so a
+        # position closed by the exchange stop while the local poll was down
+        # does not linger as a ghost open position that manage_open_positions
+        # keeps trying to manage. Order-only reconciliation misses this because
+        # a conditional stop order's fill may not have a corresponding local
+        # Order row (the stop was placed on the exchange, not tracked as an
+        # Order in the local DB).
+        await self.reconcile_positions()
         return logs
 
     async def reconcile_recent_orders(self, limit: int = 100) -> list[ReconciliationLog]:
@@ -220,6 +228,59 @@ class ReconciliationEngine:
             )
         )
         self.db.commit()
+        return logs
+
+    async def reconcile_positions(self) -> list[ReconciliationLog]:
+        """Reconcile locally-open positions against the exchange (futures only).
+
+        For each locally-open position, query the exchange's position list. If
+        the exchange reports the position as closed/flat (size 0 or absent), the
+        local position is a GHOST — likely the exchange-side stop fired while the
+        local poll was down. Mark it closed so manage_open_positions stops trying
+        to manage it and reconciliation recovers the PnL from the stop order's
+        fill (if any). Spot positions are skipped (no position list on spot; the
+        balance check would require a full account reconciliation).
+
+        Returns ReconciliationLog entries for each ghost position detected.
+        """
+        from app.core.config import get_settings
+
+        if get_settings().trading_market.lower() != "futures":
+            return []
+        logs: list[ReconciliationLog] = []
+        for position in self.db.query(Position).filter(Position.status == PositionStatus.open).all():
+            try:
+                fut_pos = await self.client.get_futures_position(position.symbol)
+            except Exception:
+                continue
+            # If the exchange has no position or size 0, the local row is a ghost.
+            if fut_pos is None:
+                continue
+            size = fut_pos.get("size") or fut_pos.get("current_size") or 0
+            if int(abs(_to_decimal(size))) == 0:
+                # Ghost — the exchange closed it (stop/liquidation/manual). Mark
+                # closed locally so we stop managing a dead position. PnL recovery
+                # from the stop fill is handled by order reconciliation if a local
+                # Order row exists; otherwise the realized PnL stays at its last
+                # known value (conservative — don't fabricate a PnL we can't verify).
+                position.status = PositionStatus.closed
+                position.closed_at = datetime.now(UTC)
+                self.db.add(position)
+                log = ReconciliationLog(
+                    action=ReconcileAction.filled,
+                    detail=f"ghost position {position.symbol} closed on exchange but open locally — marked closed",
+                )
+                self.db.add(log)
+                logs.append(log)
+                self.db.add(
+                    SystemLog(
+                        level=LogLevel.warning,
+                        source="reconciliation",
+                        message=f"ghost position {position.symbol}: exchange reports flat, local marked closed",
+                    )
+                )
+        if logs:
+            self.db.commit()
         return logs
 
     def _log(

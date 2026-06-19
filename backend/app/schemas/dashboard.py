@@ -7,11 +7,20 @@ class PositionOut(BaseModel):
     id: int
     symbol: str
     status: str
+    side: str
     entry_price: Decimal
     quantity: Decimal
     stop_loss: Decimal
     take_profit: Decimal
+    trailing_stop: Decimal | None = None
+    breakeven_stop: bool = False
     realized_pnl: Decimal
+    # Exchange-side stop state — critical for the operator to see whether a
+    # position is PROTECTED (resting exchange stop) or DEGRADED (local poll only,
+    # needs a manual stop). None = no exchange stop placed.
+    exchange_stop_order_id: str | None = None
+    stop_placed_at: str | None = None
+    opened_at: str | None = None
 
     model_config = {"from_attributes": True}
 
