@@ -479,6 +479,18 @@ class Settings(BaseSettings):
     # Breakeven stop: move stop-loss to entry price when unrealized profit
     # reaches this fraction of the entry price (0.02 = 2% profit → BE stop).
     breakeven_stop_trigger_pct: float = 0.02
+    # --- Partial profit taking (scale-out), opt-in ---
+    # Once a position reaches `scale_out_r_multiple` of profit (in units of its
+    # INITIAL risk R = |entry - initial_stop|), close `scale_out_fraction` of it
+    # to bank profit and move the stop to breakeven, then ride the remainder
+    # risk-free via trailing. This raises realised expectancy and survivability
+    # (you take money off the table) without capping the runner. Fires at most
+    # once per position. Off by default. Especially valuable for the trend
+    # strategy, which has no fixed take-profit.
+    scale_out_enabled: bool = False
+    scale_out_r_multiple: float = 1.0   # take the partial at +1R
+    scale_out_fraction: float = 0.5     # close 50% of the position at that level
+    move_to_breakeven_on_scale_out: bool = True
     # Estimated round-trip trading cost (taker fees + spread + slippage)
     # used when evaluating whether a rebalance is worth executing.
     rebalance_cost_bps: float = 10.0  # 10 bps = 0.10%

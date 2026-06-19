@@ -36,6 +36,14 @@ class Position(Base):
     take_profit: Mapped[Decimal] = mapped_column(Numeric(24, 10))
     trailing_stop: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
     breakeven_stop: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The ORIGINAL protective stop set at entry. Trailing/breakeven move
+    # ``stop_loss`` over time, so this preserves the initial risk-per-unit (R)
+    # used to scale out at R-multiples. Nullable: positions opened before this
+    # column existed simply don't scale out (the R baseline is unknown).
+    initial_stop_loss: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    # Whether the partial profit-taking (scale-out) leg has already fired, so it
+    # fires at most once per position.
+    scaled_out: Mapped[bool] = mapped_column(Boolean, default=False)
     realized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
     # Exchange-side stop order id (resting stop-loss). When set, the stop is
     # live on the exchange and protects the position even if the scheduler is

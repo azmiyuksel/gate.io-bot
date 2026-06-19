@@ -1065,6 +1065,9 @@ class TradingEngine:
             entry_price=fill_price,
             quantity=actual_base_qty,
             stop_loss=stop_loss,
+            # Preserve the entry stop as the R baseline for scale-out (trailing
+            # later moves stop_loss, so we cannot recover R from it).
+            initial_stop_loss=stop_loss,
             take_profit=take_profit,
         )
         self.db.add(position)
@@ -1197,7 +1200,12 @@ class TradingEngine:
                 elif tp_hit:
                     await self.close_position(position, "take_profit")
                 else:
-                    await self._update_trailing_stop(position, price, atr_value)
+                    # Partial profit taking BEFORE trailing: bank a fraction at
+                    # +R, then let trailing manage the remainder. Skipped if it
+                    # fully closes the position (tiny remainder).
+                    await self._maybe_scale_out(position, price)
+                    if position.status == PositionStatus.open:
+                        await self._update_trailing_stop(position, price, atr_value)
             except Exception as exc:
                 self._log(
                     "position_manage_error",
@@ -1438,6 +1446,131 @@ class TradingEngine:
         # fired this cycle). Skipped when nothing changed.
         if stop_amended:
             await self._amend_exchange_stop(position)
+
+    # ------------------------------------------------------------------
+    # Partial profit taking (scale-out)
+    # ------------------------------------------------------------------
+
+    async def _maybe_scale_out(self, position: Position, price: Decimal) -> None:
+        """Take partial profit at +R, then ride the remainder risk-free.
+
+        Closes ``scale_out_fraction`` of the position once unrealized profit
+        reaches ``scale_out_r_multiple`` × the INITIAL risk R, moves the stop to
+        breakeven, and marks the position so it fires at most once. No-op when
+        disabled, already scaled, or the R baseline is unknown."""
+        s = get_settings()
+        if not getattr(s, "scale_out_enabled", False) or position.scaled_out:
+            return
+        if position.initial_stop_loss is None:
+            return
+        r = abs(position.entry_price - position.initial_stop_loss)
+        if r <= 0:
+            return
+        is_short = position.side == OrderSide.sell
+        profit = (position.entry_price - price) if is_short else (price - position.entry_price)
+        if profit < r * Decimal(str(s.scale_out_r_multiple)):
+            return
+        fraction = Decimal(str(s.scale_out_fraction))
+        if fraction <= 0 or fraction >= 1:
+            return
+        await self._scale_out(position, price, fraction)
+
+    async def _scale_out(self, position: Position, price: Decimal, fraction: Decimal) -> None:
+        """Market-close ``fraction`` of ``position``; bank PnL; move to breakeven."""
+        qty_to_close = position.quantity * fraction
+        if qty_to_close <= 0:
+            return
+        is_short = position.side == OrderSide.sell
+        market = get_settings().trading_market.lower()
+        close_side = OrderSide.buy if is_short else OrderSide.sell
+        try:
+            if is_short or market == "futures":
+                close_direction = "long" if is_short else "short"
+                response = await self.client.place_futures_market_order(
+                    position.symbol, qty_to_close, close_direction, reduce_only=True
+                )
+                exit_price = Decimal(str(response.get("avg_deal_price") or response.get("fill_price") or price))
+                try:
+                    info = await self.client.futures_contract_info(position.symbol)
+                    mult = Decimal(str(info.get("quanto_multiplier", "0") or "0"))
+                except Exception:
+                    mult = Decimal("0")
+                raw_filled = response.get("size") or response.get("filled_qty")
+                filled_qty = (
+                    Decimal(str(raw_filled)) * mult if (raw_filled is not None and mult > 0) else qty_to_close
+                )
+            else:
+                response = await self.client.place_market_sell(position.symbol, qty_to_close)
+                exit_price = Decimal(str(response.get("avg_deal_price") or price))
+                filled_qty = _filled_base_qty(response, exit_price, qty_to_close)
+        except OrderBelowMinimum as exc:
+            # The partial is below the exchange minimum — keep the whole position
+            # and let it ride; scale-out is best-effort and never forces a trade.
+            self._log("scale_out_min", f"{position.symbol}: scale-out skipped, {exc}")
+            return
+        if not response.get("id"):
+            self._log("scale_out_failed", f"{position.symbol}: scale-out order failed", LogLevel.warning)
+            return
+
+        fee = _fee_in_quote(response, exit_price, position.symbol)
+        if is_short:
+            pnl = (position.entry_price - exit_price) * filled_qty - fee
+        else:
+            pnl = (exit_price - position.entry_price) * filled_qty - fee
+
+        order = Order(
+            exchange_order_id=str(response.get("id")),
+            position_id=position.id,
+            symbol=position.symbol,
+            side=close_side,
+            status=OrderStatus.open,
+            price=exit_price,
+            quantity=filled_qty,
+            raw_response=json.dumps(response),
+        )
+        self.db.add(order)
+        self.db.flush()
+        trade = Trade(
+            order_id=order.id,
+            strategy_name=self.strategy.name,
+            symbol=position.symbol,
+            side=close_side,
+            price=exit_price,
+            quantity=filled_qty,
+            fee=fee,
+            realized_pnl=pnl,
+        )
+        self.db.add(trade)
+
+        position.realized_pnl = (position.realized_pnl or Decimal("0")) + pnl
+        position.quantity = position.quantity - filled_qty
+        position.scaled_out = True
+        if position.quantity <= 0:
+            # The "partial" actually flattened the position (rounding) — close it.
+            position.quantity = Decimal("0")
+            position.status = PositionStatus.closed
+            position.closed_at = datetime.now(UTC)
+        elif get_settings().move_to_breakeven_on_scale_out and not position.breakeven_stop:
+            position.stop_loss = position.entry_price
+            position.breakeven_stop = True
+
+        self._commit_or_rollback(
+            f"{position.symbol}: failed to persist scale-out {response.get('id')}, rolled back"
+        )
+
+        # Keep the exchange stop in sync with the reduced size / breakeven level.
+        if position.status == PositionStatus.open:
+            await self._amend_exchange_stop(position)
+        else:
+            await self._cancel_exchange_stop(position)
+        self._log(
+            "scale_out",
+            f"{position.symbol}: scaled out {filled_qty} @ {exit_price} "
+            f"(pnl={pnl:.4f}); remainder={position.quantity}, stop->breakeven",
+        )
+        await self.notifier.send(
+            f"Scaled out {position.symbol}: closed {filled_qty} @ {exit_price}, pnl={pnl:.4f}"
+        )
 
     # ------------------------------------------------------------------
     # Exchange-side stop management
