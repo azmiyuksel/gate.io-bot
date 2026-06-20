@@ -218,14 +218,24 @@ class Settings(BaseSettings):
     momentum_ema_slow: int = 21
     momentum_ema_trend: int = 50
     momentum_donchian_lookback: int = 20
-    momentum_vol_spike_mult: float = 1.3
+    # Volume confirmation: the (closed) breakout bar's volume must be at least this
+    # multiple of the 20-bar average. Lowered 1.3 -> 1.0: requiring a 1.3x volume
+    # SPIKE on the exact bar that also clears momentum + breakout was the dominant
+    # entry blocker in calm markets (~63% of rejections were low_volume and the
+    # book never opened a trade). 1.0 still rejects below-average ("dead") bars
+    # while letting ordinary-volume breakouts through.
+    momentum_vol_spike_mult: float = 1.0
     momentum_rsi_long_max: float = 80.0
     momentum_rsi_short_min: float = 20.0
     # Minimum ATR as a fraction of price; below this the move can't clear costs.
     # Bumped from 0.0015 (0.15%) to 0.004 (0.4%) — the old floor was BELOW the
     # typical round-trip cost (2x taker ~0.1% + spread + slippage), so a
     # "breakout" could fire inside the bid-ask and be instantly underwater.
-    momentum_min_atr_pct: float = 0.004
+    # Eased 0.004 -> 0.003 to trade in slightly calmer conditions (atr_too_low was
+    # ~12% of rejections). Still above the futures round-trip cost (~0.0022), and
+    # the breakout buffer is independently floored at the real round-trip cost, so
+    # a sub-cost breakout still cannot fire.
+    momentum_min_atr_pct: float = 0.003
     # Breakout must clear the prior extreme by this fraction of ATR (noise filter).
     # Treated as a FLOOR: the effective buffer is max(this * ATR, round_trip_cost)
     # so a breakout can never fire inside the realistic fee+spread+slippage band.
