@@ -97,9 +97,19 @@ def _mark_cleanup_done() -> None:
     from app.db.session import engine
 
     with engine.connect() as conn:
+        # The marker is a sentinel row in strategy_settings. The numeric columns
+        # are NOT NULL with no DB-level default (the model defaults are Python-side
+        # only), so an INSERT that omits them raises NotNullViolation — which made
+        # this marker NEVER persist, so _cleanup_if_needed re-ran _cleanup_paper_data
+        # on EVERY boot/redeploy, wiping all paper logs/trades/positions each time.
+        # Supply the full set of required columns (values chosen to satisfy the
+        # table CheckConstraints) so the marker is written exactly once.
         conn.execute(text(
-            "INSERT INTO strategy_settings (name, is_enabled) "
-            "VALUES ('paper_cleanup_done', true) "
+            "INSERT INTO strategy_settings "
+            "(name, is_enabled, max_capital_per_trade_pct, daily_max_loss_pct, "
+            " weekly_max_loss_pct, max_open_positions, min_reward_risk, "
+            " atr_multiplier, trailing_stop_pct) "
+            "VALUES ('paper_cleanup_done', false, 0.08, 0.05, 0.18, 10, 1.5, 2.0, 0.015) "
             "ON CONFLICT (name) DO NOTHING"
         ))
         conn.commit()
