@@ -217,7 +217,13 @@ class Settings(BaseSettings):
     momentum_ema_fast: int = 9
     momentum_ema_slow: int = 21
     momentum_ema_trend: int = 50
-    momentum_donchian_lookback: int = 20
+    # Breakout window: a long fires when price clears the prior N-bar high (mirror
+    # for shorts). Shortened 20 -> 10: the 20-bar (100-min on 5m) high rarely broke
+    # in ranging conditions, so the book never entered. A 10-bar window keys off the
+    # last ~50 min extreme — far more frequent breakouts while still requiring price
+    # to make a new local high/low (the breakout buffer + volume/ATR gates still
+    # filter noise). Affects paper now and live when enabled.
+    momentum_donchian_lookback: int = 10
     # Volume confirmation: the (closed) breakout bar's volume must be at least this
     # multiple of the 20-bar average. Lowered 1.3 -> 1.0: requiring a 1.3x volume
     # SPIKE on the exact bar that also clears momentum + breakout was the dominant
