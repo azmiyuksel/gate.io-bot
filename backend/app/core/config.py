@@ -225,12 +225,12 @@ class Settings(BaseSettings):
     # filter noise). Affects paper now and live when enabled.
     momentum_donchian_lookback: int = 10
     # Volume confirmation: the (closed) breakout bar's volume must be at least this
-    # multiple of the 20-bar average. Lowered 1.3 -> 1.0: requiring a 1.3x volume
-    # SPIKE on the exact bar that also clears momentum + breakout was the dominant
-    # entry blocker in calm markets (~63% of rejections were low_volume and the
-    # book never opened a trade). 1.0 still rejects below-average ("dead") bars
-    # while letting ordinary-volume breakouts through.
-    momentum_vol_spike_mult: float = 1.0
+    # multiple of the 20-bar average. Lowered 1.3 -> 1.0 -> 0.7: volume is
+    # right-skewed (occasional high-volume bars inflate the 20-bar mean), so the
+    # typical/median bar sits BELOW the average — requiring >= 1.0x still rejected
+    # ~78% of bars (including breakout bars) and the book never traded. 0.7 lets
+    # ordinary-volume breakouts through while still filtering the deadest bars.
+    momentum_vol_spike_mult: float = 0.7
     momentum_rsi_long_max: float = 80.0
     momentum_rsi_short_min: float = 20.0
     # Minimum ATR as a fraction of price; below this the move can't clear costs.
