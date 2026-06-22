@@ -38,6 +38,10 @@ class PaperTradingEngine:
         self._last_risk_log_ts: float = 0
         self._log_batch: list = []
         self._last_log_commit = time()
+        # Per-symbol re-entry cooldown: tracks when each symbol was last closed
+        # so _evaluate_symbol_entry can wait paper_reentry_cooldown_seconds before
+        # opening a new position. Prevents stop-loss churning.
+        self._last_close_ts: dict[str, float] = {}
 
     async def start(self, symbols: list[str]) -> None:
         if self.account.status != PaperBotStatus.running:
@@ -121,11 +125,47 @@ class PaperTradingEngine:
     async def _evaluate_symbol_entry(self, symbol: str, settings) -> None:
         from app.paper_trading.mirror import resolve_paper_exec
 
+        # Per-symbol duplicate guard: skip entry evaluation entirely when there
+        # is already an OPEN position on this symbol. This runs BEFORE the candle
+        # fetch (saves a REST call) and BEFORE the strategy evaluate, so a steady
+        # breakout signal doesn't pyramid into the same position every eval cycle.
+        # The risk_simulator has the same check, but it is throttled (10s) and
+        # runs after the strategy/MTF/gate work — this early-exit is cheaper and
+        # always visible in stdout.
+        from app.models.entities import PaperPosition
+
+        existing = (
+            self.db.query(PaperPosition)
+            .filter(
+                PaperPosition.account_id == self.account.id,
+                PaperPosition.symbol == symbol,
+                PaperPosition.is_open.is_(True),
+            )
+            .first()
+        )
+        if existing is not None:
+            self._log("entry_skipped", f"{symbol}: already_in_position",
+                      {"symbol": symbol, "reason": "already_in_position"})
+            return
+
+        # Per-symbol re-entry cooldown: after a position is closed (stop-loss,
+        # take-profit, etc.), wait paper_reentry_cooldown_seconds before opening
+        # a new one on the same symbol. This prevents churning — the rapid close-
+        # and-reopen cycle where a breakout fails (stop hit), the next eval cycle
+        # (30s) sees no position and opens a new one that also fails, repeating
+        # indefinitely. 0 disables the cooldown.
+        reentry_cd = getattr(settings, "paper_reentry_cooldown_seconds", 300)
+        if reentry_cd > 0:
+            since_close = time() - self._last_close_ts.get(symbol, 0.0)
+            if since_close < reentry_cd:
+                remaining = int(reentry_cd - since_close)
+                self._log("entry_skipped", f"{symbol}: reentry_cooldown ({remaining}s remaining)",
+                          {"symbol": symbol, "reason": "reentry_cooldown"})
+                return
+
         # Session / time-of-day filter (mirrors live): skip new entries in
         # low-liquidity UTC windows so paper rejects the same setups live would.
         if getattr(settings, "session_filter_enabled", False):
-            from datetime import UTC, datetime
-
             from app.services.strategy.session import entry_allowed
 
             allowed, reason = entry_allowed(
@@ -201,8 +241,12 @@ class PaperTradingEngine:
                       {"symbol": symbol, "reason": "short_skipped_spot"})
             return
 
-        # Multi-timeframe confirmation: check HTF trend alignment
-        if getattr(settings, "strategy_mtf_enabled", False):
+        # Multi-timeframe confirmation: check HTF trend alignment. Paper uses
+        # paper_mtf_enabled (off by default) so the book actually trades — the
+        # 4h EMA50 gate is strict and rejects most lower-timeframe breakouts in
+        # neutral markets, leaving paper idle for long stretches. Enable to
+        # mirror live's full-strictness filter.
+        if getattr(settings, "paper_mtf_enabled", False) or getattr(settings, "strategy_mtf_enabled", False):
             try:
                 htf_candles = await self._client.candles(
                     symbol,
@@ -300,43 +344,52 @@ class PaperTradingEngine:
         except Exception:
             pass
 
-        # 2. Market-regime filter (block / de-risk by regime).
-        try:
-            from app.market_regime.engine import MarketRegimeEngine
+        # 2. Market-regime filter (block / de-risk by regime). Paper uses
+        # paper_regime_filter_enabled (off by default) so the momentum/breakout
+        # strategy can trade its way OUT of a sideways regime — the regime
+        # filter blocks "breakout" strategies in sideways markets (the most
+        # common regime), which leaves paper idle for the majority of the time.
+        # Enable to mirror live's regime gate exactly.
+        if getattr(settings, "paper_regime_filter_enabled", False):
+            try:
+                from app.market_regime.engine import MarketRegimeEngine
 
-            candles_list = [
-                {"open": float(c["open"]), "high": float(c["high"]), "low": float(c["low"]),
-                 "close": float(c["close"]), "volume": float(c["volume"]), "timestamp": c["timestamp"]}
-                for c in candles
-            ]
-            regime = MarketRegimeEngine(self.db)
-            # Read the regime at the SAME timeframe it is written. The old call
-            # let should_trade default to "1h" while update_regime wrote the
-            # configured interval, so the filter always saw a default "sideways"
-            # regime and silently blocked every breakout/trend strategy.
-            if not regime_pre_updated:
-                regime.update_regime(symbol, interval, candles_list)
-            allowed, reason, rmult = regime.should_trade(strategy_name, symbol, interval)
-            if not allowed:
-                self._log("entry_skipped", f"{symbol}: regime_blocked ({reason})",
-                          {"symbol": symbol, "reason": "regime_blocked"})
-                return False, risk_mult
-            risk_mult *= Decimal(str(rmult))
-        except Exception:
-            pass
+                candles_list = [
+                    {"open": float(c["open"]), "high": float(c["high"]), "low": float(c["low"]),
+                     "close": float(c["close"]), "volume": float(c["volume"]), "timestamp": c["timestamp"]}
+                    for c in candles
+                ]
+                regime = MarketRegimeEngine(self.db)
+                # Read the regime at the SAME timeframe it is written. The old call
+                # let should_trade default to "1h" while update_regime wrote the
+                # configured interval, so the filter always saw a default "sideways"
+                # regime and silently blocked every breakout/trend strategy.
+                if not regime_pre_updated:
+                    regime.update_regime(symbol, interval, candles_list)
+                allowed, reason, rmult = regime.should_trade(strategy_name, symbol, interval)
+                if not allowed:
+                    self._log("entry_skipped", f"{symbol}: regime_blocked ({reason})",
+                              {"symbol": symbol, "reason": "regime_blocked"})
+                    return False, risk_mult
+                risk_mult *= Decimal(str(rmult))
+            except Exception:
+                pass
 
         # 3. Strategy-health filter (block when PAUSED/DISABLED, else de-risk).
-        try:
-            from app.strategy_health.engine import StrategyHealthEngine
+        # Paper uses paper_health_filter_enabled (off by default) so a drift-driven
+        # PAUSE on a long-running deployment doesn't silently stop paper trading.
+        if getattr(settings, "paper_health_filter_enabled", False):
+            try:
+                from app.strategy_health.engine import StrategyHealthEngine
 
-            health = StrategyHealthEngine(self.db).update_health(strategy_name) or {}
-            if health.get("state") in ("PAUSED", "DISABLED"):
-                self._log("entry_skipped", f"{symbol}: health_{health.get('state')}",
-                          {"symbol": symbol, "reason": "health_blocked"})
-                return False, risk_mult
-            risk_mult *= Decimal(str(health.get("risk_multiplier", 1)))
-        except Exception:
-            pass
+                health = StrategyHealthEngine(self.db).update_health(strategy_name) or {}
+                if health.get("state") in ("PAUSED", "DISABLED"):
+                    self._log("entry_skipped", f"{symbol}: health_{health.get('state')}",
+                              {"symbol": symbol, "reason": "health_blocked"})
+                    return False, risk_mult
+                risk_mult *= Decimal(str(health.get("risk_multiplier", 1)))
+            except Exception:
+                pass
 
         # 4. Funding-rate signal (futures only, de-risk on adverse funding).
         try:
@@ -434,7 +487,12 @@ class PaperTradingEngine:
     ) -> None:
         approved, reason = self.risk.approve_signal(signal, data)
         if not approved:
-            if time() - self._last_risk_log_ts >= 10:
+            # Always log already_in_position / max_open_positions / max_exposure
+            # rejections (high-signal for diagnosing why the book isn't trading);
+            # throttle the rest (daily_loss/drawdown/circuit_breaker are rare and
+            # already alert via Telegram).
+            always_log = reason in {"already_in_position", "max_open_positions", "max_exposure"}
+            if always_log or time() - self._last_risk_log_ts >= 10:
                 self._log("risk_check", f"{signal.symbol}: {reason}", {"symbol": signal.symbol, "reason": reason})
                 self._last_risk_log_ts = time()
             if reason in {"daily_loss_limit_reached", "max_drawdown_reached"}:
@@ -497,6 +555,8 @@ class PaperTradingEngine:
                 pass
 
         if quantity <= 0:
+            self._log("entry_skipped", f"{signal.symbol}: zero_quantity_after_sizing",
+                      {"symbol": signal.symbol, "reason": "zero_quantity_after_sizing"})
             return
 
         # Kelly-optimal fraction (opt-in): scale by edge quality once a track record
@@ -515,7 +575,54 @@ class PaperTradingEngine:
 
         order = self.order_manager.execute_signal(signal, quantity, data)
         if order:
+            logger.info("paper TRADE OPENED | %s %s qty=%s @ %s",
+                        signal.symbol, signal.side, quantity, data.price)
             await self.notifier.send(f"Paper trade opened: {signal.symbol} {signal.side}")
+        else:
+            self._log("entry_skipped", f"{signal.symbol}: order_not_created",
+                      {"symbol": signal.symbol, "reason": "order_not_created"})
+
+    def _maybe_scale_out(self, position: PaperPosition, data: MarketData, price: Decimal) -> None:
+        """Take partial profit at +R, then ride the remainder risk-free.
+
+        Closes ``scale_out_fraction`` of the position once unrealized profit
+        reaches ``scale_out_r_multiple`` × the INITIAL risk R = |entry -
+        initial_stop|, moves the stop to breakeven, and marks the position so it
+        fires at most once. Position must have initial_stop_loss set (positions
+        opened before the column existed never scale out).
+        """
+        s = get_settings()
+        if position.initial_stop_loss is None or position.initial_stop_loss <= 0:
+            return
+        r_mult = Decimal(str(s.scale_out_r_multiple))
+        fraction = Decimal(str(s.scale_out_fraction))
+        if fraction <= 0 or fraction >= 1:
+            return
+        is_short = position.side == "sell"
+        r = abs(position.average_entry_price - position.initial_stop_loss)
+        if r <= 0:
+            return
+        profit = (position.average_entry_price - price) if is_short else (price - position.average_entry_price)
+        if profit < r * r_mult:
+            return
+
+        # Close fraction via broker
+        close_qty = position.quantity * fraction
+        if close_qty <= 0:
+            return
+        self.broker.close_position(position, data, "scale_out", quantity=close_qty)
+        self._log("scale_out", f"{data.symbol}: scaled out {close_qty} @ {price} (profit={profit:.4f})")
+
+        # Move remainder to breakeven
+        if getattr(s, "move_to_breakeven_on_scale_out", True):
+            round_trip_fee = position.average_entry_price * Decimal("0.002")
+            if is_short:
+                position.stop_loss = position.average_entry_price - round_trip_fee
+            else:
+                position.stop_loss = position.average_entry_price + round_trip_fee
+            position.breakeven_triggered = True
+        position.scaled_out = True
+        self._log("scale_out_done", f"{data.symbol}: scaled out, remainder stop @ {position.stop_loss}")
 
     def _handle_position_exits(self, data: MarketData) -> None:
         positions = (
@@ -560,6 +667,14 @@ class PaperTradingEngine:
                     position.breakeven_triggered = True
                     self._log("breakeven_stop", f"{data.symbol} stop moved to breakeven (incl. fees)")
 
+            # Partial profit taking (scale-out): close a fraction at +1R and move
+            # the remainder to breakeven. Fires at most once per position. Checked
+            # BEFORE trailing: we want to bank profit first, then let the remainder
+            # trail risk-free. The initial_stop_loss is set at position open in the
+            # broker and preserved even as breakeven/trailing move stop_loss.
+            if getattr(settings, "scale_out_enabled", False) and not position.scaled_out:
+                self._maybe_scale_out(position, data, price)
+
             # Trailing stop: ratchet as price moves favorably
             if position.breakeven_triggered and position.highest_price and trailing_pct > 0:
                 if is_short:
@@ -600,20 +715,34 @@ class PaperTradingEngine:
                 if position.stop_loss and price >= position.stop_loss:
                     reason = "trailing_stop" if position.breakeven_triggered else "stop_loss"
                     self.broker.close_position(position, data, reason)
+                    self._last_close_ts[data.symbol] = time()
                     self._log(f"{reason}_triggered", f"{data.symbol} {reason} triggered at ~{price}")
+                    self._log("trade_closed", f"{data.symbol} closed ({reason}) at ~{price}")
                 elif tp_active and position.take_profit and price <= position.take_profit:
                     self.broker.close_position(position, data, "take_profit")
+                    self._last_close_ts[data.symbol] = time()
                     self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
+                    self._log("trade_closed", f"{data.symbol} closed (take_profit) at ~{price}")
             else:
                 if position.stop_loss and price <= position.stop_loss:
                     reason = "trailing_stop" if position.breakeven_triggered else "stop_loss"
                     self.broker.close_position(position, data, reason)
+                    self._last_close_ts[data.symbol] = time()
                     self._log(f"{reason}_triggered", f"{data.symbol} {reason} triggered at ~{price}")
+                    self._log("trade_closed", f"{data.symbol} closed ({reason}) at ~{price}")
                 elif tp_active and position.take_profit and price >= position.take_profit:
                     self.broker.close_position(position, data, "take_profit")
+                    self._last_close_ts[data.symbol] = time()
                     self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
+                    self._log("trade_closed", f"{data.symbol} closed (take_profit) at ~{price}")
 
     def _log(self, event: str, message: str, payload: dict | None = None) -> None:
+        # Mirror entry-skip / risk decisions to stdout so the gate that blocks an
+        # entry is visible in Railway logs (PaperLog is DB-only by default, which
+        # hides WHY the book isn't trading behind a dashboard query).
+        if event in ("entry_skipped", "risk_check", "system_started", "system_stopped", "system_paused",
+                     "stop_loss_triggered", "trailing_stop_triggered", "take_profit_triggered", "trade_closed"):
+            logger.info("paper %s | %s", event, message)
         self.db.add(
             PaperLog(
                 account_id=self.account.id,

@@ -230,7 +230,7 @@ class PaperBroker:
             from app.core.config import get_settings
             eq_engine = ExecutionQualityEngine(self.db)
             exec_order = eq_engine.record_order(
-                strategy_name=get_settings().strategy_name,
+                strategy_name=str(get_settings().live_strategy),
                 symbol=position.symbol,
                 side=close_side.value if isinstance(close_side, OrderSide) else close_side,
                 expected_price=exit_price,
@@ -331,6 +331,7 @@ class PaperBroker:
                     average_entry_price=price,
                     last_price=price,
                     stop_loss=stop_loss,
+                    initial_stop_loss=stop_loss,
                     take_profit=take_profit,
                     trailing_stop=stop_loss,
                     highest_price=price,
@@ -397,6 +398,7 @@ class PaperBroker:
                 average_entry_price=price,
                 last_price=price,
                 stop_loss=stop_loss,
+                initial_stop_loss=stop_loss,
                 take_profit=take_profit,
                 trailing_stop=stop_loss,
                 highest_price=None,

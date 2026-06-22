@@ -112,6 +112,14 @@ class PaperPosition(Base):
     trailing_stop: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
     highest_price: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
     breakeven_triggered: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Initial stop-loss at position open: the R baseline for scale-out and
+    # risk/reward accounting. Unlike `stop_loss` (which gets moved by breakeven
+    # and trailing), this stays fixed at the original ATR-based stop so partial
+    # profit-taking can key off the TRUE risk R = |entry - initial_stop|.
+    initial_stop_loss: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    # Whether the partial profit-taking (scale-out) leg has already fired, so it
+    # fires at most once per position.
+    scaled_out: Mapped[bool] = mapped_column(Boolean, default=False)
     is_open: Mapped[bool] = mapped_column(Boolean, default=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

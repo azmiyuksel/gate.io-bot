@@ -25,13 +25,42 @@ def init_db() -> None:
     # A Postgres advisory lock makes the first runner migrate while the others
     # block, then see head and no-op. SQLite (local/tests) has no advisory locks
     # and no concurrency, so it runs unguarded.
+    #
+    # Use pg_try_advisory_lock (non-blocking) with a bounded retry loop instead of
+    # pg_advisory_lock (blocking). A blocking lock can deadlock when the lock-holding
+    # connection is returned to the SQLAlchemy pool but the session isn't closed
+    # cleanly — the worker then waits forever on a lock that never releases, hanging
+    # init_db and leaving the worker silent (no logs past the alembic preamble).
+    # try_lock + retry lets a worker that can't get the lock proceed (the API holds
+    # it, migrates, and releases; by the next retry the worker acquires it and
+    # no-ops). If the lock is held for the whole retry window, the worker skips
+    # migration — the API is the authoritative migrator and will have completed it.
     if engine.dialect.name == "postgresql":
-        with engine.connect() as conn:
-            conn.exec_driver_sql(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_KEY})")
-            try:
-                _run_schema_sync(alembic_cfg, command)
-            finally:
-                conn.exec_driver_sql(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_KEY})")
+        import time
+
+        acquired = False
+        for _ in range(6):  # up to ~30s
+            with engine.connect() as conn:
+                row = conn.exec_driver_sql(
+                    f"SELECT pg_try_advisory_lock({_MIGRATION_LOCK_KEY})"
+                ).fetchone()
+                if row and row[0]:
+                    acquired = True
+                    try:
+                        _run_schema_sync(alembic_cfg, command)
+                    finally:
+                        conn.exec_driver_sql(
+                            f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_KEY})"
+                        )
+                    break
+            time.sleep(5)
+        if not acquired:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "init_db: could not acquire migration advisory lock after ~30s — "
+                "skipping migration (the API service is the authoritative migrator)."
+            )
     else:
         _run_schema_sync(alembic_cfg, command)
 
@@ -104,12 +133,15 @@ def _mark_cleanup_done() -> None:
         # on EVERY boot/redeploy, wiping all paper logs/trades/positions each time.
         # Supply the full set of required columns (values chosen to satisfy the
         # table CheckConstraints) so the marker is written exactly once.
+        # updated_at has no DB-level default either, so set it explicitly to NOW()
+        # — without it the INSERT raises NotNotNullViolation on updated_at and the
+        # marker never persists (re-wiping paper data every boot).
         conn.execute(text(
             "INSERT INTO strategy_settings "
             "(name, is_enabled, max_capital_per_trade_pct, daily_max_loss_pct, "
             " weekly_max_loss_pct, max_open_positions, min_reward_risk, "
-            " atr_multiplier, trailing_stop_pct) "
-            "VALUES ('paper_cleanup_done', false, 0.08, 0.05, 0.18, 10, 1.5, 2.0, 0.015) "
+            " atr_multiplier, trailing_stop_pct, updated_at) "
+            "VALUES ('paper_cleanup_done', false, 0.08, 0.05, 0.18, 10, 1.5, 2.0, 0.015, NOW()) "
             "ON CONFLICT (name) DO NOTHING"
         ))
         conn.commit()

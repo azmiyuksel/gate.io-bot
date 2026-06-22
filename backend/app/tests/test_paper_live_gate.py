@@ -13,7 +13,8 @@ from app.paper_trading.models import PaperSide, TradingSignal
 
 def _settings(**over) -> Settings:
     base = dict(environment="local", secret_key="t", fernet_key="t", trading_symbols="BTC_USDT",
-                correlation_filter_enabled=False, mdq_pause_on_invalid=True)
+                correlation_filter_enabled=False, mdq_pause_on_invalid=True,
+                paper_regime_filter_enabled=True, paper_health_filter_enabled=True)
     base.update(over)
     return Settings(**base)
 

@@ -64,6 +64,10 @@ class MomentumBreakoutStrategy:
         spread = Decimal(str(s.eq_default_spread))
         implied_cost = taker * Decimal("2") + spread * Decimal("2")
         self.round_trip_cost_pct = max(Decimal(str(s.momentum_round_trip_cost_pct)), implied_cost)
+        # Cost floor for the breakout buffer (see evaluate). Stored as a flag so
+        # evaluate() doesn't need to re-read settings (which is lru_cached anyway,
+        # but this keeps the strategy self-contained and testable).
+        self.cost_floor_enabled = bool(getattr(s, "momentum_cost_floor_enabled", True))
         # Symmetric strategy: shorts are always allowed (futures). Kept as a flag so
         # a long-only (spot) deployment can disable shorts without code changes.
         self.allow_short = bool(s.momentum_allow_short)
@@ -101,9 +105,15 @@ class MomentumBreakoutStrategy:
         # extreme by AT LEAST the cost of round-tripping, otherwise it fires
         # inside the bid-ask+fees band and is instantly underwater. The ATR-based
         # buffer is the noise filter; the cost floor is the economic floor.
+        # The cost floor is valuable live (real fees) but can be disabled for
+        # paper so the strategy produces more observable breakouts (paper already
+        # simulates fees at fill time, so the cost floor is double-counting here).
         atr_buffer = atr_v * self.breakout_buffer_atr
         cost_buffer = last_price * self.round_trip_cost_pct
-        buffer = max(atr_buffer, cost_buffer)
+        if self.cost_floor_enabled:
+            buffer = max(atr_buffer, cost_buffer)
+        else:
+            buffer = atr_buffer
 
         up_momentum = ema_f > ema_s and last_price > ema_t
         down_momentum = ema_f < ema_s and last_price < ema_t

@@ -204,7 +204,7 @@ class Settings(BaseSettings):
     paper_max_drawdown_pct: float = 0.30
     # Kelly position scaling needs a track record; off by default so cold-start sizing
     # is deterministic (pure fixed-fractional risk).
-    paper_kelly_enabled: bool = False
+    paper_kelly_enabled: bool = True
     # Legacy fixed-pct dynamic stop (tightens to a flat % of price before breakeven).
     # OFF by default: it silently overrides the ATR stop the position was sized to,
     # mis-stating realised risk. ATR stop + trailing govern exits instead.
@@ -223,16 +223,16 @@ class Settings(BaseSettings):
     # last ~50 min extreme — far more frequent breakouts while still requiring price
     # to make a new local high/low (the breakout buffer + volume/ATR gates still
     # filter noise). Affects paper now and live when enabled.
-    momentum_donchian_lookback: int = 10
+    momentum_donchian_lookback: int = 14
     # Volume confirmation: the (closed) breakout bar's volume must be at least this
     # multiple of the 20-bar average. Lowered 1.3 -> 1.0 -> 0.7: volume is
     # right-skewed (occasional high-volume bars inflate the 20-bar mean), so the
     # typical/median bar sits BELOW the average — requiring >= 1.0x still rejected
     # ~78% of bars (including breakout bars) and the book never traded. 0.7 lets
     # ordinary-volume breakouts through while still filtering the deadest bars.
-    momentum_vol_spike_mult: float = 0.7
-    momentum_rsi_long_max: float = 80.0
-    momentum_rsi_short_min: float = 20.0
+    momentum_vol_spike_mult: float = 1.2
+    momentum_rsi_long_max: float = 55.0
+    momentum_rsi_short_min: float = 45.0
     # Minimum ATR as a fraction of price; below this the move can't clear costs.
     # Bumped from 0.0015 (0.15%) to 0.004 (0.4%) — the old floor was BELOW the
     # typical round-trip cost (2x taker ~0.1% + spread + slippage), so a
@@ -241,7 +241,7 @@ class Settings(BaseSettings):
     # ~12% of rejections). Still above the futures round-trip cost (~0.0022), and
     # the breakout buffer is independently floored at the real round-trip cost, so
     # a sub-cost breakout still cannot fire.
-    momentum_min_atr_pct: float = 0.003
+    momentum_min_atr_pct: float = 0.005
     # Breakout must clear the prior extreme by this fraction of ATR (noise filter).
     # Treated as a FLOOR: the effective buffer is max(this * ATR, round_trip_cost)
     # so a breakout can never fire inside the realistic fee+spread+slippage band.
@@ -252,6 +252,12 @@ class Settings(BaseSettings):
     # + spread 2bps + slippage 5bps ≈ 0.0022; spot base tier ~0.2% x2 + ... ≈ 0.005.
     # Default futures; override via env for spot.
     momentum_round_trip_cost_pct: float = 0.0022
+    # Cost floor for the breakout buffer (see momentum_breakout.py). When true,
+    # the breakout must clear the prior extreme by at least the round-trip cost
+    # (realistic live guard). When false, only the ATR-based noise buffer applies
+    # — useful for paper so the strategy produces more observable breakouts
+    # (paper simulates fees at fill time, so the cost floor is double-counting).
+    momentum_cost_floor_enabled: bool = True
     momentum_allow_short: bool = True
 
     # --- Financing / funding carry on held positions ---
@@ -348,7 +354,7 @@ class Settings(BaseSettings):
     # Raised 0.02 -> 0.03 -> 0.04: take more risk per trade (each fixed-fractional
     # bet now sizes to 4% loss-to-stop). The circuit breaker + drawdown de-risk
     # below remain the backstop.
-    max_risk_per_trade_pct: float = 0.04
+    max_risk_per_trade_pct: float = 0.025
     # Maximum total portfolio exposure as a fraction of equity. Prevents over-allocation
     # when max_open_positions is set too high. This is the GROSS notional cap
     # (sum of |entry_price * quantity| across open positions, longs + shorts both
@@ -356,30 +362,31 @@ class Settings(BaseSettings):
     # Raised 0.30 -> 0.45 -> 0.55: deploy more capital across the book (more
     # positions / bigger notional) while the per-trade risk cap still bounds
     # each bet.
-    max_total_exposure_pct: float = 0.55
+    max_total_exposure_pct: float = 0.35
     # Maximum NET portfolio exposure as a fraction of equity (longs minus
     # shorts, signed). A long and a short on the same asset partially offset, so
     # the gross cap can over-bind a market-neutral book while leaving a one-way
     # 30%-long book unchecked on the net side. The net cap bounds the
     # directional bias: 0.45 == up to 45% net long (or short). 0 disables
     # (legacy gross-only). Raised 0.30 -> 0.40 -> 0.45 for more directional room.
-    max_net_exposure_pct: float = 0.45
+    max_net_exposure_pct: float = 0.30
     # Beta-weighted net exposure cap: like max_net_exposure_pct but each
     # position's notional is weighted by its beta to BTC (the crypto market
     # factor). A 30%-net-long book in high-beta alts (SOL beta ~1.5) is more
     # directional than 30% in BTC — the beta-weighted cap catches that. Uses
     # the correlation engine's covariance to estimate beta. 0 disables.
-    # Raised 0.30 -> 0.40 -> 0.45 to track the looser net-exposure budget above.
-    max_beta_weighted_exposure_pct: float = 0.45
+    # Lowered 0.45 -> 0.30 to keep high-beta alts from dominating directional risk.
+    max_beta_weighted_exposure_pct: float = 0.30
     beta_benchmark_symbol: str = "BTC_USDT"
     # Fractional Kelly position sizing (opt-in). When enabled and a track record
     # exists, size is scaled by ¼-Kelly (Kelly fraction / 4) — edge-quality-aware
     # sizing that grows with a demonstrated win-rate/payoff edge and shrinks
     # under noise. ¼ (not full) Kelly cuts the variance and drawdown of full
     # Kelly at ~94% of the growth rate — the standard practical choice. Capped to
-    # [0.25, 1.0] so it never zeros out a cold-start or a thin edge. Off by
-    # default: cold-start sizing stays deterministic (pure fixed-fractional risk).
-    kelly_sizing_enabled: bool = False
+    # [0.25, 1.0] so it never zeros out a cold-start or a thin edge. Enabled for
+    # paper: cold-start positions start at 100% of fixed-fractional size, then
+    # Kelly automatically shrinks them if the track record is poor (low win rate).
+    kelly_sizing_enabled: bool = True
     kelly_fraction: float = 0.25  # 0.25 = quarter-Kelly
     # Minimum trades before Kelly is applied (need a track record to estimate edge).
     kelly_min_trades: int = 30
@@ -435,10 +442,57 @@ class Settings(BaseSettings):
     position_monitor_interval_seconds: int = 60
     # Paper order type: "market" (default) or "limit" (maker, lower fees)
     paper_order_type: str = "market"
+    # Auto-start paper trading on worker boot: when the default PaperAccount is
+    # STOPPED (its model default — so a fresh deploy sits idle), flip it to
+    # RUNNING automatically so paper begins trading without a manual dashboard
+    # click. Turn OFF if you want the dashboard Start button to be the only way
+    # to begin (e.g. you deliberately stop paper and don't want it auto-resuming
+    # on the next deploy/restart).
+    paper_autostart_on_boot: bool = True
+    # Multi-timeframe confirmation: when enabled, entries require the higher
+    # timeframe (4h) trend to align with the entry direction. This is a STRICT
+    # gate — a long while the 4h is below its EMA50 is rejected even when the
+    # lower-timeframe breakout is clean. Off by default for paper so the book
+    # actually trades; enable to mirror live's full-strictness filter.
+    paper_mtf_enabled: bool = False
     # Multi-timeframe confirmation: when enabled, entries require the higher
     # timeframe (4h) trend to align with the entry direction.
     strategy_mtf_enabled: bool = True
     strategy_mtf_interval: str = "4h"
+    # Regime filter gate for PAPER entries (mirrors live's _live_entry_gate
+    # regime check). When true, paper rejects entries the regime filter blocks
+    # (e.g. a breakout strategy in a sideways regime). The regime filter is
+    # valuable live but can leave paper idle for long stretches in ranging
+    # markets — off by default for paper so the strategy can trade its way out
+    # of a sideways regime. Enable to mirror live's regime gate exactly.
+    paper_regime_filter_enabled: bool = False
+    # Strategy-health gate for PAPER entries. When true, paper blocks entries
+    # when the strategy health state is PAUSED/DISABLED. A fresh DB has no
+    # health record so this is a no-op, but on a long-running deployment a
+    # drift-driven PAUSE can silently stop paper trading. Off by default for
+    # paper so the book keeps trading while health converges.
+    paper_health_filter_enabled: bool = False
+    # --- Paper risk-pause rules (relaxed for paper) ---
+    # Consecutive-loss circuit breaker: pause paper after this many losing trades
+    # in a row. Live uses 5; paper defaults higher (10) so a cold-start streak of
+    # losses (common when the strategy first hits a choppy regime) doesn't pause
+    # the book before it can recover. 0 disables the circuit breaker entirely.
+    paper_circuit_breaker_losses: int = 10
+    # Auto-resume cooldown (hours): after a risk pause, wait this long before
+    # auto-resuming. Live uses 4h for drawdown / 1h for daily-loss; paper uses
+    # shorter cooldowns so the simulation resumes quickly and keeps producing
+    # data. 0 resumes immediately on the next cycle (once limits are clear).
+    paper_auto_resume_drawdown_cooldown_hours: float = 1.0
+    paper_auto_resume_daily_loss_cooldown_hours: float = 0.5
+    # Per-symbol re-entry cooldown (seconds): after a position on a symbol is
+    # CLOSED, wait this long before opening a new position on the same symbol.
+    # Prevents churning — the rapid close-and-reopen cycle where a breakout
+    # fails (stop hit), the next eval cycle (30s later) sees no position and
+    # opens a new one, which also fails, repeating. 900s = 15m = 1 candle on
+    # the 15m timeframe gives the failed breakout setup time to reset. If the
+    # signal is still valid after a full candle, the re-entry is a fresh read
+    # rather than a repeated noise flicker. 0 disables the cooldown.
+    paper_reentry_cooldown_seconds: int = 900
 
     # --- Session / time-of-day filter (opt-in) ---
     # Crypto has strong intraday/weekly seasonality: liquidity thins out in
@@ -534,19 +588,25 @@ class Settings(BaseSettings):
     # 200 ≈ 8 days (hourly); 252 ≈ 1 year (daily). Higher = more stable tail estimate.
     var_lookback: int = 500
     # Breakeven stop: move stop-loss to entry price when unrealized profit
-    # reaches this fraction of the entry price (0.02 = 2% profit → BE stop).
-    breakeven_stop_trigger_pct: float = 0.02
+    # reaches this fraction of the entry price (0.01 = 1% profit → BE stop).
+    # Lowered from 2% to 1%: many ATR-based positions have a stop at ~0.6-1%,
+    # so requiring 2% to reach breakeven means most winners never lock in profits
+    # and eventually reverse to a loss. 1% gives a 1:1 to 1.7:1 breakeven ratio
+    # for typical ATR stops, capturing many more winners.
+    breakeven_stop_trigger_pct: float = 0.01
     # --- Partial profit taking (scale-out), opt-in ---
     # Once a position reaches `scale_out_r_multiple` of profit (in units of its
     # INITIAL risk R = |entry - initial_stop|), close `scale_out_fraction` of it
     # to bank profit and move the stop to breakeven, then ride the remainder
     # risk-free via trailing. This raises realised expectancy and survivability
     # (you take money off the table) without capping the runner. Fires at most
-    # once per position. Off by default. Especially valuable for the trend
-    # strategy, which has no fixed take-profit.
-    scale_out_enabled: bool = False
+    # once per position. On by default for paper: locking in some profit at +1R
+    # is critical for a breakout strategy where most winners fade before the
+    # trailing stop catches up. Take 33% off at +1R (conservative partial) so
+    # the runner still has meaningful size.
+    scale_out_enabled: bool = True
     scale_out_r_multiple: float = 1.0   # take the partial at +1R
-    scale_out_fraction: float = 0.5     # close 50% of the position at that level
+    scale_out_fraction: float = 0.33    # close 33% of the position at +1R
     move_to_breakeven_on_scale_out: bool = True
     # Estimated round-trip trading cost (taker fees + spread + slippage)
     # used when evaluating whether a rebalance is worth executing.

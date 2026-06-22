@@ -30,8 +30,12 @@ class PaperRiskSimulator:
 
         # Circuit breaker: mirror the live engine's consecutive-loss circuit
         # breaker so paper pauses when its own track record shows a losing
-        # streak (same logic as TradingEngine._check_circuit_breaker).
-        if self._consecutive_losses() >= 5:
+        # streak. Paper uses a higher threshold (paper_circuit_breaker_losses,
+        # default 10) so a cold-start loss streak doesn't pause the book before
+        # it can recover. 0 disables the circuit breaker entirely.
+        settings = get_settings()
+        cb_threshold = int(getattr(settings, "paper_circuit_breaker_losses", 10))
+        if cb_threshold > 0 and self._consecutive_losses() >= cb_threshold:
             self.pause("circuit_breaker_consecutive_losses")
             return False, "circuit_breaker"
 
@@ -87,7 +91,15 @@ class PaperRiskSimulator:
             return False
         paused_at = last_pause.created_at
         pause_reason = last_pause.message
-        cooldown_hours = 4 if "max_drawdown" in (pause_reason or "") else 1
+        # Configurable cooldowns: paper uses shorter cooldowns than live so the
+        # simulation resumes quickly and keeps producing data.
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        if "max_drawdown" in (pause_reason or ""):
+            cooldown_hours = float(getattr(settings, "paper_auto_resume_drawdown_cooldown_hours", 1.0))
+        else:
+            cooldown_hours = float(getattr(settings, "paper_auto_resume_daily_loss_cooldown_hours", 0.5))
         if datetime.now(UTC) - paused_at < timedelta(hours=cooldown_hours):
             return False
         equity = self.portfolio.equity()
@@ -147,12 +159,18 @@ class PaperRiskSimulator:
     def _consecutive_losses(self) -> int:
         """Count consecutive losing trades from the most recent closed positions.
 
-        Mirrors the live engine's circuit-breaker logic: if the last N closed
-        positions are all losses, the paper engine pauses (same threshold as
-        live — 5 consecutive losses trips the breaker).
+        Returns up to ``paper_circuit_breaker_losses`` recent closed positions so
+        the count is accurate for the configured threshold (was hardcoded to 5,
+        which capped the count at 5 even when the threshold was raised to 10).
         """
         from app.models.entities import PaperPosition
 
+        from app.core.config import get_settings
+
+        limit = int(getattr(get_settings(), "paper_circuit_breaker_losses", 10))
+        # Floor at 5 so a disabled breaker (0) still returns a meaningful count
+        # for diagnostics (the caller checks >0 before using it).
+        limit = max(limit, 5)
         recent = (
             self.db.query(PaperPosition)
             .filter(
@@ -161,7 +179,7 @@ class PaperRiskSimulator:
                 PaperPosition.realized_pnl.isnot(None),
             )
             .order_by(PaperPosition.closed_at.desc())
-            .limit(5)
+            .limit(limit)
             .all()
         )
         count = 0

@@ -68,6 +68,8 @@ def test_postgres_serializes_with_advisory_lock():
     fake_engine = MagicMock()
     fake_engine.dialect.name = "postgresql"
     conn = MagicMock()
+    # pg_try_advisory_lock returns a row whose first column is True (lock acquired)
+    conn.exec_driver_sql.return_value.fetchone.return_value = (True,)
     fake_engine.connect.return_value.__enter__.return_value = conn
 
     with patch("sqlalchemy.inspect", return_value=_FakeInspector({"alembic_version"})), \
@@ -82,5 +84,5 @@ def test_postgres_serializes_with_advisory_lock():
         init_db()
 
     calls = [str(c.args[0]) for c in conn.exec_driver_sql.call_args_list]
-    assert any("pg_advisory_lock" in c for c in calls)
+    assert any("pg_try_advisory_lock" in c for c in calls)
     assert any("pg_advisory_unlock" in c for c in calls)

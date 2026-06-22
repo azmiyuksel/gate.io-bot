@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy.exc import OperationalError
 
@@ -28,18 +29,15 @@ DIAG_EVENTS = ("entry_skipped", "risk_check")
 async def main() -> None:
     configure_logging()
     settings = get_settings()
-    # Ensure the schema exists before the work loop queries it. On Railway each
-    # service starts independently, so the worker can boot BEFORE the API has run
-    # migrations on a fresh DB — without this, every query below fails until the
-    # API happens to migrate. init_db is idempotent (alembic upgrade head), so it
-    # is safe to run from the worker too; a transient failure (e.g. the API
-    # migrating concurrently) just falls through to the existing retry loop.
-    try:
-        from app.db.init_db import init_db
-
-        init_db()
-    except Exception as exc:
-        logger.warning("Paper worker: init_db failed at startup (will retry via loop): %s", exc)
+    # NOTE: the worker does NOT call init_db() at boot. On Railway the API service
+    # is the authoritative migrator (it has a healthcheck and boots reliably), and
+    # the worker's own init_db() was hanging the worker indefinitely — alembic
+    # opens its OWN database connection (outside the SQLAlchemy pool, so
+    # pool_timeout doesn't apply) and blocks forever when the Postgres connection
+    # limit is saturated by the API's pool. The worker's existing retry loop
+    # (OperationalError below) handles a not-yet-migrated DB: it retries until the
+    # API finishes migrating, then proceeds. A best-effort init_db added latency
+    # and a deadlock risk with no upside once the API is the sole migrator.
     retry_delay = 1
     while True:
         db = SessionLocal()
@@ -50,6 +48,51 @@ async def main() -> None:
                 db.add(account)
                 db.commit()
                 db.refresh(account)
+
+            # Autostart: a fresh PaperAccount defaults to STOPPED, so a Railway
+            # deploy sits idle until someone clicks Start in the dashboard. When
+            # paper_autostart_on_boot is true, flip STOPPED -> RUNNING on boot so
+            # paper begins trading immediately. A PAUSED account (auto-paused by a
+            # risk limit) is also resumed IF the risk limits are now clear — a
+            # redeploy with relaxed thresholds should not leave the book stuck
+            # PAUSED under the old, tighter limits. The limits are checked via the
+            # risk simulator so the resume is safe (never overrides an active breach).
+            if getattr(settings, "paper_autostart_on_boot", True):
+                if account.status == PaperBotStatus.stopped:
+                    account.status = PaperBotStatus.running
+                    db.commit()
+                    logger.info(
+                        "Paper worker: autostart_on_boot — account flipped STOPPED -> RUNNING"
+                    )
+                elif account.status == PaperBotStatus.paused:
+                    try:
+                        from app.paper_trading.risk_simulator import PaperRiskSimulator
+
+                        risk = PaperRiskSimulator(db, account)
+                        dd = risk._check_drawdown()
+                        daily_loss = risk._daily_loss_pct()
+                        # Use the effective (mirrored/env) limits, not the stale DB column.
+                        from app.paper_trading.mirror import resolve_paper_exec
+
+                        exec_ = resolve_paper_exec(db, settings)
+                        max_dd = exec_.max_drawdown_pct
+                        max_dl = exec_.daily_max_loss_pct
+                        if abs(dd) < max_dd and daily_loss < max_dl:
+                            account.status = PaperBotStatus.running
+                            db.commit()
+                            logger.info(
+                                "Paper worker: autostart_on_boot — account resumed PAUSED -> RUNNING "
+                                "(dd=%.4f < %.4f, daily_loss=%.4f < %.4f)",
+                                float(dd), float(max_dd), float(daily_loss), float(max_dl),
+                            )
+                        else:
+                            logger.info(
+                                "Paper worker: account PAUSED, limits still breached "
+                                "(dd=%.4f vs %.4f, daily_loss=%.4f vs %.4f) — waiting for auto-resume",
+                                float(dd), float(max_dd), float(daily_loss), float(max_dl),
+                            )
+                    except Exception:
+                        logger.warning("Paper worker: autostart resume-from-pause check failed", exc_info=True)
             try:
                 if account.cash_balance <= 0:
                     logger.warning("Paper account cash_balance was %s, resetting to initial_balance", account.cash_balance)
@@ -131,6 +174,25 @@ async def main() -> None:
             except Exception:
                 db.rollback()
                 logger.warning("Paper worker: log cleanup failed", exc_info=True)
+
+            # Tighter StrategySettings defaults for profitability: fewer open
+            # positions and a lower per-trade capital cap reduce exposure and
+            # prevent over-concentration in correlated breakouts.
+            try:
+                from app.repositories.trading import StrategySettingsRepository
+
+                ss = StrategySettingsRepository(db).current()
+                if ss.max_open_positions > 6:
+                    ss.max_open_positions = 6
+                if ss.max_capital_per_trade_pct > Decimal("0.06"):
+                    ss.max_capital_per_trade_pct = Decimal("0.06")
+                if ss.atr_multiplier > Decimal("2.0"):
+                    ss.atr_multiplier = Decimal("2.0")
+                if ss.min_reward_risk < Decimal("1.0"):
+                    ss.min_reward_risk = Decimal("1.0")
+                db.commit()
+            except Exception:
+                logger.warning("Paper worker: StrategySettings update failed", exc_info=True)
 
             logger.info("Paper worker starting: account=%s cash=%s status=%s", account.id, account.cash_balance, account.status)
             strategy = CapitalPreservationAdapter()
