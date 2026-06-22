@@ -241,7 +241,7 @@ class Settings(BaseSettings):
     # ~12% of rejections). Still above the futures round-trip cost (~0.0022), and
     # the breakout buffer is independently floored at the real round-trip cost, so
     # a sub-cost breakout still cannot fire.
-    momentum_min_atr_pct: float = 0.005
+    momentum_min_atr_pct: float = 0.004
     # Breakout must clear the prior extreme by this fraction of ATR (noise filter).
     # Treated as a FLOOR: the effective buffer is max(this * ATR, round_trip_cost)
     # so a breakout can never fire inside the realistic fee+spread+slippage band.
