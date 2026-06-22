@@ -2,6 +2,7 @@
 
 import {
   Activity,
+  BarChart3,
   PieChart,
   ShieldAlert,
   TrendingDown,
@@ -68,6 +69,7 @@ const EXIT_COLORS: Record<string, string> = {
   stop_loss: "#b42318",
   trailing_stop: "#d97706",
   take_profit: "#146c5d",
+  scale_out: "#0d9488",
   manual_close: "#6366f1",
   signal_sell: "#0ea5e9",
   signal_cover: "#8b5cf6",
@@ -218,6 +220,7 @@ export default function PaperTradingPage() {
   const equityChartData = equity.map((p) => ({
     time: fmtUTCShort(p.timestamp),
     equity: p.equity,
+    drawdown: p.drawdown,
   }));
 
   const dailyMap = trades.reduce((acc, t) => {
@@ -301,7 +304,7 @@ export default function PaperTradingPage() {
         </div>
       )}
 
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-5">
+      <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         <Metric label="Equity" value={`$${money(status?.equity ?? 0)}`} icon={<Activity size={18} />} />
         <Metric
           label="Toplam Getiri"
@@ -314,9 +317,19 @@ export default function PaperTradingPage() {
           icon={Number(status?.realized_pnl ?? 0) >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
         />
         <Metric
+          label="Unrealized PnL"
+          value={`$${money(status?.unrealized_pnl ?? 0)}`}
+          icon={Number(status?.unrealized_pnl ?? 0) >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+        />
+        <Metric
           label="Win Rate (son 100)"
           value={`${((status?.metrics?.win_rate_rolling_100 ?? 0) * 100).toFixed(1)}%`}
           icon={<Trophy size={18} />}
+        />
+        <Metric
+          label="Rolling Sharpe"
+          value={`${(status?.metrics?.rolling_sharpe ?? 0).toFixed(2)}`}
+          icon={<BarChart3 size={18} />}
         />
         <Metric
           label="Max Drawdown"

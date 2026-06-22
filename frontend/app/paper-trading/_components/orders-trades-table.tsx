@@ -134,9 +134,13 @@ export default function OrdersTradesTable({ trades }: Props) {
                   <td className={pnl >= 0 ? "font-medium text-primary" : "font-medium text-danger"}>
                     ${money(trade.realized_pnl)}
                   </td>
-                  <td className="text-xs text-muted">
-                    {trade.exit_reason ? trade.exit_reason.replace(/_/g, " ") : (
-                      <span className="rounded bg-blue-100 px-1.5 py-0.5 text-blue-700">AÇILIŞ</span>
+                  <td>
+                    {trade.exit_reason === "scale_out" ? (
+                      <span className="rounded bg-teal-100 px-1.5 py-0.5 text-[11px] font-medium text-teal-700">KÂR AL</span>
+                    ) : trade.exit_reason ? (
+                      <span className="text-xs text-muted">{trade.exit_reason.replace(/_/g, " ")}</span>
+                    ) : (
+                      <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[11px] font-medium text-blue-700">AÇILIŞ</span>
                     )}
                   </td>
                 </tr>

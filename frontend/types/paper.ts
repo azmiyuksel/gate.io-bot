@@ -22,7 +22,12 @@ export type PaperPosition = {
   realized_pnl: string;
   stop_loss: string | null;
   take_profit: string | null;
+  initial_stop_loss: string | null;
+  trailing_stop: string | null;
+  breakeven_triggered: boolean;
+  scaled_out: boolean;
   is_open: boolean;
+  opened_at: string | null;
 };
 
 export type PaperTrade = {

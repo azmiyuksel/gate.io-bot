@@ -8,6 +8,8 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Line,
+  ComposedChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -18,7 +20,7 @@ import { Card } from "@/components/ui/card";
 import { money } from "@/lib/utils";
 
 interface Props {
-  equityChartData: { time: string; equity: number }[];
+  equityChartData: { time: string; equity: number; drawdown: number }[];
   dailyPnlData: { date: string; pnl: number }[];
   rollingSharpe: number;
 }
@@ -36,13 +38,20 @@ export default function EquityChart({ equityChartData, dailyPnlData, rollingShar
         <div className="h-72">
           {equityChartData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={equityChartData}>
+              <ComposedChart data={equityChartData}>
                 <CartesianGrid stroke="#ecece7" />
                 <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} domain={["auto", "auto"]} />
-                <Tooltip formatter={(v: number) => `$${money(v)}`} />
-                <Area type="monotone" dataKey="equity" stroke="#146c5d" fill="#146c5d33" strokeWidth={2} />
-              </AreaChart>
+                <YAxis yAxisId="eq" tick={{ fontSize: 11 }} domain={["auto", "auto"]} orientation="left" />
+                <YAxis yAxisId="dd" tick={{ fontSize: 10 }} domain={[0, "auto"]} orientation="right" tickFormatter={(v: number) => `${(v * 100).toFixed(1)}%`} />
+                <Tooltip
+                  formatter={(v: number, name: string) => {
+                    if (name === "drawdown") return [`${(v * 100).toFixed(2)}%`, "Drawdown"];
+                    return [`$${money(v)}`, name === "equity" ? "Equity" : name];
+                  }}
+                />
+                <Area yAxisId="eq" type="monotone" dataKey="equity" stroke="#146c5d" fill="#146c5d33" strokeWidth={2} />
+                <Line yAxisId="dd" type="monotone" dataKey="drawdown" stroke="#b42318" strokeWidth={1.5} dot={false} strokeDasharray="3 3" />
+              </ComposedChart>
             </ResponsiveContainer>
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-muted">Equity verisi yok.</div>

@@ -34,7 +34,12 @@ class PaperPositionOut(BaseModel):
     realized_pnl: Decimal
     stop_loss: Decimal | None = None
     take_profit: Decimal | None = None
+    initial_stop_loss: Decimal | None = None
+    trailing_stop: Decimal | None = None
+    breakeven_triggered: bool = False
+    scaled_out: bool = False
     is_open: bool
+    opened_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
