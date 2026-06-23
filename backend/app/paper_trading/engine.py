@@ -51,7 +51,10 @@ class PaperTradingEngine:
         self.db.commit()
         logger.info("Paper trading engine starting for symbols: %s", symbols)
         self._running = True
-        self.stream = GateIOMarketDataStream(symbols)
+        # Subscribe to the channel that matches the simulated market so a futures
+        # paper account streams futures prices (with their basis/premium) instead
+        # of diverging spot prices.
+        self.stream = GateIOMarketDataStream(symbols, market=self.broker.exec.market)
         self._client = GateIOClient()
         try:
             # Two concurrent loops: ticks drive mark-to-market and stop/TP exits,
@@ -81,30 +84,38 @@ class PaperTradingEngine:
                 try:
                     self.db.refresh(self.account)
                 except Exception:
-                    pass
+                    # A silent pass here is dangerous: a failed refresh leaves the
+                    # account status STALE, so a stopped account keeps trading.
+                    logger.warning("paper tick loop: account status refresh failed", exc_info=True)
                 last_db_check = time()
                 if self.account.status != PaperBotStatus.running:
                     logger.info("Tick loop stopping: account status is %s", self.account.status)
                     self.stream.stop()
                     return
-            await self.on_tick(data)
+            # Serialize all DB access between the tick loop and the entry loop to
+            # prevent concurrent Session mutations (SQLAlchemy Session is not
+            # coroutine-safe). The lock only blocks when the two loops overlap;
+            # ticks arrive fast, but the entry loop sleeps ~15s between cycles.
+            async with self._lock:
+                await self.on_tick(data)
 
     async def _run_entry_loop(self, symbols: list[str]) -> None:
         """Evaluate entries periodically on real candles (independent of ticks)."""
         while self._running:
             settings = get_settings()
-            try:
-                self.db.refresh(self.account)
-            except Exception:
-                pass
-            # Stop signal from API — exit the loop
-            if self.account.status == PaperBotStatus.stopped:
-                logger.info("Entry loop stopping: account status is STOPPED")
-                return
-            if self.account.status == PaperBotStatus.paused:
-                self.risk.maybe_auto_resume()
-            if self.account.status == PaperBotStatus.running:
-                await self._evaluate_entries(symbols, settings)
+            async with self._lock:
+                try:
+                    self.db.refresh(self.account)
+                except Exception:
+                    logger.warning("paper entry loop: account status refresh failed", exc_info=True)
+                # Stop signal from API — exit the loop
+                if self.account.status == PaperBotStatus.stopped:
+                    logger.info("Entry loop stopping: account status is STOPPED")
+                    return
+                if self.account.status == PaperBotStatus.paused:
+                    self.risk.maybe_auto_resume()
+                if self.account.status == PaperBotStatus.running:
+                    await self._evaluate_entries(symbols, settings)
             await asyncio.sleep(max(int(settings.paper_eval_interval_seconds), 1))
 
     async def _evaluate_entries(self, symbols: list[str], settings) -> None:
@@ -223,7 +234,7 @@ class PaperTradingEngine:
                 self._log("regime_routing", f"{symbol}: regime {rec.regime_type.value} -> {routed}",
                           {"symbol": symbol, "reason": "regime_routing"})
             except Exception:
-                pass
+                logger.warning("paper entry: regime routing failed for %s", symbol, exc_info=True)
 
         signal = self.strategy.evaluate_real_candles(symbol, candles)
         if signal is None:
@@ -269,7 +280,9 @@ class PaperTradingEngine:
                                   {"symbol": symbol, "reason": "htf_trend_mismatch"})
                         return
             except Exception:
-                pass  # MTF check is advisory; proceed if it fails
+                # MTF check is advisory; proceed if it fails — but log so a
+                # persistent misconfiguration does not silently go unfiltered.
+                logger.warning("paper entry: MTF check failed for %s", symbol, exc_info=True)
 
         # Mirror live: apply the same entry gates the live engine runs in
         # scan_symbol (data-quality, regime, health, correlation) and carry the
@@ -304,7 +317,7 @@ class PaperTradingEngine:
                                   {"symbol": symbol, "reason": "slippage_guard"})
                         return
         except Exception:
-            pass
+            logger.warning("paper entry: slippage guard failed for %s", symbol, exc_info=True)
 
         # Build a MarketData snapshot from the latest REAL candle (proper OHLC),
         # so execution simulation and risk checks see correct bar values.
@@ -342,7 +355,7 @@ class PaperTradingEngine:
             if mdq.trade_status == DataTradeStatus.degraded:
                 risk_mult *= Decimal(str(settings.mdq_degraded_risk_multiplier))
         except Exception:
-            pass
+            logger.warning("paper entry: data-quality gate failed for %s", symbol, exc_info=True)
 
         # 2. Market-regime filter (block / de-risk by regime). Paper uses
         # paper_regime_filter_enabled (off by default) so the momentum/breakout
@@ -373,7 +386,7 @@ class PaperTradingEngine:
                     return False, risk_mult
                 risk_mult *= Decimal(str(rmult))
             except Exception:
-                pass
+                logger.warning("paper entry: regime filter failed for %s", symbol, exc_info=True)
 
         # 3. Strategy-health filter (block when PAUSED/DISABLED, else de-risk).
         # Paper uses paper_health_filter_enabled (off by default) so a drift-driven
@@ -389,7 +402,7 @@ class PaperTradingEngine:
                     return False, risk_mult
                 risk_mult *= Decimal(str(health.get("risk_multiplier", 1)))
             except Exception:
-                pass
+                logger.warning("paper entry: health filter failed for %s", symbol, exc_info=True)
 
         # 4. Funding-rate signal (futures only, de-risk on adverse funding).
         try:
@@ -407,7 +420,7 @@ class PaperTradingEngine:
                             if 0 < mult <= 1:
                                 risk_mult *= mult
         except Exception:
-            pass
+            logger.warning("paper entry: funding signal failed for %s", symbol, exc_info=True)
 
         # 5. Order-book imbalance (de-risk when adverse depth wall).
         try:
@@ -430,7 +443,7 @@ class PaperTradingEngine:
                                 if 0 < mult <= 1:
                                     risk_mult *= mult
         except Exception:
-            pass
+            logger.warning("paper entry: orderbook imbalance check failed for %s", symbol, exc_info=True)
 
         # 6. Correlation filter (pairwise + aggregate).
         if settings.correlation_filter_enabled:
@@ -463,7 +476,7 @@ class PaperTradingEngine:
                                       {"symbol": symbol, "reason": "portfolio_correlation_blocked"})
                             return False, risk_mult
             except Exception:
-                pass
+                logger.warning("paper entry: correlation filter failed for %s", symbol, exc_info=True)
 
         return True, risk_mult
 
@@ -530,6 +543,7 @@ class PaperTradingEngine:
                 else:
                     quantity = fallback_qty
             except Exception:
+                logger.warning("paper entry: risk-based sizing failed for %s, using fallback qty", signal.symbol, exc_info=True)
                 quantity = fallback_qty
         else:
             quantity = fallback_qty
@@ -552,7 +566,7 @@ class PaperTradingEngine:
                 )
                 quantity = quantity * Decimal(str(dd_mult))
             except Exception:
-                pass
+                logger.warning("paper entry: drawdown derisk failed for %s", signal.symbol, exc_info=True)
 
         if quantity <= 0:
             self._log("entry_skipped", f"{signal.symbol}: zero_quantity_after_sizing",
@@ -571,7 +585,7 @@ class PaperTradingEngine:
                     scale = max(Decimal("0.25"), min(Decimal("1.0"), Decimal(str(max(kelly_f, 0.10)))))
                     quantity = quantity * scale
             except Exception:
-                pass
+                logger.warning("paper entry: Kelly scaling failed for %s", signal.symbol, exc_info=True)
 
         order = self.order_manager.execute_signal(signal, quantity, data)
         if order:
@@ -704,7 +718,8 @@ class PaperTradingEngine:
                         if new_stop > position.stop_loss:
                             position.stop_loss = new_stop
                 except Exception:
-                    pass
+                    logger.warning("paper exit: trailing stop update failed for %s %s",
+                                   position.symbol, position.side, exc_info=True)
 
             # Check exits: stop-loss checked before take-profit (capital protection first)
             # A take_profit of 0/None means the TP is disabled (trend-following

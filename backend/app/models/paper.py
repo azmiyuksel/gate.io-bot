@@ -25,7 +25,7 @@ class PaperAccount(Base):
     __tablename__ = "paper_accounts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(128), default="default")
+    name: Mapped[str] = mapped_column(String(128), default="default", unique=True)
     status: Mapped[PaperBotStatus] = mapped_column(String(32), default=PaperBotStatus.stopped)
     cash_balance: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("10000"))
     initial_balance: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("10000"))

@@ -6,6 +6,7 @@ import json
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession, current_user_role, require_admin
 from app.models.entities import PaperAccount, PaperEquityCurve, PaperLog, PaperOrder, PaperPosition, PaperTrade
@@ -270,7 +271,7 @@ async def _fetch_current_price(symbol: str) -> float:
     return 0.0
 
 
-@router.post("/manual-order")
+@router.post("/manual-order", dependencies=[Depends(require_admin)])
 async def manual_order(payload: ManualOrderRequest, db: DbSession) -> dict:
     account = _get_or_create_account(db)
     broker = PaperBroker(db, account)
@@ -296,7 +297,7 @@ async def manual_order(payload: ManualOrderRequest, db: DbSession) -> dict:
     return {"order_id": order.id, "status": order.status, "side": payload.side, "symbol": payload.symbol}
 
 
-@router.post("/close-position/{position_id}")
+@router.post("/close-position/{position_id}", dependencies=[Depends(require_admin)])
 async def close_position(position_id: int, db: DbSession) -> dict:
     account = _get_or_create_account(db)
     position = (
@@ -436,10 +437,25 @@ async def stream_paper(request: Request, db: DbSession) -> StreamingResponse:
 
 
 def _get_or_create_account(db: DbSession, name: str = "default", initial_balance: Decimal = Decimal("10000")) -> PaperAccount:
+    """Get the account by name, creating it on first use.
+
+    The SELECT-then-INSERT pattern can race under concurrent first-requests:
+    two callers both see `None`, both INSERT, and the second now violates the
+    UNIQUE constraint on `name`. We catch that IntegrityError, roll back, and
+    re-read — the winner's row is now visible. This makes creation idempotent
+    without a heavier upsert.
+    """
     account = db.query(PaperAccount).filter(PaperAccount.name == name).first()
     if account is None:
         account = PaperAccount(name=name, cash_balance=initial_balance, initial_balance=initial_balance)
         db.add(account)
-        db.commit()
-        db.refresh(account)
+        try:
+            db.commit()
+            db.refresh(account)
+        except IntegrityError:
+            # Lost the create race: the winner already inserted this name.
+            db.rollback()
+            account = db.query(PaperAccount).filter(PaperAccount.name == name).first()
+            if account is None:  # pragma: no cover - defensive
+                raise
     return account

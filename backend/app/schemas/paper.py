@@ -1,12 +1,13 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PaperStartRequest(BaseModel):
     account_name: str = "default"
-    initial_balance: Decimal = Decimal("10000")
+    initial_balance: Decimal = Field(default=Decimal("10000"), gt=0)
     symbols: list[str] = ["BTC_USDT", "ETH_USDT", "XRP_USDT", "DOGE_USDT", "SOL_USDT", "ADA_USDT", "LINK_USDT", "AVAX_USDT"]
 
 
@@ -60,13 +61,15 @@ class PaperTradeOut(BaseModel):
 
 class ManualOrderRequest(BaseModel):
     symbol: str
-    side: str  # "buy" or "sell"
-    quantity: Decimal
-    order_type: str = "market"
+    # Literal (not free-form str) so a typo like "Buy" no longer silently
+    # becomes a sell — pydantic rejects it with a 422 instead.
+    side: Literal["buy", "sell"]
+    quantity: Decimal = Field(gt=0)
+    order_type: Literal["market", "limit"] = "market"
 
 
 class ClosePositionRequest(BaseModel):
-    quantity: Decimal | None = None  # None = full close
+    quantity: Decimal | None = Field(default=None, gt=0)  # None = full close
 
 
 class PaperOrderOut(BaseModel):

@@ -13,29 +13,34 @@ logger = logging.getLogger(__name__)
 
 
 class GateIOMarketDataStream:
-    def __init__(self, symbols: list[str], buffer_size: int = 1000) -> None:
+    def __init__(self, symbols: list[str], buffer_size: int = 1000, market: str = "spot") -> None:
         self.symbols = symbols
         self.buffer: deque[MarketData] = deque(maxlen=buffer_size)
         self.url = "wss://api.gateio.ws/ws/v4/"
         self.running = False
+        # Gate.io channels are namespaced by market: `spot.tickers` for spot and
+        # `futures.tickers` for USDT-margined perpetuals. Subscribing to spot in a
+        # futures simulation makes paper prices diverge from live (basis, funding,
+        # perp premium), so the channel must match the simulated market.
+        self.channel = "futures.tickers" if market.lower() == "futures" else "spot.tickers"
 
     async def stream(self) -> AsyncIterator[MarketData]:
         self.running = True
         while self.running:
             try:
-                logger.info("Connecting to Gate.io WebSocket: %s", self.url)
+                logger.info("Connecting to Gate.io WebSocket: %s (channel=%s)", self.url, self.channel)
                 async with websockets.connect(self.url, ping_interval=20) as websocket:
                     await websocket.send(
                         json.dumps(
                             {
                                 "time": int(datetime.now(UTC).timestamp()),
-                                "channel": "spot.tickers",
+                                "channel": self.channel,
                                 "event": "subscribe",
                                 "payload": self.symbols,
                             }
                         )
                     )
-                    logger.info("Subscribed to spot.tickers for %d symbols", len(self.symbols))
+                    logger.info("Subscribed to %s for %d symbols", self.channel, len(self.symbols))
                     async for message in websocket:
                         data = self._parse(message)
                         if data:

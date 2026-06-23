@@ -276,7 +276,17 @@ class PaperBroker:
                 "signal_cover",
                 quantity=cover_qty,
             )
-            return
+            # If the buy exceeded the short size, the excess opens a LONG instead
+            # of being silently dropped. Close only covered the short portion;
+            # the remainder must be treated as a fresh long entry (same sizing,
+            # stop/TP, and margin guard as a normal buy below).
+            if cover_qty < quantity:
+                quantity -= cover_qty
+                total_cost = quantity * price + Decimal(str(execution.fee)) * (
+                    quantity / (cover_qty + quantity)
+                )
+            else:
+                return
 
         # Open or add to a LONG position. Futures margin: a long may use leverage,
         # so cash is allowed to go negative (borrowed funds) as long as the trade
@@ -356,12 +366,20 @@ class PaperBroker:
             .first()
         )
         if existing_long:
+            close_qty = min(quantity, existing_long.quantity)
             self.close_position(
                 existing_long,
                 MarketData(order.symbol, datetime.now(UTC), float(price)),
                 "signal_sell",
+                quantity=close_qty,
             )
-            return
+            # If the sell exceeded the long size, the excess opens a SHORT instead
+            # of being silently dropped — mirrors the buy-cover logic above.
+            if close_qty < quantity:
+                quantity -= close_qty
+                fee = Decimal(str(execution.fee)) * (quantity / (close_qty + quantity))
+            else:
+                return
 
         # Open a SHORT position (sell to open). Margin guard mirrors the long side:
         # the short's notional must fit within free margin (equity * leverage).
