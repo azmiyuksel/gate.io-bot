@@ -81,7 +81,19 @@ export default function LivePrices({ symbols = DEFAULT_TICKER_SYMBOLS, title = "
           const changePct = Number(r.change_percentage ?? 0);
           setTicks((prev) => {
             const old = prev[r.currency_pair];
-            if (old) flashRef.current[r.currency_pair] = last >= old.last ? "up" : "down";
+            if (old) {
+              const sym = r.currency_pair;
+              flashRef.current[sym] = last >= old.last ? "up" : "down";
+              // Clear the flash after 500ms so the cell doesn't stay permanently
+              // coloured — the original code never reset, so every symbol was
+              // stuck on its first-direction colour forever.
+              setTimeout(() => {
+                if (flashRef.current[sym] !== undefined) {
+                  delete flashRef.current[sym];
+                  setTicks((t) => ({ ...t })); // force re-render to clear CSS class
+                }
+              }, 500);
+            }
             return { ...prev, [r.currency_pair]: { last, changePct } };
           });
         } catch {

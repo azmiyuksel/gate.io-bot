@@ -21,7 +21,8 @@ interface Props {
   toast: ToastFn;
 }
 
-const SYMBOLS = ["BTC_USDT", "ETH_USDT", "SOL_USDT", "XRP_USDT", "DOGE_USDT", "ADA_USDT", "LINK_USDT", "AVAX_USDT", "BNB_USDT", "DOT_USDT"];
+// Shared with LivePrices (DEFAULT_TICKER_SYMBOLS) — keep in sync.
+const SYMBOLS = ["BTC_USDT", "ETH_USDT", "BNB_USDT", "SOL_USDT", "XRP_USDT", "DOGE_USDT", "ADA_USDT", "AVAX_USDT", "LINK_USDT", "DOT_USDT"];
 
 export default function QuickTrade({
   symbol,

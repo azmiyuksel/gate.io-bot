@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import asyncio
 import json
+import logging
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -27,6 +28,8 @@ from app.schemas.paper import (
     PaperTradeOut,
 )
 from app.services.analytics.economics import trade_economics
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/paper", tags=["paper"], dependencies=[Depends(current_user_role)])
 
@@ -265,7 +268,7 @@ async def _fetch_current_price(symbol: str) -> float:
         if ticker and float(ticker.get("last", 0)) > 0:
             return float(ticker["last"])
     except Exception:
-        pass
+        logger.warning("paper manual-order: failed to fetch price for %s", symbol, exc_info=True)
     finally:
         await client.close()
     return 0.0
@@ -404,6 +407,7 @@ def signal_diagnostics(db: DbSession, hours: int = 24) -> dict:
 async def stream_paper(request: Request, db: DbSession) -> StreamingResponse:
     async def event_stream():
         from app.db.session import SessionLocal
+        db_error_streak = 0
         while True:
             if await request.is_disconnected():
                 break
@@ -424,9 +428,19 @@ async def stream_paper(request: Request, db: DbSession) -> StreamingResponse:
                     "exposure": float(portfolio.exposure_pct()),
                     "metrics": metrics,
                 }
+                db_error_streak = 0
                 yield f"data: {json.dumps(payload)}\n\n"
-            except Exception:
+            except Exception as exc:
+                db_error_streak += 1
+                logger.warning("paper stream: DB error (streak=%d): %s", db_error_streak, exc)
                 yield f"data: {json.dumps({'status': 'error'})}\n\n"
+                # After 10 consecutive DB failures the database is likely down
+                # for an extended period. Stop the loop so the client's SSE
+                # connection closes and reconnects (which will retry from the
+                # outside) instead of spamming error events indefinitely.
+                if db_error_streak >= 10:
+                    logger.error("paper stream: too many consecutive DB errors, giving up")
+                    break
             finally:
                 local_db.close()
             # 5s cadence: the eval loop runs every 30s and equity is sampled every

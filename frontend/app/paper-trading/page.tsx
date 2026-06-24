@@ -16,7 +16,7 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from "recharts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import LivePrices from "@/components/live-prices";
 import { Card } from "@/components/ui/card";
@@ -96,6 +96,8 @@ export default function PaperTradingPage() {
   const [quickSymbol, setQuickSymbol] = useState("BTC_USDT");
   const [quickSide, setQuickSide] = useState<"buy" | "sell">("buy");
   const [quickQty, setQuickQty] = useState("0.01");
+  const [connectionError, setConnectionError] = useState(false);
+  const [streamConnected, setStreamConnected] = useState(false);
 
   const sseRef = useRef<PaperStream | null>(null);
   const botStatusRef = useRef("STOPPED");
@@ -113,6 +115,7 @@ export default function PaperTradingPage() {
   const fetchFast = useCallback(async () => {
     if (!token) return;
     setLoading(true);
+    setConnectionError(false);
     try {
       const [p, t, r] = await Promise.all([
         getPaperPositions().catch(() => []),
@@ -123,6 +126,8 @@ export default function PaperTradingPage() {
       setTrades(t);
       if (r) setRisk(r);
       setLastUpdated(new Date());
+    } catch {
+      setConnectionError(true);
     } finally {
       setLoading(false);
     }
@@ -158,18 +163,49 @@ export default function PaperTradingPage() {
     });
     fetchFast();
     fetchSlow();
-    sseRef.current = createPaperStream((data) => {
-      if (data) {
-        setStatus(data);
-        setLastUpdated(new Date());
+    sseRef.current = createPaperStream(
+      (data) => {
+        if (data) {
+          setStreamConnected(true);
+          setStatus(data);
+          setLastUpdated(new Date());
+        }
+      },
+      () => {
+        // SSE connection was closed (reconnect failed or server dropped).
+        setStreamConnected(false);
+        setConnectionError(true);
+      },
+    );
+
+    // Mutable refs for interval IDs so the visibility handler can clear
+    // and re-create them without needing to re-run the entire effect.
+    const intervals = {
+      fast: setInterval(fetchFast, 5000) as unknown as number,
+      slow: setInterval(fetchSlow, 30000) as unknown as number,
+    };
+
+    // Pause polling when the tab is hidden to save battery and backend load.
+    // Resume + refresh on visibility restore so data is current when the
+    // user returns. SSE is left alone — it will reconnect on its own.
+    const onVisibility = () => {
+      if (document.hidden) {
+        clearInterval(intervals.fast);
+        clearInterval(intervals.slow);
+      } else {
+        intervals.fast = setInterval(fetchFast, 5000) as unknown as number;
+        intervals.slow = setInterval(fetchSlow, 30000) as unknown as number;
+        fetchFast();
+        fetchSlow();
       }
-    });
-    const fast = setInterval(fetchFast, 5000);
-    const slow = setInterval(fetchSlow, 30000);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
       if (sseRef.current) sseRef.current.close();
-      clearInterval(fast);
-      clearInterval(slow);
+      clearInterval(intervals.fast);
+      clearInterval(intervals.slow);
     };
   }, [token, fetchFast, fetchSlow]);
 
@@ -197,7 +233,12 @@ export default function PaperTradingPage() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      )
+        return;
       const s = e.key.toLowerCase();
       const st = botStatusRef.current;
       const act = actionRef.current;
@@ -217,36 +258,56 @@ export default function PaperTradingPage() {
   const totalReturnPct =
     initialBalance > 0 ? ((Number(status?.equity ?? 0) - initialBalance) / initialBalance) * 100 : 0;
 
-  const equityChartData = equity.map((p) => ({
-    time: fmtUTCShort(p.timestamp),
-    equity: p.equity,
-    drawdown: p.drawdown,
-  }));
+  const equityChartData = useMemo(
+    () => equity.map((p) => ({ time: fmtUTCShort(p.timestamp), equity: p.equity, drawdown: p.drawdown })),
+    [equity],
+  );
 
-  const dailyMap = trades.reduce((acc, t) => {
-    const key = new Date(t.traded_at).toISOString().slice(0, 10);
-    acc[key] = (acc[key] || 0) + Number(t.realized_pnl);
-    return acc;
-  }, {} as Record<string, number>);
-  const dailyPnlData = Object.entries(dailyMap)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .slice(-14)
-    .map(([key, pnl]) => ({
-      date: new Date(`${key}T00:00:00Z`).toLocaleDateString("en-GB", {
-        timeZone: "UTC",
-        day: "2-digit",
-        month: "2-digit",
-      }),
-      pnl: Number(pnl.toFixed(2)),
-    }));
+  const dailyPnlData = useMemo(() => {
+    const dailyMap = trades.reduce((acc, t) => {
+      const key = new Date(t.traded_at).toISOString().slice(0, 10);
+      acc[key] = (acc[key] || 0) + Number(t.realized_pnl);
+      return acc;
+    }, {} as Record<string, number>);
+    return Object.entries(dailyMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-14)
+      .map(([key, pnl]) => ({
+        date: new Date(`${key}T00:00:00Z`).toLocaleDateString("en-GB", {
+          timeZone: "UTC",
+          day: "2-digit",
+          month: "2-digit",
+        }),
+        pnl: Number(pnl.toFixed(2)),
+      }));
+  }, [trades]);
 
-  const maxReasonCount = diagnostics
-    ? Math.max(1, ...Object.values(diagnostics.reason_counts))
-    : 1;
+  const maxReasonCount = useMemo(
+    () => (diagnostics ? Math.max(1, ...Object.values(diagnostics.reason_counts)) : 1),
+    [diagnostics],
+  );
 
-  const exitPieData = exitStats
-    ? Object.entries(exitStats).map(([reason, count]) => ({ name: reason, value: count }))
-    : [];
+  const EXIT_LABELS: Record<string, string> = {
+    stop_loss: "Stop Loss",
+    trailing_stop: "Trailing Stop",
+    take_profit: "Take Profit",
+    scale_out: "Scale Out",
+    manual_close: "Manual Close",
+    signal_sell: "Signal Sell",
+    signal_cover: "Signal Cover",
+    manual_partial: "Manual Partial",
+  };
+
+  const exitPieData = useMemo(
+    () => exitStats
+      ? Object.entries(exitStats).map(([reason, count]) => ({
+          name: EXIT_LABELS[reason] ?? reason,
+          key: reason, // original key for color lookup
+          value: count,
+        }))
+      : [],
+    [exitStats],
+  );
 
   const shortcuts = [
     { key: "S", label: "Başlat", when: "STOPPED" },
@@ -285,7 +346,19 @@ export default function PaperTradingPage() {
         <div className="mx-auto max-w-7xl px-6 pt-4 text-sm text-muted">İlk veriler yükleniyor…</div>
       )}
 
-      {botStatus === "PAUSED" && (
+      {connectionError && (
+        <div className="mx-auto max-w-7xl px-6 pt-4">
+          <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+            <strong>Bağlantı hatası</strong> — arka uç veya SSE akışıyla iletişim
+            kurulamıyor. Veriler güncel olmayabilir. Sayfayı yenilemeyi deneyin.
+            {!streamConnected && (
+              <span className="ml-2 text-xs opacity-70">(stream bağlı değil)</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {botStatus === "PAUSED" && !connectionError && (
         <div className="mx-auto max-w-7xl px-6 pt-4">
           <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
             Bot bir risk limiti nedeniyle <strong>duraklatıldı</strong>
@@ -299,7 +372,7 @@ export default function PaperTradingPage() {
       {botStatus === "RUNNING" && (
         <div className="mx-auto max-w-7xl px-6 pt-4">
           <div className="rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-700">
-            <strong>Paper mod:</strong> Gerçek OHLC mum verileriyle değerlendirme. Strateji live ile aynı parametrelerde (RSI &lt; 35, trend filtresi açık, EMA20 mesafesi %1.5). Long + short sinyal üretir.
+            <strong>Paper mod:</strong> Gerçek OHLC mum verileriyle değerlendirme. Strateji live ile aynı parametrelerde çalışır. Long + short sinyal üretir.
           </div>
         </div>
       )}
@@ -450,7 +523,7 @@ export default function PaperTradingPage() {
                 <RePieChart>
                   <Pie data={exitPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, value }) => `${name}: ${value}`}>
                     {exitPieData.map((entry) => (
-                      <Cell key={entry.name} fill={EXIT_COLORS[entry.name] || "#94a3b8"} />
+                      <Cell key={entry.key} fill={EXIT_COLORS[entry.key] || "#94a3b8"} />
                     ))}
                   </Pie>
                   <Tooltip />

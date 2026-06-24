@@ -75,8 +75,8 @@ export default function PositionsTable({ positions, actionLoadingBtn, onAction }
                     </div>
                   </td>
                   <td>
-                    <span className={`inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase text-white ${pos.side === "sell" ? "bg-danger" : "bg-primary"}`}>
-                      {pos.side === "sell" ? "SHORT" : "LONG"}
+                    <span className={`inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase text-white ${pos.side === "short" ? "bg-danger" : "bg-primary"}`}>
+                      {pos.side === "short" ? "SHORT" : "LONG"}
                     </span>
                   </td>
                   <td className="text-muted text-xs">{fmtDuration(pos.opened_at)}</td>

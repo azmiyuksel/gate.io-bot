@@ -16,7 +16,10 @@ export interface PaperStream {
   close: () => void;
 }
 
-export function createPaperStream(onData: (data: PaperStatus) => void): PaperStream {
+export function createPaperStream(
+  onData: (data: PaperStatus) => void,
+  onClose?: () => void,
+): PaperStream {
   const publicUrl = process.env.NEXT_PUBLIC_API_URL || "";
   const baseUrl = publicUrl || "";
 
@@ -73,6 +76,7 @@ export function createPaperStream(onData: (data: PaperStatus) => void): PaperStr
       if (reconnectTimer) clearTimeout(reconnectTimer);
       es?.close();
       es = null;
+      onClose?.();
     },
   };
 }

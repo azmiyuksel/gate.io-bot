@@ -14,7 +14,7 @@ export type PaperStatus = {
 export type PaperPosition = {
   id: number;
   symbol: string;
-  side: string;
+  side: "long" | "short";
   quantity: string;
   average_entry_price: string;
   last_price: string;
@@ -33,7 +33,7 @@ export type PaperPosition = {
 export type PaperTrade = {
   id: number;
   symbol: string;
-  side: string;
+  side: "buy" | "sell";
   price: string;
   quantity: string;
   fee: string;
@@ -74,7 +74,7 @@ export type PaperRiskStatus = {
   current_exposure: number;
   max_open_positions: number;
   current_open_positions: number;
-  status: string;
+  status: "normal" | "warning" | "critical";
 };
 
 export type PaperEquityPoint = {
