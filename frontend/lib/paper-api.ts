@@ -235,25 +235,39 @@ export async function getPaperEconomics(): Promise<PaperEconomics | null> {
 }
 
 export async function manualPaperOrder(symbol: string, side: "buy" | "sell", quantity: number): Promise<boolean> {
-  try {
-    const res = await authFetch(`/paper/manual-order`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol, side, quantity }),
-    });
-    return res.ok;
-  } catch {
-    return false;
+  const res = await authFetch(`/paper/manual-order`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ symbol, side, quantity }),
+  });
+  if (!res.ok) {
+    // Surface the server's error reason (e.g. "could not fetch current market
+    // price") so the toast is informative instead of a generic failure.
+    let detail = `İşlem başarısız (HTTP ${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) detail = body.error;
+    } catch {
+      /* response had no JSON body */
+    }
+    throw new Error(detail);
   }
+  return true;
 }
 
 export async function closePaperPosition(positionId: number): Promise<boolean> {
-  try {
-    const res = await authFetch(`/paper/close-position/${positionId}`, { method: "POST" });
-    return res.ok;
-  } catch {
-    return false;
+  const res = await authFetch(`/paper/close-position/${positionId}`, { method: "POST" });
+  if (!res.ok) {
+    let detail = `Kapatma başarısız (HTTP ${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) detail = body.error;
+    } catch {
+      /* response had no JSON body */
+    }
+    throw new Error(detail);
   }
+  return true;
 }
 
 export async function getPaperExitStats(): Promise<{ counts: Record<string, number>; total_closed: number } | null> {

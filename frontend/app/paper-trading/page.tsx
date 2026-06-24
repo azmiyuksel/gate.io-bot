@@ -343,7 +343,12 @@ export default function PaperTradingPage() {
       </header>
 
       {!lastUpdated && (
-        <div className="mx-auto max-w-7xl px-6 pt-4 text-sm text-muted">İlk veriler yükleniyor…</div>
+        <div className="mx-auto max-w-7xl px-6 pt-4">
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted border-t-transparent" />
+            İlk veriler yükleniyor…
+          </div>
+        </div>
       )}
 
       {connectionError && (
@@ -377,39 +382,50 @@ export default function PaperTradingPage() {
         </div>
       )}
 
-      <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-        <Metric label="Equity" value={`$${money(status?.equity ?? 0)}`} icon={<Activity size={18} />} />
-        <Metric
-          label="Toplam Getiri"
-          value={`${totalReturnPct >= 0 ? "+" : ""}${totalReturnPct.toFixed(2)}%`}
-          icon={totalReturnPct >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
-        />
-        <Metric
-          label="Realized PnL"
-          value={`$${money(status?.realized_pnl ?? 0)}`}
-          icon={Number(status?.realized_pnl ?? 0) >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
-        />
-        <Metric
-          label="Unrealized PnL"
-          value={`$${money(status?.unrealized_pnl ?? 0)}`}
-          icon={Number(status?.unrealized_pnl ?? 0) >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
-        />
-        <Metric
-          label="Win Rate (son 100)"
-          value={`${((status?.metrics?.win_rate_rolling_100 ?? 0) * 100).toFixed(1)}%`}
-          icon={<Trophy size={18} />}
-        />
-        <Metric
-          label="Rolling Sharpe"
-          value={`${(status?.metrics?.rolling_sharpe ?? 0).toFixed(2)}`}
-          icon={<BarChart3 size={18} />}
-        />
-        <Metric
-          label="Max Drawdown"
-          value={`${(Math.abs(status?.metrics?.drawdown ?? 0) * 100).toFixed(2)}%`}
-          icon={<ShieldAlert size={18} />}
-        />
-      </section>
+      {lastUpdated ? (
+        <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+          <Metric label="Equity" value={`$${money(status?.equity ?? 0)}`} icon={<Activity size={18} />} />
+          <Metric
+            label="Toplam Getiri"
+            value={`${totalReturnPct >= 0 ? "+" : ""}${totalReturnPct.toFixed(2)}%`}
+            icon={totalReturnPct >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+          />
+          <Metric
+            label="Realized PnL"
+            value={`$${money(status?.realized_pnl ?? 0)}`}
+            icon={Number(status?.realized_pnl ?? 0) >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+          />
+          <Metric
+            label="Unrealized PnL"
+            value={`$${money(status?.unrealized_pnl ?? 0)}`}
+            icon={Number(status?.unrealized_pnl ?? 0) >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+          />
+          <Metric
+            label="Win Rate (son 100)"
+            value={`${((status?.metrics?.win_rate_rolling_100 ?? 0) * 100).toFixed(1)}%`}
+            icon={<Trophy size={18} />}
+          />
+          <Metric
+            label="Rolling Sharpe"
+            value={`${(status?.metrics?.rolling_sharpe ?? 0).toFixed(2)}`}
+            icon={<BarChart3 size={18} />}
+          />
+          <Metric
+            label="Max Drawdown"
+            value={`${(Math.abs(status?.metrics?.drawdown ?? 0) * 100).toFixed(2)}%`}
+            icon={<ShieldAlert size={18} />}
+          />
+        </section>
+      ) : (
+        <section className="mx-auto grid max-w-7xl gap-5 px-6 py-6 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+          {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="rounded-lg border border-border p-4">
+              <div className="mb-3 h-3.5 w-20 animate-pulse rounded bg-border/70" />
+              <div className="h-6 w-24 animate-pulse rounded bg-border/70" />
+            </div>
+          ))}
+        </section>
+      )}
 
       <section className="mx-auto max-w-7xl px-6 pb-6">
         <LivePrices />
