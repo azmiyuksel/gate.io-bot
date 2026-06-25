@@ -225,23 +225,23 @@ class Settings(BaseSettings):
     # filter noise). Affects paper now and live when enabled.
     momentum_donchian_lookback: int = 14
     # Volume confirmation: the (closed) breakout bar's volume must be at least this
-    # multiple of the 20-bar average. Lowered 1.3 -> 1.0 -> 0.7: volume is
-    # right-skewed (occasional high-volume bars inflate the 20-bar mean), so the
-    # typical/median bar sits BELOW the average — requiring >= 1.0x still rejected
-    # ~78% of bars (including breakout bars) and the book never traded. 0.7 lets
-    # ordinary-volume breakouts through while still filtering the deadest bars.
-    momentum_vol_spike_mult: float = 1.2
+    # multiple of the 20-bar average. Volume is right-skewed (occasional high-volume
+    # bars inflate the 20-bar mean), so the typical/median bar sits BELOW the
+    # average — requiring >= 1.2x still rejected most bars (including legitimate
+    # breakout bars) and the book rarely traded. 0.7 lets ordinary-volume breakouts
+    # through while still filtering the deadest bars.
+    momentum_vol_spike_mult: float = 0.7
     momentum_rsi_long_max: float = 55.0
     momentum_rsi_short_min: float = 45.0
     # Minimum ATR as a fraction of price; below this the move can't clear costs.
-    # Bumped from 0.0015 (0.15%) to 0.004 (0.4%) — the old floor was BELOW the
-    # typical round-trip cost (2x taker ~0.1% + spread + slippage), so a
-    # "breakout" could fire inside the bid-ask and be instantly underwater.
-    # Eased 0.004 -> 0.003 to trade in slightly calmer conditions (atr_too_low was
-    # ~12% of rejections). Still above the futures round-trip cost (~0.0022), and
-    # the breakout buffer is independently floored at the real round-trip cost, so
-    # a sub-cost breakout still cannot fire.
-    momentum_min_atr_pct: float = 0.003
+    # Minimum ATR as a fraction of price; below this the move can't clear costs.
+    # 0.15% (0.0015): BTC's typical 15m ATR is ~0.15-0.2%, so a 0.3% floor rejected
+    # every major coin in calm conditions and left paper completely idle. 0.0015
+    # sits just above the futures round-trip cost (~0.0012 = 2x taker 5bps + spread
+    # 2bps), so only genuinely dead markets are skipped. The breakout buffer is
+    # INDEPENDENTLY floored at the real round-trip cost, so a sub-cost breakout still
+    # cannot fire even with this lower ATR gate.
+    momentum_min_atr_pct: float = 0.0015
     # Breakout must clear the prior extreme by this fraction of ATR (noise filter).
     # Treated as a FLOOR: the effective buffer is max(this * ATR, round_trip_cost)
     # so a breakout can never fire inside the realistic fee+spread+slippage band.

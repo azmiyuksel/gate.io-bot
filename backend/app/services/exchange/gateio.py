@@ -112,13 +112,25 @@ class GateIOClient:
                 await asyncio.sleep(2**attempt)
 
     async def candles(
-        self, symbol: str, interval: str = "1h", limit: int = 240, drop_unclosed: bool = False
+        self,
+        symbol: str,
+        interval: str = "1h",
+        limit: int = 240,
+        drop_unclosed: bool = False,
+        market: str = "spot",
     ) -> list[dict]:
-        data = await self.request(
-            "GET",
-            "/spot/candlesticks",
-            params={"currency_pair": symbol, "interval": interval, "limit": limit},
-        )
+        # Futures and spot have DIFFERENT candles, volume, and microstructure. A
+        # futures bot that evaluates entries on SPOT candles gets stale/mismatched
+        # prices (futures trade at a different mark), so ATR/breakout/volume
+        # signals computed on spot candles misfire. Pick the endpoint for the
+        # market the bot is actually trading.
+        if market == "futures":
+            path = "/futures-usdt/candlesticks"
+            params = {"contract": symbol, "interval": interval, "limit": limit}
+        else:
+            path = "/spot/candlesticks"
+            params = {"currency_pair": symbol, "interval": interval, "limit": limit}
+        data = await self.request("GET", path, params=params)
         candles = self._parse_candles(data)
         # Entry/indicator evaluation must run on CLOSED bars only — the last bar
         # Gate.io returns is the still-forming one, which repaints (RSI/volume/EMA

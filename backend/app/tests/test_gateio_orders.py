@@ -102,6 +102,37 @@ async def test_candles_expose_base_and_quote_volume(monkeypatch):
     assert by_ts[1700003600]["volume"] == Decimal("8")         # from base-volume field
 
 
+async def test_candles_uses_spot_endpoint_by_default(monkeypatch):
+    """Default market='spot' must hit /spot/candlesticks with currency_pair."""
+    c = GateIOClient()
+    seen: list[tuple[str, dict]] = []
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        seen.append((path, params or {}))
+        return []
+
+    monkeypatch.setattr(c, "request", fake_request)
+    await c.candles("BTC_USDT")
+    assert seen == [("/spot/candlesticks", {"currency_pair": "BTC_USDT", "interval": "1h", "limit": 240})]
+
+
+async def test_candles_uses_futures_endpoint_when_requested(monkeypatch):
+    """market='futures' must hit /futures-usdt/candlesticks with contract param
+    so a futures bot evaluates entries on futures (not spot) candles."""
+    c = GateIOClient()
+    seen: list[tuple[str, dict]] = []
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        seen.append((path, params or {}))
+        return []
+
+    monkeypatch.setattr(c, "request", fake_request)
+    await c.candles("BTC_USDT", market="futures")
+    assert seen == [
+        ("/futures-usdt/candlesticks", {"contract": "BTC_USDT", "interval": "1h", "limit": 240})
+    ]
+
+
 async def test_last_price_falls_back_to_bid_ask_mid(monkeypatch):
     c = GateIOClient()
 

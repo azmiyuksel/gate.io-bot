@@ -45,7 +45,10 @@ class PaperTradingEngine:
 
     async def start(self, symbols: list[str]) -> None:
         if self.account.status != PaperBotStatus.running:
-            logger.info("Engine start skipped: account status is %s", self.account.status)
+            logger.info(
+                "Engine start skipped: account status is %s (click Start in the "
+                "dashboard to resume trading)", self.account.status,
+            )
             return
         self._log("system_started", "Paper trading started")
         self.db.commit()
@@ -196,6 +199,7 @@ class PaperTradingEngine:
                 interval=paper_interval,
                 limit=settings.candle_history_limit,
                 drop_unclosed=True,
+                market=exec_.market,
             )
         except Exception as exc:
             # Surface fetch failures to the dashboard instead of failing silently
