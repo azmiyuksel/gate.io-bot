@@ -202,6 +202,17 @@ class Settings(BaseSettings):
     # limits tripped on ordinary intraday volatility.
     paper_max_daily_loss_pct: float = 0.08
     paper_max_drawdown_pct: float = 0.30
+    # When paper mirrors live (default true), the auto-pause limits (daily loss,
+    # max drawdown) are taken from the LIVE StrategySettings / live env — which
+    # are tuned for real-money capital preservation and trip on a couple of
+    # losing leveraged trades, leaving paper PAUSED and producing no data. Paper
+    # is a simulation whose PURPOSE is to observe behaviour, so when this flag is
+    # on (default), the mirror takes the LOOSER of the paper_* and live values for
+    # those two auto-pause limits only. Sizing, exposure, position count and
+    # timeframe still mirror live exactly — only the hard-pause thresholds relax,
+    # so paper keeps trading through drawdowns that would halt live. Turn OFF to
+    # inherit the strict live auto-pause thresholds verbatim.
+    paper_relax_mirror_limits: bool = True
     # Kelly position scaling needs a track record; off by default so cold-start sizing
     # is deterministic (pure fixed-fractional risk).
     paper_kelly_enabled: bool = True

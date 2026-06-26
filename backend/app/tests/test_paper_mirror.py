@@ -32,7 +32,8 @@ def test_mirror_spot_is_long_only_unleveraged(db_session) -> None:
     _seed_strategy_settings(db_session)
     s = _settings(paper_mirror_live=True, trading_market="spot", market_data_interval="15m",
                   max_risk_per_trade_pct=0.02, max_total_exposure_pct=0.30,
-                  max_account_drawdown_pct=0.15, paper_spot_taker_fee=0.001)
+                  max_account_drawdown_pct=0.15, paper_spot_taker_fee=0.001,
+                  paper_relax_mirror_limits=False)
     ex = resolve_paper_exec(db_session, s)
     assert ex.mirror is True
     assert ex.market == "spot"
@@ -78,3 +79,55 @@ def test_standalone_mode_uses_paper_knobs(db_session) -> None:
     assert ex.risk_pct == Decimal("0.005")
     assert ex.notional_cap_pct == Decimal("0.10")
     assert ex.taker_fee == Decimal("0.0005")
+
+
+def test_mirror_relaxes_limits_when_paper_looser(db_session) -> None:
+    """When paper_relax_mirror_limits is on and paper_* limits are looser than
+    live, the auto-pause thresholds adopt the looser paper values so the
+    simulation keeps trading through drawdowns that would halt live. Sizing/
+    exposure/positions still inherit live values (capital-preservation parity)."""
+    _seed_strategy_settings(db_session)  # live daily=0.05, max_open=8
+    s = _settings(paper_mirror_live=True, trading_market="futures",
+                  max_account_drawdown_pct=0.20, max_total_exposure_pct=0.35,
+                  max_risk_per_trade_pct=0.025,
+                  paper_max_daily_loss_pct=0.08, paper_max_drawdown_pct=0.30,
+                  paper_relax_mirror_limits=True)
+    ex = resolve_paper_exec(db_session, s)
+    assert ex.mirror is True
+    # Looser of paper (0.08) and live (0.05) -> 0.08
+    assert ex.daily_max_loss_pct == Decimal("0.08")
+    # Looser of paper (0.30) and live (0.20) -> 0.30
+    assert ex.max_drawdown_pct == Decimal("0.30")
+    # Sizing/exposure/positions still mirror live verbatim.
+    assert ex.risk_pct == Decimal("0.025")
+    assert ex.max_exposure_pct == Decimal("0.35")
+    assert ex.max_open_positions == 8
+    assert ex.notional_cap_pct == Decimal("0.05")
+
+
+def test_mirror_keeps_strict_limits_when_live_looser(db_session) -> None:
+    """Relaxation takes the LOOSER of the two — if live is already looser, live
+    wins (the flag never TIGHTENS limits, only relaxes them)."""
+    _seed_strategy_settings(db_session)
+    s = _settings(paper_mirror_live=True, trading_market="futures",
+                  max_account_drawdown_pct=0.40, max_total_exposure_pct=0.35,
+                  paper_max_daily_loss_pct=0.05, paper_max_drawdown_pct=0.20,
+                  paper_relax_mirror_limits=True)
+    ex = resolve_paper_exec(db_session, s)
+    # live daily 0.05 == paper 0.05 -> 0.05
+    assert ex.daily_max_loss_pct == Decimal("0.05")
+    # live drawdown 0.40 > paper 0.20 -> 0.40 (live looser)
+    assert ex.max_drawdown_pct == Decimal("0.40")
+
+
+def test_mirror_strict_when_relax_flag_off(db_session) -> None:
+    """With paper_relax_mirror_limits off, live auto-pause thresholds are
+    inherited verbatim (legacy strict behaviour) even when paper_* are looser."""
+    _seed_strategy_settings(db_session)
+    s = _settings(paper_mirror_live=True, trading_market="futures",
+                  max_account_drawdown_pct=0.20,
+                  paper_max_daily_loss_pct=0.08, paper_max_drawdown_pct=0.30,
+                  paper_relax_mirror_limits=False)
+    ex = resolve_paper_exec(db_session, s)
+    assert ex.daily_max_loss_pct == Decimal("0.05")  # live StrategySettings
+    assert ex.max_drawdown_pct == Decimal("0.20")   # live env

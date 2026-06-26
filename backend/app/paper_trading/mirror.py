@@ -67,6 +67,22 @@ def resolve_paper_exec(db: Session, settings) -> PaperExec:
     # Mirror the live account's economics.
     is_futures = settings.trading_market.lower() == "futures"
     ss = StrategySettingsRepository(db).current()
+    live_daily_loss = Decimal(str(ss.daily_max_loss_pct))
+    live_drawdown = Decimal(str(settings.max_account_drawdown_pct))
+    # Paper is a simulation whose purpose is to OBSERVE behaviour, so the auto-
+    # pause hard stops relax to the LOOSER of paper_* and live when the flag is
+    # on (default). Sizing/exposure/positions/timeframe still mirror live
+    # exactly — only the two hard-pause thresholds relax, so paper keeps trading
+    # through drawdowns that would halt live. Turn off the flag to inherit the
+    # strict live thresholds verbatim.
+    if getattr(settings, "paper_relax_mirror_limits", True):
+        paper_daily = Decimal(str(settings.paper_max_daily_loss_pct))
+        paper_dd = Decimal(str(settings.paper_max_drawdown_pct))
+        daily_max_loss_pct = max(live_daily_loss, paper_daily)
+        max_drawdown_pct = max(live_drawdown, paper_dd)
+    else:
+        daily_max_loss_pct = live_daily_loss
+        max_drawdown_pct = live_drawdown
     return PaperExec(
         mirror=True,
         market="futures" if is_futures else "spot",
@@ -82,8 +98,8 @@ def resolve_paper_exec(db: Session, settings) -> PaperExec:
         atr_stop_multiplier=Decimal(str(ss.atr_multiplier)),
         tp_rr=Decimal(str(ss.min_reward_risk)),
         notional_cap_pct=Decimal(str(ss.max_capital_per_trade_pct)),
-        daily_max_loss_pct=Decimal(str(ss.daily_max_loss_pct)),
-        max_drawdown_pct=Decimal(str(settings.max_account_drawdown_pct)),
+        daily_max_loss_pct=daily_max_loss_pct,
+        max_drawdown_pct=max_drawdown_pct,
         max_open_positions=int(ss.max_open_positions),
         max_exposure_pct=Decimal(str(settings.max_total_exposure_pct)),
     )
