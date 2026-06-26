@@ -219,7 +219,12 @@ async def main() -> None:
                         )
                     finally:
                         if not engine_task.done():
-                            engine.stop()
+                            # Do NOT stamp status=stopped onto the account: this
+                            # is a worker shutdown (redeploy/SIGTERM), not a user
+                            # stop. A new container is already starting and has
+                            # set status=RUNNING; writing STOPPED here wins the
+                            # race and leaves the bot idle after every deploy.
+                            engine.stop(set_status=False)
                             with contextlib.suppress(asyncio.CancelledError):
                                 await engine_task
                         shutdown_task.cancel()

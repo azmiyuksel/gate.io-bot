@@ -484,9 +484,20 @@ class PaperTradingEngine:
 
         return True, risk_mult
 
-    def stop(self) -> None:
+    def stop(self, *, set_status: bool = True) -> None:
+        """Stop the engine.
+
+        ``set_status``: when False, the engine tears down its WebSocket/DB and
+        flips its in-memory ``_running`` flag WITHOUT writing ``status=stopped``
+        to the account row. The paper worker calls this on shutdown so a redeploy
+        (Railway SIGTERM → old container stops → new container starts) does NOT
+        stamp STOPPED onto the account the new worker just set to RUNNING — that
+        race left the bot idle after every deploy. The API ``/stop`` endpoint
+        sets the status itself, so it does not rely on this method at all.
+        """
         self._running = False
-        self.account.status = PaperBotStatus.stopped
+        if set_status:
+            self.account.status = PaperBotStatus.stopped
         if self.stream:
             self.stream.stop()
         self._log("system_stopped", "Paper trading stopped")
