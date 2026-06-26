@@ -117,7 +117,7 @@ async def test_candles_uses_spot_endpoint_by_default(monkeypatch):
 
 
 async def test_candles_uses_futures_endpoint_when_requested(monkeypatch):
-    """market='futures' must hit /futures-usdt/candlesticks with contract param
+    """market='futures' must hit /futures/usdt/candlesticks with contract param
     so a futures bot evaluates entries on futures (not spot) candles."""
     c = GateIOClient()
     seen: list[tuple[str, dict]] = []
@@ -129,8 +129,33 @@ async def test_candles_uses_futures_endpoint_when_requested(monkeypatch):
     monkeypatch.setattr(c, "request", fake_request)
     await c.candles("BTC_USDT", market="futures")
     assert seen == [
-        ("/futures-usdt/candlesticks", {"contract": "BTC_USDT", "interval": "1h", "limit": 240})
+        ("/futures/usdt/candlesticks", {"contract": "BTC_USDT", "interval": "1h", "limit": 240})
     ]
+
+
+async def test_candles_parse_futures_dict_format(monkeypatch):
+    """Futures candlesticks arrive as dicts {t,v,sum,o,c,h,l}, NOT arrays.
+    This must parse without crashing and expose base/quote volume correctly."""
+    c = GateIOClient()
+    raw = [
+        {"t": 1700000000, "v": 10, "sum": "1000", "o": "99", "c": "100", "h": "101", "l": "98"},
+    ]
+
+    async def fake_request(method, path, *, params=None, json_body=None):
+        return raw
+
+    monkeypatch.setattr(c, "request", fake_request)
+    candles = await c.candles("BTC_USDT", market="futures")
+    assert len(candles) == 1
+    bar = candles[0]
+    assert bar["timestamp"] == 1700000000
+    assert bar["close"] == Decimal("100")
+    assert bar["open"] == Decimal("99")
+    assert bar["high"] == Decimal("101")
+    assert bar["low"] == Decimal("98")
+    # 'v' is base volume in futures, 'sum' is quote volume
+    assert bar["volume"] == Decimal("10")
+    assert bar["quote_volume"] == Decimal("1000")
 
 
 async def test_last_price_falls_back_to_bid_ask_mid(monkeypatch):

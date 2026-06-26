@@ -125,7 +125,7 @@ class GateIOClient:
         # signals computed on spot candles misfire. Pick the endpoint for the
         # market the bot is actually trading.
         if market == "futures":
-            path = "/futures-usdt/candlesticks"
+            path = "/futures/usdt/candlesticks"
             params = {"contract": symbol, "interval": interval, "limit": limit}
         else:
             path = "/spot/candlesticks"
@@ -175,8 +175,39 @@ class GateIOClient:
 
     @staticmethod
     def _parse_candles(data: list) -> list[dict]:
+        """Normalise Gate.io candle responses.
+
+        SPOT returns array rows: ``[ts, quote_vol, close, high, low, open, base_vol?, closed?]``.
+        FUTURES returns dicts:   ``{"t","v"(base vol),"sum"(quote vol),"o","c","h","l"}``
+        with no closed flag. We normalise both into one shape and return oldest→newest.
+        """
         result = []
         for item in reversed(data or []):
+            if isinstance(item, dict):
+                # Futures candlestick format.
+                close = Decimal(str(item["c"]))
+                quote_volume = Decimal(str(item.get("sum") or item.get("v") or "0"))
+                base_volume = Decimal(str(item.get("v") or "0"))
+                if base_volume <= 0 and close > 0:
+                    base_volume = quote_volume / close
+                result.append(
+                    {
+                        "timestamp": item["t"],
+                        "volume": base_volume,
+                        "quote_volume": quote_volume,
+                        "close": close,
+                        "high": Decimal(str(item["h"])),
+                        "low": Decimal(str(item["l"])),
+                        "open": Decimal(str(item["o"])),
+                        # Futures API has no closed flag; the last bar is the
+                        # forming one and is filtered by drop_unclosed in the
+                        # spot path. For futures we rely on the caller, but to be
+                        # safe treat all but the last as closed.
+                        "closed": True,
+                    }
+                )
+                continue
+            # Spot candlestick format (array).
             close = Decimal(str(item[2]))
             quote_volume = Decimal(str(item[1]))
             # Gate.io v4 returns QUOTE volume at index 1 (and base volume at index 6
