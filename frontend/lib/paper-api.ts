@@ -81,55 +81,46 @@ export function createPaperStream(
   };
 }
 
+async function _actionFetch(path: string, body?: unknown): Promise<boolean> {
+  const res = await authFetch(path, {
+    method: "POST",
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    let detail = `İşlem başarısız (HTTP ${res.status})`;
+    try {
+      const errBody = await res.json();
+      if (errBody?.detail) detail = errBody.detail;
+      else if (errBody?.error) detail = errBody.error;
+    } catch {
+      /* response had no JSON body */
+    }
+    throw new Error(detail);
+  }
+  return true;
+}
+
 export async function startPaperTrading(
   config?: { account_name?: string; initial_balance?: number; symbols?: string[] },
 ): Promise<boolean> {
-  try {
-    const res = await authFetch(`/paper/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(config ?? {}),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return _actionFetch(`/paper/start`, config ?? {});
 }
 
 export async function stopPaperTrading(): Promise<boolean> {
-  try {
-    const res = await authFetch(`/paper/stop`, { method: "POST" });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return _actionFetch(`/paper/stop`);
 }
 
 export async function pausePaperTrading(): Promise<boolean> {
-  try {
-    const res = await authFetch(`/paper/pause`, { method: "POST" });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return _actionFetch(`/paper/pause`);
 }
 
 export async function resumePaperTrading(): Promise<boolean> {
-  try {
-    const res = await authFetch(`/paper/resume`, { method: "POST" });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return _actionFetch(`/paper/resume`);
 }
 
 export async function resetPaperTrading(): Promise<boolean> {
-  try {
-    const res = await authFetch(`/paper/reset`, { method: "POST" });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return _actionFetch(`/paper/reset`);
 }
 
 export async function getPaperStatus(): Promise<PaperStatus | null> {
