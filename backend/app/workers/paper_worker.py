@@ -30,6 +30,11 @@ DIAG_EVENTS = ("entry_skipped", "risk_check")
 async def main() -> None:
     configure_logging()
     settings = get_settings()
+    # Multi-account: the worker drives whichever PaperAccount row matches
+    # `paper_account_name` in settings. Lets a second worker instance (e.g. a
+    # different live mirror config) trade its own paper account without code
+    # changes — and keeps /api/v1/* endpoints that default to "default".
+    account_name = getattr(settings, "paper_account_name", "default")
     # Graceful shutdown: Railway sends SIGTERM on redeploy/stop. Without handling
     # it, the engine is killed mid-trade (DB session, WS, half-applied state).
     # The stop event lets the worker break out of engine.start() and the waiting
@@ -56,7 +61,7 @@ async def main() -> None:
     while True:
         db = SessionLocal()
         try:
-            account = db.query(PaperAccount).filter(PaperAccount.name == "default").first()
+            account = db.query(PaperAccount).filter(PaperAccount.name == account_name).first()
             if account is None:
                 account = PaperAccount()
                 db.add(account)
@@ -137,30 +142,35 @@ async def main() -> None:
 
             # Futures migration: an account created with the legacy spot risk limits
             # would block leveraged trading (exposure cap <1x) or auto-pause on
-            # ordinary leveraged volatility (5%/25% spot limits). Raise legacy values
-            # to the configured futures limits. Only bumps UP from the known spot
-            # defaults, so it never tightens a deliberately-set value.
-            try:
-                from decimal import Decimal as _D
-                changed = False
-                if not settings.paper_mirror_live and account.max_exposure_pct is not None and _D(str(account.max_exposure_pct)) < _D("1"):
-                    account.max_exposure_pct = _D(str(settings.paper_leverage))
-                    changed = True
-                if not settings.paper_mirror_live and account.max_daily_loss_pct is not None and _D(str(account.max_daily_loss_pct)) <= _D("0.05"):
-                    account.max_daily_loss_pct = _D(str(settings.paper_max_daily_loss_pct))
-                    changed = True
-                if not settings.paper_mirror_live and account.max_drawdown_pct is not None and _D(str(account.max_drawdown_pct)) <= _D("0.25"):
-                    account.max_drawdown_pct = _D(str(settings.paper_max_drawdown_pct))
-                    changed = True
-                if changed:
-                    logger.info(
-                        "Paper account risk limits migrated to futures: exposure=%s daily_loss=%s drawdown=%s",
-                        account.max_exposure_pct, account.max_daily_loss_pct, account.max_drawdown_pct,
-                    )
-                    db.commit()
-            except Exception:
-                # Best-effort migration: never let a bad/mocked value abort startup.
-                pass
+            # ordinary leveraged volatility (5%/25% spot limits). Previously this
+            # ran on EVERY boot to raise legacy values up to the configured
+            # futures limits; new accounts now ship with futures defaults and any
+            # deployed account has long since been migrated, so the per-boot
+            # update became (a) dead work and (b) a per-boot DB write that overrode
+            # operator-tuned env values. Default OFF; flip the flag to migrate a
+            # long-stale account that predates the change.
+            if getattr(settings, "paper_legacy_futures_migration_enabled", False):
+                try:
+                    from decimal import Decimal as _D
+                    changed = False
+                    if not settings.paper_mirror_live and account.max_exposure_pct is not None and _D(str(account.max_exposure_pct)) < _D("1"):
+                        account.max_exposure_pct = _D(str(settings.paper_leverage))
+                        changed = True
+                    if not settings.paper_mirror_live and account.max_daily_loss_pct is not None and _D(str(account.max_daily_loss_pct)) <= _D("0.05"):
+                        account.max_daily_loss_pct = _D(str(settings.paper_max_daily_loss_pct))
+                        changed = True
+                    if not settings.paper_mirror_live and account.max_drawdown_pct is not None and _D(str(account.max_drawdown_pct)) <= _D("0.25"):
+                        account.max_drawdown_pct = _D(str(settings.paper_max_drawdown_pct))
+                        changed = True
+                    if changed:
+                        logger.info(
+                            "Paper account risk limits migrated to futures: exposure=%s daily_loss=%s drawdown=%s",
+                            account.max_exposure_pct, account.max_daily_loss_pct, account.max_drawdown_pct,
+                        )
+                        db.commit()
+                except Exception:
+                    # Best-effort migration: never let a bad/mocked value abort startup.
+                    pass
             portfolio = PaperPortfolio(db, account)
             portfolio.record_equity()
             db.commit()
@@ -250,7 +260,7 @@ async def main() -> None:
                         await asyncio.sleep(retry_delay)
                         retry_delay = min(retry_delay * 2, max_retry_delay)
                         db = SessionLocal()
-                        account = db.query(PaperAccount).filter(PaperAccount.name == "default").first()
+                        account = db.query(PaperAccount).filter(PaperAccount.name == account_name).first()
                         if account is None:
                             logger.info("Paper worker: account disappeared after retry, exiting")
                             break
@@ -285,7 +295,7 @@ async def main() -> None:
                             except Exception:
                                 pass
                             db = SessionLocal()
-                            account = db.query(PaperAccount).filter(PaperAccount.name == "default").first()
+                            account = db.query(PaperAccount).filter(PaperAccount.name == account_name).first()
                             if account is None:
                                 account = PaperAccount()
                                 db.add(account)

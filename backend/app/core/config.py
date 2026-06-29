@@ -277,6 +277,31 @@ class Settings(BaseSettings):
     # ~0.01% per 8h funding ≈ 0.03%/day is a typical neutral-market baseline.
     funding_cost_enabled: bool = True
     funding_daily_rate_pct: float = 0.0003
+    # Funding settlement interval in hours (real perp funding pays every 8h).
+    # The paper engine accrues signed funding to equity at this cadence rather
+    # than only at close, so long-duration carries surface their cost.
+    paper_funding_interval_hours: int = 8
+    # Single-tier maintenance margin fraction used for the simplified liquidation
+    # engine. A leveraged position is force-closed when its loss exceeds
+    # initial_margin * (1 - paper_maintenance_margin_pct). 0.5% matches mid-cap
+    # BTC perp tiers; set higher for alts if a stricter simulate-live is wanted.
+    paper_maintenance_margin_pct: float = 0.005
+    # Minimum order notional (USDT) — Gate.io enforces 1 USDT min on most perps.
+    # Orders below this are rejected with reason `min_notional`.
+    paper_min_notional: float = 1.0
+    # Default contract qty step when a per-symbol contract spec is unavailable.
+    # Quantities are rounded DOWN to this multiple so simulated fills respect
+    # lot-size constraints instead of fractional-dust quantities.
+    paper_qty_step_default: float = 0.001
+    # Execution simulator depth/impact knobs. Defaults are tuned for majors
+    # (BTC/ETH); raise ``paper_max_impact`` (slippage cap) and lower
+    # ``paper_min_depth`` for alts where the same notional walks much more of
+    # the book. The simulator is constructed with these so the depth cap and
+    # impact ceiling stop being symbol-agnostic in code, only in defaults.
+    paper_max_impact: float = 0.02
+    paper_min_depth: float = 5_000.0
+    paper_impact_coef: float = 0.001
+    paper_depth_fraction: float = 0.05
     # --- Funding rate as a SIGNAL input (futures only) ---
     # The perpetual funding rate is a microstructure signal: a strongly positive
     # funding rate means longs pay shorts — a headwind for new longs and a
@@ -433,6 +458,20 @@ class Settings(BaseSettings):
     # Paper trading runs on a faster timeframe than live (frequent momentum/breakout
     # strategy). Falls back to market_data_interval when unset.
     paper_market_data_interval: str = "5m"
+    # Account name the paper worker boots against. The schema supports
+    # multiple PaperAccount rows (unique `name`), but the worker has historically
+    # hardcoded "default". This setting surfaces the choice so a second worker
+    # instance can trade a different paper account without code changes.
+    paper_account_name: str = "default"
+    # Legacy spot->futures risk-limit migration. The worker used to bump any
+    # account still on the old spot-era risk limits (exposure<1, daily<=0.05,
+    # drawdown<=0.25) up to the futures defaults on every boot. New accounts
+    # since the migration ship with futures defaults, and any deployed account
+    # has already been migrated — so the per-boot update is now dead work that
+    # also writes the DB on every boot when ``paper_max_*_pct`` are tuned via
+    # env (the migration overrode the operator's deliberate tuning). Default OFF;
+    # flip to True only to migrate a long-stale account that predates the change.
+    paper_legacy_futures_migration_enabled: bool = False
     # How often the paper-trading engine re-evaluates entries on real candles.
     # 15s on 5m candles ensures a fresh bar is picked up within a fraction of a bar.
     paper_eval_interval_seconds: int = 15

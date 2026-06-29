@@ -193,7 +193,9 @@ def test_short_close_settles_cash_without_inflating_equity(db_session):
 
     # Losing short: price rose to 110. Equity must drop below the 10000 start.
     acc, pos = _open_short("short_loss")
-    PaperBroker(db_session, acc).close_position(pos, MarketData("AAA_USDT", now, 110.0), "stop_loss")
+    import asyncio
+
+    asyncio.run(PaperBroker(db_session, acc).close_position(pos, MarketData("AAA_USDT", now, 110.0), "stop_loss"))
     db_session.commit()
     equity = PaperPortfolio(db_session, acc).equity()
     assert equity < Decimal("10000")          # a loss reduces equity
@@ -201,7 +203,7 @@ def test_short_close_settles_cash_without_inflating_equity(db_session):
 
     # Winning short: price fell to 90. Equity rises, but only by ~10 (not ~+100).
     acc2, pos2 = _open_short("short_win")
-    PaperBroker(db_session, acc2).close_position(pos2, MarketData("AAA_USDT", now, 90.0), "take_profit")
+    asyncio.run(PaperBroker(db_session, acc2).close_position(pos2, MarketData("AAA_USDT", now, 90.0), "take_profit"))
     db_session.commit()
     equity2 = PaperPortfolio(db_session, acc2).equity()
     assert Decimal("10000") < equity2 < Decimal("10025")
@@ -258,12 +260,13 @@ def test_stream_tick_has_no_intrabar_range():
 
     stream = GateIOMarketDataStream(["BTC_USDT"])
     raw = json.dumps({
+        "channel": stream.channel,  # ticker channel name (depends on market)
         "result": {
             "last": "100", "currency_pair": "BTC_USDT",
             "base_volume": "5", "high_24h": "130", "low_24h": "70",
         }
     })
-    data = stream._parse(raw)
+    data = stream._parse_ticker(raw)
     # 24h high/low must NOT leak into per-tick bar fields.
     assert data.price == 100.0
     assert data.high is None

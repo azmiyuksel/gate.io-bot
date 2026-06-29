@@ -11,11 +11,12 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession, current_user_role, require_admin
 from app.models.entities import PaperAccount, PaperEquityCurve, PaperLog, PaperOrder, PaperPosition, PaperTrade
-from app.models.enums import PaperBotStatus
+from app.models.enums import PaperBotStatus, PaperOrderType, PaperPositionSide, PaperTimeInForce
 from app.paper_trading.metrics import PaperMetrics
 from app.paper_trading.models import MarketData, PaperSide, TradingSignal
 from app.paper_trading.portfolio import PaperPortfolio
 from app.paper_trading.broker import PaperBroker
+from app.paper_trading.risk_simulator import PaperRiskSimulator
 from app.schemas.paper import (
     ManualOrderRequest,
     PaperLogOut,
@@ -278,6 +279,7 @@ async def _fetch_current_price(symbol: str) -> float:
 async def manual_order(payload: ManualOrderRequest, db: DbSession) -> dict:
     account = _get_or_create_account(db)
     broker = PaperBroker(db, account)
+    risk = PaperRiskSimulator(db, account)
     now = datetime.now(UTC)
     price = await _fetch_current_price(payload.symbol)
     if price <= 0:
@@ -288,15 +290,46 @@ async def manual_order(payload: ManualOrderRequest, db: DbSession) -> dict:
         price=price,
         volume=0.0,
     )
-    signal = TradingSignal(
+    # Risk-bypass fix: manual entries must pass the SAME risk simulator gate the
+    # automatic strategy path uses (daily-loss / drawdown / max-open-positions /
+    # max-exposure). Reduce-only closes skip the entry gate (they only reduce).
+    if not payload.reduce_only:
+        signal = TradingSignal(
+            symbol=payload.symbol,
+            side=PaperSide.buy if payload.side == "buy" else PaperSide.sell,
+            strength=1.0,
+            strategy="manual",
+            timestamp=now,
+            metadata={"manual": True},
+        )
+        approved, reason = risk.approve_signal(signal, data)
+        if not approved:
+            return {"error": f"risk_rejected: {reason}"}
+    order_type_map = {
+        "market": PaperOrderType.market,
+        "limit": PaperOrderType.limit,
+        "stop": PaperOrderType.stop,
+        "stop_limit": PaperOrderType.stop_limit,
+        "oco": PaperOrderType.oco,
+    }
+    pside = None
+    if payload.position_side:
+        pside = PaperPositionSide(payload.position_side)
+    order = await broker.submit_order(
         symbol=payload.symbol,
         side=PaperSide.buy if payload.side == "buy" else PaperSide.sell,
-        strength=1.0,
-        strategy="manual",
-        timestamp=now,
-        metadata={"manual": True},
+        quantity=payload.quantity,
+        order_type=order_type_map[payload.order_type],
+        price=payload.price,
+        stop_price=payload.stop_price,
+        take_profit=payload.take_profit,
+        time_in_force=PaperTimeInForce(payload.time_in_force) if payload.time_in_force else PaperTimeInForce.gtc,
+        post_only=payload.post_only,
+        reduce_only=payload.reduce_only,
+        position_side=pside,
+        signal={"manual": True, "strategy": "manual"},
+        data=data,
     )
-    order = broker.submit_signal(signal, payload.quantity, data)
     return {"order_id": order.id, "status": order.status, "side": payload.side, "symbol": payload.symbol}
 
 
@@ -322,8 +355,25 @@ async def close_position(position_id: int, db: DbSession) -> dict:
         price=price,
         volume=0.0,
     )
-    broker.close_position(position, data, "manual_close")
+    await broker.close_position(position, data, "manual_close")
     return {"closed": True, "position_id": position_id}
+
+
+@router.post("/orders/{order_id}/cancel", dependencies=[Depends(require_admin)])
+async def cancel_order(order_id: int, db: DbSession) -> dict:
+    """Cancel a resting limit / stop / stop-limit / OCO order. Has no effect on
+    filled or already-cancelled orders."""
+    account = _get_or_create_account(db)
+    order = (
+        db.query(PaperOrder)
+        .filter(PaperOrder.id == order_id, PaperOrder.account_id == account.id)
+        .first()
+    )
+    if not order:
+        return {"error": "order not found"}
+    broker = PaperBroker(db, account)
+    broker.cancel_order(order)
+    return {"cancelled": True, "order_id": order_id, "status": order.status}
 
 
 @router.get("/exit-stats")

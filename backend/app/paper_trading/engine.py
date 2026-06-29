@@ -7,8 +7,8 @@ from time import time
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models.entities import PaperAccount, PaperLog, PaperPosition
-from app.models.enums import LogLevel, PaperBotStatus
+from app.models.entities import PaperAccount, PaperLog, PaperOrder, PaperPosition
+from app.models.enums import LogLevel, PaperBotStatus, PaperOrderStatus, PaperOrderType
 from app.paper_trading.broker import PaperBroker
 from app.paper_trading.market_data_stream import GateIOMarketDataStream
 from app.paper_trading.models import BaseStrategy, MarketData, PaperSide, TradingSignal
@@ -504,11 +504,82 @@ class PaperTradingEngine:
         self.db.commit()
 
     async def on_tick(self, data: MarketData) -> None:
-        # Ticks only maintain mark-to-market and trigger stop/TP exits. Entries are
-        # evaluated separately on real candles in the entry loop.
-        self.portfolio.mark_price(data.symbol, Decimal(str(data.price)))
+        # Ticks only maintain mark-to-market, accrue funding, force-close
+        # liquidations, process resting orders and trigger stop/TP exits.
+        # Entries are evaluated separately on real candles in the entry loop.
+        mark = Decimal(str(data.price))
+        # Funding accrual first (signed 8h): mutates cash so the equity snapshot
+        # below reflects current carry cost.
+        try:
+            for position in self.portfolio.open_positions():
+                if position.symbol == data.symbol:
+                    await self.broker.accrue_funding(position, datetime.now(UTC))
+        except Exception:
+            logger.warning("paper tick: funding accrual failed for %s", data.symbol, exc_info=True)
+        # Mark + liquidation check (force-close leveraged losers crossing maint).
+        self.portfolio.mark_price(data.symbol, mark, mark_price=mark)
+        await self._maybe_liquidate(data)
+        # Process resting limit / stop / OCO orders (fills / triggers / cancels).
+        await self._process_open_orders(data)
+        # Then position exits (stops / take-profits / trailing).
         self._handle_position_exits(data)
         self.portfolio.record_equity()
+
+    async def _maybe_liquidate(self, data: MarketData) -> None:
+        """Force-close any leveraged position whose mark has crossed maintenance."""
+        try:
+            positions = (
+                self.db.query(PaperPosition)
+                .filter(PaperPosition.account_id == self.account.id, PaperPosition.symbol == data.symbol,
+                        PaperPosition.is_open.is_(True))
+                .all()
+            )
+        except Exception:
+            logger.warning("paper tick: liquidation scan failed for %s", data.symbol, exc_info=True)
+            return
+        mark = Decimal(str(data.price))
+        for position in positions:
+            try:
+                if self.broker.open_liquidation_check(position, mark):
+                    await self.broker.close_position(position, data, "liquidation", force_liquidation=True)
+                    self._last_close_ts[data.symbol] = time()
+                    self._log("liquidation_triggered",
+                              f"{data.symbol} liquidated at ~{mark} (leverage={position.leverage})",
+                              {"symbol": data.symbol, "mark": str(mark), "leverage": str(position.leverage) if position.leverage else None})
+            except Exception:
+                logger.warning("paper tick: liquidation close failed for %s", data.symbol, exc_info=True)
+
+    async def _process_open_orders(self, data: MarketData) -> None:
+        """Process resting limit / stop / stop-limit / OCO orders on a tick.
+
+        - Stop orders: trigger when the tick breaches the stop price -> market fill.
+        - Limit orders: fill when the bar trades through the limit price.
+        - IOC/FOK orders that can't fill get cancelled.
+        - OCO sibling cancellations happen via the broker's linked_order_id hook.
+        """
+        try:
+            orders = (
+                self.db.query(PaperOrder)
+                .filter(
+                    PaperOrder.account_id == self.account.id,
+                    PaperOrder.symbol == data.symbol,
+                    PaperOrder.status == PaperOrderStatus.pending,
+                    PaperOrder.order_type.in_((PaperOrderType.limit, PaperOrderType.stop, PaperOrderType.stop_limit, PaperOrderType.stop_loss)),
+                )
+                .all()
+            )
+        except Exception:
+            logger.warning("paper tick: open-orders scan failed for %s", data.symbol, exc_info=True)
+            return
+        for order in orders:
+            try:
+                if order.order_type in (PaperOrderType.stop, PaperOrderType.stop_loss, PaperOrderType.stop_limit):
+                    if self.broker.check_stop_trigger(order, data):
+                        await self.broker.trigger_stop_order(order, data)
+                elif order.order_type == PaperOrderType.limit:
+                    await self.broker.fill_limit_order(order, data)
+            except Exception:
+                logger.warning("paper tick: order processing failed for order %s", order.id, exc_info=True)
 
     async def execute_signal(
         self, signal: TradingSignal, data: MarketData, risk_mult: Decimal = Decimal("1")
@@ -602,7 +673,7 @@ class PaperTradingEngine:
             except Exception:
                 logger.warning("paper entry: Kelly scaling failed for %s", signal.symbol, exc_info=True)
 
-        order = self.order_manager.execute_signal(signal, quantity, data)
+        order = await self.order_manager.execute_signal(signal, quantity, data)
         if order:
             logger.info("paper TRADE OPENED | %s %s qty=%s @ %s",
                         signal.symbol, signal.side, quantity, data.price)
@@ -639,12 +710,19 @@ class PaperTradingEngine:
         close_qty = position.quantity * fraction
         if close_qty <= 0:
             return
-        self.broker.close_position(position, data, "scale_out", quantity=close_qty)
+        # close_position is async; we are inside the async tick loop.
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.ensure_future(self.broker.close_position(position, data, "scale_out", quantity=close_qty), loop=loop)
+        except RuntimeError:
+            self.broker.close_position_sync(position, data, "scale_out", quantity=close_qty)
         self._log("scale_out", f"{data.symbol}: scaled out {close_qty} @ {price} (profit={profit:.4f})")
 
         # Move remainder to breakeven
         if getattr(s, "move_to_breakeven_on_scale_out", True):
-            round_trip_fee = position.average_entry_price * Decimal("0.002")
+            round_trip_fee = position.average_entry_price * self.broker.round_trip_fee_fraction()
             if is_short:
                 position.stop_loss = position.average_entry_price - round_trip_fee
             else:
@@ -653,7 +731,8 @@ class PaperTradingEngine:
         position.scaled_out = True
         self._log("scale_out_done", f"{data.symbol}: scaled out, remainder stop @ {position.stop_loss}")
 
-    def _handle_position_exits(self, data: MarketData) -> None:
+    async def _handle_position_exits(self, data: MarketData) -> None:
+        """Stop/TP/trailing/breakeven exits for open positions on the tick."""
         positions = (
             self.db.query(PaperPosition)
             .filter(PaperPosition.account_id == self.account.id, PaperPosition.symbol == data.symbol, PaperPosition.is_open.is_(True))
@@ -688,7 +767,7 @@ class PaperTradingEngine:
                 else:
                     profit_pct = (price - position.average_entry_price) / position.average_entry_price
                 if profit_pct >= breakeven_trigger:
-                    round_trip_fee = position.average_entry_price * Decimal("0.002")
+                    round_trip_fee = position.average_entry_price * self.broker.round_trip_fee_fraction()
                     if is_short:
                         position.stop_loss = position.average_entry_price - round_trip_fee
                     else:
@@ -744,24 +823,24 @@ class PaperTradingEngine:
             if is_short:
                 if position.stop_loss and price >= position.stop_loss:
                     reason = "trailing_stop" if position.breakeven_triggered else "stop_loss"
-                    self.broker.close_position(position, data, reason)
+                    await self.broker.close_position(position, data, reason)
                     self._last_close_ts[data.symbol] = time()
                     self._log(f"{reason}_triggered", f"{data.symbol} {reason} triggered at ~{price}")
                     self._log("trade_closed", f"{data.symbol} closed ({reason}) at ~{price}")
                 elif tp_active and position.take_profit and price <= position.take_profit:
-                    self.broker.close_position(position, data, "take_profit")
+                    await self.broker.close_position(position, data, "take_profit")
                     self._last_close_ts[data.symbol] = time()
                     self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
                     self._log("trade_closed", f"{data.symbol} closed (take_profit) at ~{price}")
             else:
                 if position.stop_loss and price <= position.stop_loss:
                     reason = "trailing_stop" if position.breakeven_triggered else "stop_loss"
-                    self.broker.close_position(position, data, reason)
+                    await self.broker.close_position(position, data, reason)
                     self._last_close_ts[data.symbol] = time()
                     self._log(f"{reason}_triggered", f"{data.symbol} {reason} triggered at ~{price}")
                     self._log("trade_closed", f"{data.symbol} closed ({reason}) at ~{price}")
                 elif tp_active and position.take_profit and price >= position.take_profit:
-                    self.broker.close_position(position, data, "take_profit")
+                    await self.broker.close_position(position, data, "take_profit")
                     self._last_close_ts[data.symbol] = time()
                     self._log("take_profit_triggered", f"{data.symbol} take profit triggered at ~{price}")
                     self._log("trade_closed", f"{data.symbol} closed (take_profit) at ~{price}")

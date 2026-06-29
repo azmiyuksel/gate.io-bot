@@ -69,6 +69,59 @@ class PaperOrderType(StrEnum):
     limit = "limit"
     stop_loss = "stop_loss"
     stop_limit = "stop_limit"
+    stop = "stop"
+    oco = "oco"
+
+
+class PaperTimeInForce(StrEnum):
+    """Time-in-force semantics for paper orders.
+
+    GTC    : Good-till-cancelled — rests on the book until filled or cancelled.
+    IOC    : Immediate-or-cancel — any unfilled portion is dropped right away.
+    FOK    : Fill-or-kill — either fully fills immediately or is cancelled.
+    POST   : Post-only — rejected if it would cross the book (always a maker).
+    """
+
+    gtc = "GTC"
+    ioc = "IOC"
+    fok = "FOK"
+    post = "POST"
+
+
+class PaperPositionSide(StrEnum):
+    """Side of a position in hedge-mode accounting.
+
+    Long  : a bought/net-long position (long pays funding when rate > 0).
+    Short : a sold/net-short position (short receives funding when rate > 0).
+    Net   : one-way netting (the only mode before hedge support).
+    """
+
+    long = "long"
+    short = "short"
+    net = "net"
+
+
+class PaperPositionMode(StrEnum):
+    one_way = "one_way"
+    hedge = "hedge"
+
+
+class PaperMarginMode(StrEnum):
+    cross = "cross"
+    isolated = "isolated"
+
+
+class PaperOrderExitReason(StrEnum):
+    stop_loss = "stop_loss"
+    take_profit = "take_profit"
+    trailing_stop = "trailing_stop"
+    breakeven = "breakeven"
+    scale_out = "scale_out"
+    signal_cover = "signal_cover"
+    signal_sell = "signal_sell"
+    manual_close = "manual_close"
+    liquidation = "liquidation"
+    funding = "funding"
 
 
 class RebalanceTrigger(StrEnum):

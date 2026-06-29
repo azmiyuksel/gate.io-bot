@@ -13,6 +13,8 @@ class PaperOrderType(StrEnum):
     limit = "limit"
     stop_loss = "stop_loss"
     stop_limit = "stop_limit"
+    stop = "stop"
+    oco = "oco"
 
 
 @dataclass(frozen=True)

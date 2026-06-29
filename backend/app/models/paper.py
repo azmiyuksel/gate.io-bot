@@ -14,7 +14,17 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
-from app.models.enums import LogLevel, OrderSide, PaperBotStatus, PaperOrderStatus, PaperOrderType
+from app.models.enums import (
+    LogLevel,
+    OrderSide,
+    PaperBotStatus,
+    PaperMarginMode,
+    PaperOrderStatus,
+    PaperOrderType,
+    PaperPositionMode,
+    PaperPositionSide,
+    PaperTimeInForce,
+)
 
 
 def now_utc() -> datetime:
@@ -37,6 +47,12 @@ class PaperAccount(Base):
     # is expressed in leverage terms (5x) rather than a spot <=1 fraction.
     max_exposure_pct: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=Decimal("5.00"))
     max_open_positions: Mapped[int] = mapped_column(default=8)
+    # Position-accounting mode: one_way (the legacy netting auto-flip behaviour)
+    # or hedge (long & short open simultaneously on the same symbol).
+    position_mode: Mapped[PaperPositionMode] = mapped_column(String(8), default=PaperPositionMode.one_way)
+    # Margin mode is documentary parity with live (cross vs isolated); the paper
+    # liquidation engine uses a single maintenance tier regardless of mode.
+    margin_mode: Mapped[PaperMarginMode] = mapped_column(String(8), default=PaperMarginMode.cross)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
@@ -63,6 +79,14 @@ class PaperOrder(Base):
     fee_paid: Mapped[Decimal] = mapped_column(Numeric(24, 10), default=Decimal("0"))
     latency_ms: Mapped[int] = mapped_column(default=0)
     signal: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Order semantics: time-in-force (GTC/IOC/FOK/POST), post-only (maker-only),
+    # reduce-only (cannot increase position), OCO pair link (when one fills the
+    # other is auto-cancelled), and position_side for hedge-mode accounting.
+    time_in_force: Mapped[PaperTimeInForce] = mapped_column(String(8), default=PaperTimeInForce.gtc)
+    reduce_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    post_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    linked_order_id: Mapped[int | None] = mapped_column(nullable=True)
+    position_side: Mapped[PaperPositionSide | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     filled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -123,6 +147,23 @@ class PaperPosition(Base):
     is_open: Mapped[bool] = mapped_column(Boolean, default=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Futures realism fields: leverage + posted margin + liquidation/mark price so
+    # a leveraged loser can be force-closed at maintenance instead of letting
+    # equity sink unboundedly negative. NULL leverage means cash/spot (1x).
+    leverage: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    margin: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    liquidation_price: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    mark_price: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    # Signed funding accrual: ``last_funding_ts`` tracks the previous 8h
+    # settlement so the engine can charge/pay funding periodically (not just at
+    # close as a flat positive daily tax). ``last_funding_rate`` is cached for
+    # dashboard display of the in-force carry.
+    last_funding_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_funding_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 10), nullable=True)
+    # Hedge-mode side (long/short/net). In one-way mode this is derived from
+    # ``side`` ("buy" -> long, "sell" -> short) but is stored explicitly so the
+    # one-way -> hedge migration need not backfill positions.
+    position_side: Mapped[PaperPositionSide | None] = mapped_column(String(8), nullable=True)
 
     account: Mapped[PaperAccount] = relationship(back_populates="positions")
 

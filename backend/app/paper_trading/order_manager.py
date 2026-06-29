@@ -13,12 +13,12 @@ class PaperOrderManager:
         self.broker = PaperBroker(db, account)
         self._last_signal_key: str | None = None
 
-    def execute_signal(self, signal: TradingSignal, quantity, data: MarketData) -> PaperOrder | None:
+    async def execute_signal(self, signal: TradingSignal, quantity, data: MarketData) -> PaperOrder | None:
         signal_key = f"{signal.strategy}:{signal.symbol}:{signal.side}:{int(signal.timestamp.timestamp())}"
         if signal_key == self._last_signal_key:
             return None
         self._last_signal_key = signal_key
-        return self.broker.submit_signal(signal, quantity, data)
+        return await self.broker.submit_signal(signal, quantity, data)
 
     def pending_orders(self) -> list[PaperOrder]:
         return (

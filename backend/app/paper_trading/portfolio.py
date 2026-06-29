@@ -55,12 +55,18 @@ class PaperPortfolio:
         exposure = sum(position.quantity * position.last_price for position in self.open_positions())
         return exposure / equity
 
-    def mark_price(self, symbol: str, price: Decimal) -> None:
+    def mark_price(self, symbol: str, price: Decimal, *, mark_price: Decimal | None = None) -> None:
+        """Update a position's last price (and mark price if given — used by the
+        liquidation engine). Recomputes unrealized PnL as pure price-PnL (entry
+        fees and funding are accounted separately on close) so the mark reflects
+        the live mark-to-market position panel."""
         changed = False
         for position in self.open_positions():
             if position.symbol != symbol:
                 continue
             position.last_price = price
+            if mark_price is not None:
+                position.mark_price = mark_price
             if position.side == "sell":
                 position.unrealized_pnl = (position.average_entry_price - price) * position.quantity
             else:
