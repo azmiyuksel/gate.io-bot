@@ -14,3 +14,24 @@ dockerfilePath = "./Dockerfile"
 [deploy]
 startCommand = "python -m app.workers.paper_worker"
 restartPolicyType = "always"
+
+# Paper-trading realism defaults. Surfaced here (not just in app settings) so a
+# fresh Railway deployment ships with the same slim-crypto realism defaults the
+# code expects, WITHOUT requiring the operator to hand-set a dozen envs in the
+# dashboard before the worker can trade. Override any of these per-environment
+# (e.g. raise PAPER_MAX_IMPACT and lower PAPER_MIN_DEPTH for low-cap alts) using
+# Railway's Shared Variables / service variables — those overrides take
+# precedence over the in-toml defaults.
+[variables]
+ENVIRONMENT = "production"
+PAPER_AUTOSTART_ON_BOOT = "true"
+PAPER_ACCOUNT_NAME = "default"
+PAPER_LEGACY_FUTURES_MIGRATION_ENABLED = "false"
+PAPER_MAX_IMPACT = "0.02"
+PAPER_MIN_DEPTH = "5000"
+PAPER_IMPACT_COEF = "0.001"
+PAPER_DEPTH_FRACTION = "0.05"
+PAPER_MAINTENANCE_MARGIN_PCT = "0.005"
+PAPER_FUNDING_INTERVAL_HOURS = "8"
+PAPER_MIN_NOTIONAL = "1.0"
+PAPER_QTY_STEP_DEFAULT = "0.001"
