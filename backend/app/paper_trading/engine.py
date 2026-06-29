@@ -522,7 +522,7 @@ class PaperTradingEngine:
         # Process resting limit / stop / OCO orders (fills / triggers / cancels).
         await self._process_open_orders(data)
         # Then position exits (stops / take-profits / trailing).
-        self._handle_position_exits(data)
+        await self._handle_position_exits(data)
         self.portfolio.record_equity()
 
     async def _maybe_liquidate(self, data: MarketData) -> None:
