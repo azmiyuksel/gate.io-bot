@@ -22,13 +22,11 @@ STRATEGY_NAME = "momentum_breakout_v1"
 
 
 class MomentumBreakoutStrategy:
-    """EMA-trend + Donchian breakout + volume-expansion momentum entries.
+    """EMA-trend + volume-expansion momentum entries (no breakout requirement).
 
     LONG  when: fast EMA > slow EMA (up momentum), price above the trend EMA,
-                close breaks above the prior N-bar high, volume expands, RSI not
-                already exhausted, and ATR is large enough to clear costs.
-    SHORT when: the mirror image (down momentum, below trend EMA, breaks the
-                prior N-bar low, volume expands, RSI not already exhausted).
+                volume expands, RSI not already exhausted.
+    SHORT when: mirror image (down momentum, below trend EMA, volume expands).
     """
 
     name: str = STRATEGY_NAME
@@ -40,46 +38,18 @@ class MomentumBreakoutStrategy:
         self.ema_fast = int(s.momentum_ema_fast)
         self.ema_slow = int(s.momentum_ema_slow)
         self.ema_trend = int(s.momentum_ema_trend)
-        self.donchian_lookback = int(s.momentum_donchian_lookback)
         self.vol_spike_mult = Decimal(str(s.momentum_vol_spike_mult))
         self.rsi_long_max = Decimal(str(s.momentum_rsi_long_max))
         self.rsi_short_min = Decimal(str(s.momentum_rsi_short_min))
         self.min_atr_pct = Decimal(str(s.momentum_min_atr_pct))
-        self.breakout_buffer_atr = Decimal(str(s.momentum_breakout_buffer_atr))
-        # Round-trip cost floor: a breakout smaller than the realistic cost of
-        # round-tripping (2x taker + spread + slippage) is instantly underwater,
-        # so the breakout buffer is floored at this fraction of price. Without
-        # it, a "breakout" can fire inside the bid-ask and bleed fees on every
-        # such signal — a silent edge leak for a frequent-trading strategy.
-        #
-        # The configured constant is a floor, but a hardcoded constant silently
-        # understates cost when the actual fee tier is higher (e.g. spot base
-        # tier 0.2% vs the futures 0.05% the default 0.0022 was tuned for). Take
-        # the MAX of the configured constant and the cost implied by the ACTUAL
-        # configured fees (2x taker, crossing the spread twice) so the floor
-        # tracks what we really pay per market/tier and marginal breakouts that
-        # cannot clear cost are filtered out.
-        is_futures = s.trading_market.lower() == "futures"
-        taker = Decimal(str(s.paper_taker_fee if is_futures else s.paper_spot_taker_fee))
-        spread = Decimal(str(s.eq_default_spread))
-        implied_cost = taker * Decimal("2") + spread * Decimal("2")
-        self.round_trip_cost_pct = max(Decimal(str(s.momentum_round_trip_cost_pct)), implied_cost)
-        # Cost floor for the breakout buffer (see evaluate). Stored as a flag so
-        # evaluate() doesn't need to re-read settings (which is lru_cached anyway,
-        # but this keeps the strategy self-contained and testable).
-        self.cost_floor_enabled = bool(getattr(s, "momentum_cost_floor_enabled", True))
-        # Symmetric strategy: shorts are always allowed (futures). Kept as a flag so
-        # a long-only (spot) deployment can disable shorts without code changes.
         self.allow_short = bool(s.momentum_allow_short)
 
     def evaluate(self, candles: list[dict]) -> Signal:
-        min_history = max(self.ema_trend, self.donchian_lookback) + 5
+        min_history = self.ema_trend + 5
         if len(candles) < min_history:
             return Signal(False, "", "not_enough_history")
 
         closes = [Decimal(str(c["close"])) for c in candles]
-        highs = [Decimal(str(c["high"])) for c in candles]
-        lows = [Decimal(str(c["low"])) for c in candles]
         last_price = closes[-1]
 
         ema_f = ema(closes, self.ema_fast)
@@ -100,27 +70,8 @@ class MomentumBreakoutStrategy:
         # incomplete volume that would artificially fail the check.
         vol_ratio = self._volume_ratio(candles)
 
-        # Breakout reference levels: the prior N-bar extreme EXCLUDING the forming bar.
-        window_high = max(highs[-self.donchian_lookback - 1 : -1])
-        window_low = min(lows[-self.donchian_lookback - 1 : -1])
-        # Buffer floored at the round-trip cost: a breakout must clear the prior
-        # extreme by AT LEAST the cost of round-tripping, otherwise it fires
-        # inside the bid-ask+fees band and is instantly underwater. The ATR-based
-        # buffer is the noise filter; the cost floor is the economic floor.
-        # The cost floor is valuable live (real fees) but can be disabled for
-        # paper so the strategy produces more observable breakouts (paper already
-        # simulates fees at fill time, so the cost floor is double-counting here).
-        atr_buffer = atr_v * self.breakout_buffer_atr
-        cost_buffer = last_price * self.round_trip_cost_pct
-        if self.cost_floor_enabled:
-            buffer = max(atr_buffer, cost_buffer)
-        else:
-            buffer = atr_buffer
-
         up_momentum = ema_f > ema_s and last_price > ema_t
         down_momentum = ema_f < ema_s and last_price < ema_t
-        breaks_high = last_price > window_high + buffer
-        breaks_low = last_price < window_low - buffer
         vol_ok = vol_ratio >= self.vol_spike_mult
         atr_ok = atr_pct >= self.min_atr_pct
 
@@ -132,8 +83,6 @@ class MomentumBreakoutStrategy:
             "price": float(last_price),
             "atr_pct": float(atr_pct),
             "vol_ratio": float(vol_ratio),
-            "window_high": float(window_high),
-            "window_low": float(window_low),
         }
 
         if not atr_ok:
@@ -141,28 +90,23 @@ class MomentumBreakoutStrategy:
         if not vol_ok:
             return Signal(False, "", "low_volume", diagnostics=diag)
 
-        if up_momentum and breaks_high:
+        if up_momentum:
             if rsi_v >= self.rsi_long_max:
                 return Signal(False, "", "rsi_extended", diagnostics=diag)
             return Signal(
-                True, "long", "long_breakout", last_price, atr_v, diagnostics=diag,
-                # Trend-following: no fixed take-profit. Let winners run via
-                # trailing + breakeven — a fixed R:R TP cuts the big winners
-                # that are the main edge of a breakout strategy.
+                True, "long", "long_momentum", last_price, atr_v, diagnostics=diag,
                 expectancy_type="trend",
             )
 
-        if self.allow_short and down_momentum and breaks_low:
+        if self.allow_short and down_momentum:
             if rsi_v <= self.rsi_short_min:
                 return Signal(False, "", "rsi_extended", diagnostics=diag)
             return Signal(
-                True, "short", "short_breakout", last_price, atr_v, diagnostics=diag,
+                True, "short", "short_momentum", last_price, atr_v, diagnostics=diag,
                 expectancy_type="trend",
             )
 
-        if not (up_momentum or down_momentum):
-            return Signal(False, "", "no_momentum", diagnostics=diag)
-        return Signal(False, "", "no_breakout", diagnostics=diag)
+        return Signal(False, "", "no_momentum", diagnostics=diag)
 
     def _volume_ratio(self, candles: list[dict]) -> Decimal:
         base_volumes: list[Decimal] = []

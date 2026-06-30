@@ -26,37 +26,33 @@ def _base_series(n: int, start: float, step: float) -> list[dict]:
 def test_long_breakout_fires():
     candles = _base_series(60, 100.0, 0.004)
     window_high = max(c["high"] for c in candles[-21:-1])
-    # Breakout bar: clears the prior 20-bar high by ~1% (comfortably above the
-    # round-trip cost floor, which now tracks the real fee tier) on a volume spike.
     bar = window_high * 1.01
     candles.append(_candle(bar, high=bar * 1.001, low=bar * 0.999, volume=5000.0))
 
     sig = MomentumBreakoutStrategy().evaluate(candles)
     assert sig.should_enter is True
     assert sig.direction == "long"
-    assert sig.reason == "long_breakout"
+    assert sig.reason == "long_momentum"
     assert sig.atr_value is not None
 
 
 def test_short_breakout_fires():
-    # Mild downtrend, then a breakdown bar on volume.
     candles = _base_series(60, 100.0, -0.004)
     window_low = min(c["low"] for c in candles[-21:-1])
-    # ~1% breakdown — comfortably below the round-trip cost floor.
     bar = window_low * 0.99
     candles.append(_candle(bar, high=bar * 1.001, low=bar * 0.999, volume=5000.0))
 
     sig = MomentumBreakoutStrategy().evaluate(candles)
     assert sig.should_enter is True
     assert sig.direction == "short"
-    assert sig.reason == "short_breakout"
+    assert sig.reason == "short_momentum"
 
 
-def test_no_breakout_in_flat_market():
-    candles = [_candle(100.0 + (i % 2) * 0.05, volume=1000.0) for i in range(60)]
+def test_no_momentum_in_flat_market():
+    candles = [_candle(100.0, volume=1000.0) for i in range(60)]
     sig = MomentumBreakoutStrategy().evaluate(candles)
     assert sig.should_enter is False
-    assert sig.reason in {"no_breakout", "no_momentum", "atr_too_low", "low_volume"}
+    assert sig.reason == "no_momentum"
 
 
 def test_low_volume_blocks_entry():
