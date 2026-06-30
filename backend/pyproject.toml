@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=82.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -10,36 +10,36 @@ name = "gateio-capital-bot"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-  "alembic>=1.13.0",
-  "apscheduler>=3.10.4",
-  "cryptography>=42.0.0",
-  "fastapi>=0.111.0",
-  "httpx>=0.27.0",
-  "numpy>=1.26.4",
-  "optuna>=3.6.1",
-  "pandas>=2.2.2",
-  "bcrypt>=4.0.1",
-  "plotly>=5.22.0",
-  "joblib>=1.4.2",
-  "scikit-learn>=1.5.0",
-  "prometheus-client>=0.20.0",
-  "pydantic[email]>=2.7.0",
-  "psycopg[binary]>=3.1.18",
-  "pydantic-settings>=2.2.1",
-  "pyjwt>=2.8.0",
-  "python-dotenv>=1.0.1",
-  "python-multipart>=0.0.9",
-  "redis>=5.0.3",
-  "sqlalchemy>=2.0.29",
-  "uvicorn[standard]>=0.29.0",
-  "websockets>=12.0",
+  "alembic>=1.18.5",
+  "apscheduler>=3.11.3",
+  "cryptography>=49.0.0",
+  "fastapi>=0.138.2",
+  "httpx>=0.28.1",
+  "numpy>=2.5.0",
+  "optuna>=4.9.0",
+  "pandas>=3.0.3",
+  "bcrypt>=5.0.0",
+  "plotly>=6.8.0",
+  "joblib>=1.5.3",
+  "scikit-learn>=1.9.0",
+  "prometheus-client>=0.25.0",
+  "pydantic[email]>=2.13.4",
+  "psycopg[binary]>=3.3.4",
+  "pydantic-settings>=2.14.2",
+  "pyjwt>=2.13.0",
+  "python-dotenv>=1.2.2",
+  "python-multipart>=0.0.32",
+  "redis>=8.0.1",
+  "sqlalchemy>=2.0.51",
+  "uvicorn[standard]>=0.49.0",
+  "websockets>=16.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.1.1",
-  "pytest-asyncio>=0.23.6",
-  "ruff>=0.4.0",
+  "pytest>=9.1.1",
+  "pytest-asyncio>=1.4.0",
+  "ruff>=0.15.20",
 ]
 
 [tool.pytest.ini_options]
