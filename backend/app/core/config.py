@@ -390,7 +390,7 @@ class Settings(BaseSettings):
     )
     # Minimum volume ratio: reject entries when current volume is below this fraction
     # of the recent average volume (e.g., 0.3 = 30% of average).
-    strategy_min_volume_ratio: float = 0.3
+    strategy_min_volume_ratio: float = 0.0
     # Maximum absolute dollar loss per trade as a fraction of equity. This provides
     # a hard cap on any single trade's risk, protecting against flash crashes where
     # the stop-loss distance is wide but the trade size is large.
