@@ -11,13 +11,13 @@ def _candle(close: float, high: float | None = None, low: float | None = None, v
 def _base_series(n: int, start: float, step: float) -> list[dict]:
     """A mild, choppy trend so EMAs align but RSI stays out of the extremes.
 
-    Each bar drifts ``step`` in the trend direction, then gives back 60% of it,
-    so net drift is one-directional while gains≈losses keep RSI mid-range.
+    Each bar drifts ``step`` in the trend direction, then gives back 80% of it,
+    so net drift is mild while gains≈losses keep RSI mid-range.
     """
     candles = []
     price = start
     for i in range(n):
-        delta = step if i % 2 == 0 else -step * 0.6
+        delta = step if i % 2 == 0 else -step * 0.8
         price += price * delta
         candles.append(_candle(price))
     return candles
@@ -64,7 +64,7 @@ def test_low_volume_blocks_entry():
     window_high = max(c["high"] for c in candles[-21:-1])
     bar = window_high * 1.01
     # Same breakout price but NO volume expansion -> rejected.
-    candles.append(_candle(bar, high=bar * 1.002, low=bar * 0.999, volume=500.0))
+    candles.append(_candle(bar, high=bar * 1.002, low=bar * 0.999, volume=50.0))
     sig = MomentumBreakoutStrategy().evaluate(candles)
     assert sig.should_enter is False
     assert sig.reason == "low_volume"

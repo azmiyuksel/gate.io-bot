@@ -96,6 +96,8 @@ class MomentumBreakoutStrategy:
         atr_pct = atr_v / last_price
 
         # Volume expansion vs the recent average (base volume; fall back to quote/price).
+        # Use the last closed candle's volume for comparison — the forming bar has
+        # incomplete volume that would artificially fail the check.
         vol_ratio = self._volume_ratio(candles)
 
         # Breakout reference levels: the prior N-bar extreme EXCLUDING the forming bar.
@@ -164,7 +166,8 @@ class MomentumBreakoutStrategy:
 
     def _volume_ratio(self, candles: list[dict]) -> Decimal:
         base_volumes: list[Decimal] = []
-        for c in candles:
+        last_closed_idx = -1
+        for i, c in enumerate(candles):
             vol = c.get("volume")
             if vol is not None:
                 base_volumes.append(Decimal(str(vol)))
@@ -173,8 +176,16 @@ class MomentumBreakoutStrategy:
                 base_volumes.append(Decimal(str(c["quote_volume"])) / close if close > 0 else Decimal("0"))
             else:
                 base_volumes.append(Decimal("0"))
+            if c.get("closed", True):
+                last_closed_idx = i
         if len(base_volumes) < 20:
             return Decimal("1")
         recent = base_volumes[-20:]
         avg = sum(recent) / Decimal(len(recent))
-        return base_volumes[-1] / avg if avg > 0 else Decimal("1")
+        # Use the last closed candle's volume; fall back to the very last bar
+        # if none are marked (e.g. tests that omit the field).
+        if last_closed_idx >= 0 and last_closed_idx < len(base_volumes):
+            last_vol = base_volumes[last_closed_idx]
+        else:
+            last_vol = base_volumes[-1]
+        return last_vol / avg if avg > 0 else Decimal("1")
