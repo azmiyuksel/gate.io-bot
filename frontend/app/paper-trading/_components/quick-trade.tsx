@@ -2,6 +2,7 @@
 
 import { Plus, Zap } from "lucide-react";
 
+import { DEFAULT_TICKER_SYMBOLS } from "@/components/live-prices";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { manualPaperOrder } from "@/lib/paper-api";
@@ -21,8 +22,7 @@ interface Props {
   toast: ToastFn;
 }
 
-// Shared with LivePrices (DEFAULT_TICKER_SYMBOLS) — keep in sync.
-const SYMBOLS = ["BTC_USDT", "ETH_USDT", "BNB_USDT", "SOL_USDT", "XRP_USDT", "DOGE_USDT", "ADA_USDT", "AVAX_USDT", "LINK_USDT", "DOT_USDT"];
+const SYMBOLS = DEFAULT_TICKER_SYMBOLS;
 
 export default function QuickTrade({
   symbol,

@@ -14,11 +14,27 @@ import { fmtPrice } from "@/lib/utils";
 
 const GATEIO_WS = "wss://api.gateio.ws/ws/v4/";
 
-// Curated, liquid majors shown by default. Override via the `symbols` prop.
+// Keep in sync with backend `trading_symbols` (config.py) — exported so
+// QuickTrade and other widgets reuse the same universe.
 export const DEFAULT_TICKER_SYMBOLS = [
-  "BTC_USDT", "ETH_USDT", "BNB_USDT", "SOL_USDT", "XRP_USDT", "DOGE_USDT",
-  "ADA_USDT", "AVAX_USDT", "LINK_USDT", "TRX_USDT", "DOT_USDT", "LTC_USDT",
+  "BTC_USDT", "ETH_USDT", "BNB_USDT", "XRP_USDT", "SOL_USDT", "DOGE_USDT",
+  "ADA_USDT", "TRX_USDT", "LINK_USDT", "AVAX_USDT", "DOT_USDT", "LTC_USDT",
+  "BCH_USDT", "ATOM_USDT", "UNI_USDT", "XLM_USDT", "NEAR_USDT", "APT_USDT",
+  "ARB_USDT", "OP_USDT", "FIL_USDT", "INJ_USDT", "SUI_USDT", "SEI_USDT",
+  "TIA_USDT", "PENDLE_USDT", "WLD_USDT", "FET_USDT", "RENDER_USDT", "STX_USDT",
+  "IMX_USDT", "MANTA_USDT", "JUP_USDT", "PYTH_USDT", "WIF_USDT", "BONK_USDT",
+  "PEPE_USDT", "FLOKI_USDT", "MEME_USDT", "ORDI_USDT", "SATS_USDT",
+  "TON_USDT", "AAVE_USDT", "ENA_USDT", "EIGEN_USDT", "GRT_USDT", "ALGO_USDT",
+  "SAND_USDT", "MANA_USDT", "AXS_USDT", "GALA_USDT", "THETA_USDT", "FLOW_USDT",
+  "CRV_USDT", "SNX_USDT", "COMP_USDT", "SUSHI_USDT", "DYDX_USDT", "LDO_USDT",
+  "APE_USDT", "ZEC_USDT", "DASH_USDT", "HBAR_USDT", "VET_USDT", "CAKE_USDT",
+  "RUNE_USDT", "GMX_USDT", "BLUR_USDT", "ENJ_USDT", "CHZ_USDT", "XEC_USDT",
+  "KAVA_USDT", "ALPACA_USDT", "BIGTIME_USDT", "CORE_USDT", "STRK_USDT",
+  "ETHFI_USDT", "OMNI_USDT", "REZ_USDT", "DMAIL_USDT", "BLST_USDT", "MKR_USDT",
+  "XAI_USDT", "PORTAL_USDT", "ZRO_USDT", "LAST_USDT", "IO_USDT", "ZK_USDT",
 ];
+
+const PAGE_SIZE = 24;
 
 interface Tick {
   last: number;
@@ -35,6 +51,7 @@ interface Props {
 export default function LivePrices({ symbols = DEFAULT_TICKER_SYMBOLS, title = "Canlı Kurlar" }: Props) {
   const [ticks, setTicks] = useState<Record<string, Tick>>({});
   const [status, setStatus] = useState<Status>("connecting");
+  const [page, setPage] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const flashRef = useRef<Record<string, "up" | "down">>({});
 
@@ -126,6 +143,11 @@ export default function LivePrices({ symbols = DEFAULT_TICKER_SYMBOLS, title = "
     };
   }, [symbolsKey]);
 
+  const allSymbols = useMemo(() => symbolsKey.split(","), [symbolsKey]);
+  const totalPages = Math.max(1, Math.ceil(allSymbols.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageSymbols = allSymbols.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+
   const statusLabel =
     status === "live" ? "Canlı" : status === "connecting" ? "Bağlanıyor…" : "Yeniden bağlanıyor…";
   const statusColor = status === "live" ? "bg-green-500" : "bg-amber-500";
@@ -137,11 +159,11 @@ export default function LivePrices({ symbols = DEFAULT_TICKER_SYMBOLS, title = "
         <span className="flex items-center gap-1.5 text-xs text-muted">
           <span className={`h-2 w-2 rounded-full ${statusColor} ${status === "live" ? "animate-pulse" : ""}`} />
           {statusLabel}
-          <span className="ml-1 hidden sm:inline">· Gate.io</span>
+          <span className="ml-1 hidden sm:inline">· Gate.io · {allSymbols.length} parite</span>
         </span>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-        {symbolsKey.split(",").map((sym) => {
+        {pageSymbols.map((sym) => {
           const t = ticks[sym];
           const up = (t?.changePct ?? 0) >= 0;
           const flash = flashRef.current[sym];
@@ -177,6 +199,29 @@ export default function LivePrices({ symbols = DEFAULT_TICKER_SYMBOLS, title = "
           );
         })}
       </div>
+      {totalPages > 1 && (
+        <div className="mt-3 flex items-center justify-center gap-2 text-xs">
+          <button
+            type="button"
+            disabled={safePage === 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            className="rounded border border-border px-2 py-1 text-muted transition-colors hover:bg-border/40 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            ‹ Önceki
+          </button>
+          <span className="tabular-nums text-muted">
+            {safePage + 1} / {totalPages}
+          </span>
+          <button
+            type="button"
+            disabled={safePage >= totalPages - 1}
+            onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+            className="rounded border border-border px-2 py-1 text-muted transition-colors hover:bg-border/40 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Sonraki ›
+          </button>
+        </div>
+      )}
       <p className="mt-2 text-[10px] text-muted">
         Veriler Gate.io spot piyasasından canlı alınır; gecikmeli olabilir, yatırım tavsiyesi değildir.
       </p>
