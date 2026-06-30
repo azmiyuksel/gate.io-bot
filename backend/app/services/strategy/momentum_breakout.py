@@ -38,7 +38,6 @@ class MomentumBreakoutStrategy:
         self.ema_fast = int(s.momentum_ema_fast)
         self.ema_slow = int(s.momentum_ema_slow)
         self.ema_trend = int(s.momentum_ema_trend)
-        self.vol_spike_mult = Decimal(str(s.momentum_vol_spike_mult))
         self.rsi_long_max = Decimal(str(s.momentum_rsi_long_max))
         self.rsi_short_min = Decimal(str(s.momentum_rsi_short_min))
         self.min_atr_pct = Decimal(str(s.momentum_min_atr_pct))
@@ -65,14 +64,8 @@ class MomentumBreakoutStrategy:
         # Volatility floor: skip dead markets where the move can't clear fees+slippage.
         atr_pct = atr_v / last_price
 
-        # Volume expansion vs the recent average (base volume; fall back to quote/price).
-        # Use the last closed candle's volume for comparison — the forming bar has
-        # incomplete volume that would artificially fail the check.
-        vol_ratio = self._volume_ratio(candles)
-
         up_momentum = ema_f > ema_s and last_price > ema_t
         down_momentum = ema_f < ema_s and last_price < ema_t
-        vol_ok = vol_ratio >= self.vol_spike_mult
         atr_ok = atr_pct >= self.min_atr_pct
 
         diag = {
@@ -82,13 +75,10 @@ class MomentumBreakoutStrategy:
             "ema_trend": float(ema_t),
             "price": float(last_price),
             "atr_pct": float(atr_pct),
-            "vol_ratio": float(vol_ratio),
         }
 
         if not atr_ok:
             return Signal(False, "", "atr_too_low", diagnostics=diag)
-        if not vol_ok:
-            return Signal(False, "", "low_volume", diagnostics=diag)
 
         if up_momentum:
             if rsi_v >= self.rsi_long_max:
@@ -107,29 +97,3 @@ class MomentumBreakoutStrategy:
             )
 
         return Signal(False, "", "no_momentum", diagnostics=diag)
-
-    def _volume_ratio(self, candles: list[dict]) -> Decimal:
-        base_volumes: list[Decimal] = []
-        last_closed_idx = -1
-        for i, c in enumerate(candles):
-            vol = c.get("volume")
-            if vol is not None:
-                base_volumes.append(Decimal(str(vol)))
-            elif c.get("quote_volume") is not None and c.get("close"):
-                close = Decimal(str(c["close"]))
-                base_volumes.append(Decimal(str(c["quote_volume"])) / close if close > 0 else Decimal("0"))
-            else:
-                base_volumes.append(Decimal("0"))
-            if c.get("closed", True):
-                last_closed_idx = i
-        if len(base_volumes) < 20:
-            return Decimal("1")
-        recent = base_volumes[-20:]
-        avg = sum(recent) / Decimal(len(recent))
-        # Use the last closed candle's volume; fall back to the very last bar
-        # if none are marked (e.g. tests that omit the field).
-        if last_closed_idx >= 0 and last_closed_idx < len(base_volumes):
-            last_vol = base_volumes[last_closed_idx]
-        else:
-            last_vol = base_volumes[-1]
-        return last_vol / avg if avg > 0 else Decimal("1")
