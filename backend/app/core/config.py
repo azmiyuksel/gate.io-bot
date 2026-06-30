@@ -241,9 +241,9 @@ class Settings(BaseSettings):
     # average — requiring >= 1.2x still rejected most bars (including legitimate
     # breakout bars) and the book rarely traded. 0.7 lets ordinary-volume breakouts
     # through while still filtering the deadest bars.
-    momentum_vol_spike_mult: float = 0.1
-    momentum_rsi_long_max: float = 70.0
-    momentum_rsi_short_min: float = 30.0
+    momentum_vol_spike_mult: float = 0.0
+    momentum_rsi_long_max: float = 80.0
+    momentum_rsi_short_min: float = 20.0
     # Minimum ATR as a fraction of price; below this the move can't clear costs.
     # Minimum ATR as a fraction of price; below this the move can't clear costs.
     # 0.15% (0.0015): BTC's typical 15m ATR is ~0.15-0.2%, so a 0.3% floor rejected

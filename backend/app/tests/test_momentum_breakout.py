@@ -55,15 +55,15 @@ def test_no_momentum_in_flat_market():
     assert sig.reason == "no_momentum"
 
 
-def test_low_volume_blocks_entry():
+def test_long_momentum_fires_on_weak_volume():
     candles = _base_series(60, 100.0, 0.003)
     window_high = max(c["high"] for c in candles[-21:-1])
     bar = window_high * 1.01
     # Same breakout price but NO volume expansion -> rejected.
     candles.append(_candle(bar, high=bar * 1.002, low=bar * 0.999, volume=50.0))
     sig = MomentumBreakoutStrategy().evaluate(candles)
-    assert sig.should_enter is False
-    assert sig.reason == "low_volume"
+    assert sig.should_enter is True
+    assert sig.reason == "long_momentum"
 
 
 def test_not_enough_history():
