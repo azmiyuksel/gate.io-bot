@@ -52,16 +52,16 @@ services:
 
   # ── Dashboard (always runs) ──────────────────────────────────────
   frontend:
-    build: ./frontend
+    image: node:22-alpine
+    working_dir: /app
     restart: unless-stopped
-    command: node server.js
+    command: sh -c "npm install && npm run dev"
     environment:
       BACKEND_URL: http://backend:8000
     ports:
       - "3000:3000"
     volumes:
       - ./frontend:/app
-      - /app/node_modules
     depends_on:
       - backend
 
