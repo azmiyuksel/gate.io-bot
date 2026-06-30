@@ -182,9 +182,11 @@ class GateIOClient:
         with no closed flag. We normalise both into one shape and return oldest→newest.
         """
         result = []
+        is_futures = False
         for item in reversed(data or []):
             if isinstance(item, dict):
                 # Futures candlestick format.
+                is_futures = True
                 close = Decimal(str(item["c"]))
                 quote_volume = Decimal(str(item.get("sum") or item.get("v") or "0"))
                 base_volume = Decimal(str(item.get("v") or "0"))
@@ -200,9 +202,8 @@ class GateIOClient:
                         "low": Decimal(str(item["l"])),
                         "open": Decimal(str(item["o"])),
                         # Futures API has no closed flag; the last bar is the
-                        # forming one and is filtered by drop_unclosed in the
-                        # spot path. For futures we rely on the caller, but to be
-                        # safe treat all but the last as closed.
+                        # forming one. We mark it closed=False after the loop
+                        # so drop_unclosed properly strips it.
                         "closed": True,
                     }
                 )
@@ -234,6 +235,10 @@ class GateIOClient:
                     "closed": closed,
                 }
             )
+        # Futures API has no closed flag; the last candle returned is the
+        # still-forming one. Mark it unclosed so drop_unclosed filters it.
+        if is_futures and result:
+            result[-1]["closed"] = False
         return result
 
     async def balances(self) -> list[dict]:
