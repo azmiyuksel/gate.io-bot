@@ -268,7 +268,7 @@ class Settings(BaseSettings):
     # (realistic live guard). When false, only the ATR-based noise buffer applies
     # — useful for paper so the strategy produces more observable breakouts
     # (paper simulates fees at fill time, so the cost floor is double-counting).
-    momentum_cost_floor_enabled: bool = True
+    momentum_cost_floor_enabled: bool = False
     momentum_allow_short: bool = True
 
     # --- Financing / funding carry on held positions ---

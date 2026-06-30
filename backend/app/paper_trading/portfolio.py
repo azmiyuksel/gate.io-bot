@@ -48,6 +48,15 @@ class PaperPortfolio:
             .all()
         )
 
+    def drawdown_pct(self) -> Decimal:
+        """Current drawdown from peak equity as a fraction (0..1)."""
+        equity = self.equity()
+        peak = self.db.query(func.max(PaperEquityCurve.equity)).filter(
+            PaperEquityCurve.account_id == self.account.id
+        ).scalar()
+        peak_val = Decimal(str(peak)) if peak is not None else equity
+        return (peak_val - equity) / peak_val if peak_val > 0 else Decimal("0")
+
     def exposure_pct(self) -> Decimal:
         equity = self.equity()
         if equity <= 0:
