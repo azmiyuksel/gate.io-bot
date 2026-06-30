@@ -234,14 +234,14 @@ class Settings(BaseSettings):
     # last ~50 min extreme — far more frequent breakouts while still requiring price
     # to make a new local high/low (the breakout buffer + volume/ATR gates still
     # filter noise). Affects paper now and live when enabled.
-    momentum_donchian_lookback: int = 14
+    momentum_donchian_lookback: int = 7
     # Volume confirmation: the (closed) breakout bar's volume must be at least this
     # multiple of the 20-bar average. Volume is right-skewed (occasional high-volume
     # bars inflate the 20-bar mean), so the typical/median bar sits BELOW the
     # average — requiring >= 1.2x still rejected most bars (including legitimate
     # breakout bars) and the book rarely traded. 0.7 lets ordinary-volume breakouts
     # through while still filtering the deadest bars.
-    momentum_vol_spike_mult: float = 0.3
+    momentum_vol_spike_mult: float = 0.2
     momentum_rsi_long_max: float = 70.0
     momentum_rsi_short_min: float = 30.0
     # Minimum ATR as a fraction of price; below this the move can't clear costs.
@@ -252,11 +252,11 @@ class Settings(BaseSettings):
     # 2bps), so only genuinely dead markets are skipped. The breakout buffer is
     # INDEPENDENTLY floored at the real round-trip cost, so a sub-cost breakout still
     # cannot fire even with this lower ATR gate.
-    momentum_min_atr_pct: float = 0.0015
+    momentum_min_atr_pct: float = 0.001
     # Breakout must clear the prior extreme by this fraction of ATR (noise filter).
     # Treated as a FLOOR: the effective buffer is max(this * ATR, round_trip_cost)
     # so a breakout can never fire inside the realistic fee+spread+slippage band.
-    momentum_breakout_buffer_atr: float = 0.02
+    momentum_breakout_buffer_atr: float = 0.005
     # Estimated round-trip cost (taker in + taker out + spread + slippage) as a
     # fraction of price. The breakout buffer is floored at this so a "breakout"
     # smaller than the cost of round-tripping never fires. Futures taker 5bps x2
